@@ -1,6 +1,7 @@
+mod models;
 mod platform;
 fn main() {
-    let (handle, rx) = platform::hotkey::start_hotkey_listener();
+    let (handle, rx) = platform::hotkey_actions::start_hotkey_listener();
 
     std::thread::spawn(move || {
         while let Ok(ev) = rx.recv() {
@@ -15,5 +16,5 @@ fn main() {
     }
 
     handle.stop(); // unreachable here unless you add a break condition
-    platform::hotkey::send_ctrl_v();
+    platform::hotkey_actions::send_ctrl_v();
 }

@@ -1,7 +1,7 @@
 #[cfg(target_os = "windows")]
-pub use crate::platform::windows::hotkey_reciever::*;
+pub use crate::platform::windows::receiver::hotkey_receiver::*;
 #[cfg(target_os = "windows")]
-pub use crate::platform::windows::hotkey_sender::*;
+pub use crate::platform::windows::sender::hotkey_sender::*;
 
 #[cfg(not(target_os = "windows"))]
 mod stub {

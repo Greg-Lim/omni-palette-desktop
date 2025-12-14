@@ -5,6 +5,8 @@ use std::{
     thread::{self, JoinHandle},
 };
 
+use crate::platform::windows::models::HotkeyEvent;
+
 use windows::{
     core::Result,
     Win32::{
@@ -21,16 +23,9 @@ use windows::{
     },
 };
 
-#[derive(Debug, Clone, Copy)]
-pub struct HotkeyEvent {
-    pub id: i32,
-    pub vk: u32,
-    pub modifiers: u32,
-}
-
 pub struct HotkeyHandle {
     thread_id: u32,
-    join: Option<JoinHandle<()>>,
+    hotkey_thread_handle: Option<JoinHandle<()>>,
 }
 
 impl HotkeyHandle {
@@ -43,21 +38,21 @@ impl HotkeyHandle {
                 Default::default(),
             );
         }
-        if let Some(j) = self.join.take() {
+        if let Some(j) = self.hotkey_thread_handle.take() {
             let _ = j.join();
         }
     }
 }
 
 pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<HotkeyEvent>) {
-    let (tx, rx) = mpsc::channel();
+    let (hk_event_tx, hk_event_rx) = mpsc::channel();
     let (id_tx, id_rx) = mpsc::channel();
 
-    let join = thread::spawn(move || {
+    let hotkey_thread_handle = thread::spawn(move || {
         unsafe {
             let _ = id_tx.send(GetCurrentThreadId());
         }
-        if let Err(e) = hotkey_thread_main(tx) {
+        if let Err(e) = hotkey_thread_main(hk_event_tx) {
             eprintln!("hotkey thread error: {e:?}");
         }
     });
@@ -66,9 +61,9 @@ pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<HotkeyEvent>) {
     (
         HotkeyHandle {
             thread_id,
-            join: Some(join),
+            hotkey_thread_handle: Some(hotkey_thread_handle),
         },
-        rx,
+        hk_event_rx,
     )
 }
 
