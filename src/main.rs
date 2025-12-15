@@ -1,3 +1,4 @@
+mod core;
 mod models;
 mod platform;
 fn main() {

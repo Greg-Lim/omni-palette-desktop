@@ -1,4 +1,4 @@
-// Tooling to automethically detect availible shortcuts on current window. Does not work well and probly should be scraped
+// Tooling to automatically detect available shortcuts on current window. Does not work well and probably should be scraped
 
 use windows::core::HSTRING;
 use windows::Win32::Foundation::HWND;
