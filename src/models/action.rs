@@ -1,18 +1,21 @@
 use std::rc::Rc;
 
-use crate::models::hotkey::KeyBoardShortcut;
+use crate::models::hotkey::KeyboardShortcut;
+use serde::Deserialize;
 
 #[derive(Debug, Clone, Hash)]
 pub struct Action {
-    pub name: Box<str>,
-    pub cmd: KeyBoardShortcut,
+    pub name: String,
+    pub keyboard_shortcut: KeyboardShortcut,
     pub focus_state: FocusState,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Deserialize, Copy, Clone, PartialEq, Hash)]
+#[serde(rename_all = "lowercase")]
 pub enum FocusState {
     Focused,
-    Backgroud,
+    Background,
+    Global,
 }
 
 pub enum Os {
@@ -50,11 +53,11 @@ pub enum Priority {
 
 pub type ApplicationID = u32; // use to uniquely identify apps that may have same names
 pub type AppName = Rc<str>; // Represent name of the app this action belongs to
-pub type ApplicationProcessName = Rc<str>;
+pub type ApplicationProcessName = String;
 pub type ActionId = u32; // uniquely identifies what the user is trying to do, ie paste, copy, new tab
                          // Not sure if u32 or string or some special struct is better
                          // Open to change
-pub type ActionName = Rc<str>;
+pub type ActionName = String;
 
 // All Context Root should have a mapping to all available actions that can be taken
 #[derive(Debug, Clone, Hash)]
@@ -72,5 +75,5 @@ impl ContextRoot {
 
 #[derive(Debug, Clone, Hash)]
 pub struct Context {
-    application: Rc<str>,
+    pub application_process_name: ApplicationProcessName,
 }

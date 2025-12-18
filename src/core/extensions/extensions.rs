@@ -4,12 +4,13 @@ use std::{fs, path::Path};
 
 use crate::{core::registry::registry::Application, models::config::Config};
 
-fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, Box<dyn std::error::Error>> {
-    // Read the file content into a string
-    let content = fs::read_to_string(path)?;
+pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, String> {
+    // 1. Read file. If it fails, convert the io::Error to your String error and return early.
+    let content = fs::read_to_string(path).map_err(|e| format!("Could not read file: {e}"))?;
 
-    // Deserialize the TOML string into the Config struct
-    let config: Config = toml::from_str(&content)?;
+    // 2. Parse TOML. If it fails, convert the toml::de::Error to String and return early.
+    let config: Config =
+        toml::from_str(&content).map_err(|e| format!("Could not parse config: {e}"))?;
 
     Ok(config)
 }
@@ -28,7 +29,7 @@ id = "chrome"
 name = "Chrome"
 default_priority = "Application"
 
-[app.os]
+[app.app_os_name]
 windows = "chrome.exe"
 macos = "com.google.Chrome"
 

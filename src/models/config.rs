@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::models::{action::FocusState, hotkey::Key};
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub version: u32,
@@ -8,50 +10,43 @@ pub struct Config {
     pub actions: HashMap<String, Action>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct App {
     pub id: String,
     pub name: String,
+    pub default_focus_state: Option<FocusState>,
     pub default_priority: Priority,
-    pub os: AppOs,
+    pub application_os_name: AppOsName,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AppOs {
+#[derive(Debug, Deserialize, Clone)]
+pub struct AppOsName {
     pub windows: Option<String>,
     pub macos: Option<String>,
     pub linux: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Action {
     pub name: String,
-    pub focus_state: FocusState,
+    pub focus_state: Option<FocusState>,
     pub cmd: CmdByOs,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CmdByOs {
     pub windows: Option<KeyChord>,
     pub macos: Option<KeyChord>,
     pub linux: Option<KeyChord>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct KeyChord {
     pub mods: Vec<Modifier>,
-    pub key: String,
+    pub key: Key,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FocusState {
-    Focused,
-    Global,
-    Background,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum Modifier {
     Ctrl,
@@ -59,10 +54,11 @@ pub enum Modifier {
     Alt,
     Cmd,
     Win,
+    Fn,
     // Meta,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, Copy)]
 pub enum Priority {
     #[serde(rename = "OSReserved")]
     OSReserved,
