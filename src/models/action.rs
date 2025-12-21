@@ -1,7 +1,10 @@
 use std::rc::Rc;
 
 use crate::models::hotkey::KeyboardShortcut;
+use raw_window_handle::RawWindowHandle;
 use serde::Deserialize;
+
+use linked_hash_set::LinkedHashSet;
 
 #[derive(Debug, Clone, Hash)]
 pub struct Action {
@@ -52,8 +55,8 @@ pub enum Priority {
 }
 
 pub type ApplicationID = u32; // use to uniquely identify apps that may have same names
-pub type AppName = Rc<str>; // Represent name of the app this action belongs to
-pub type ApplicationProcessName = String;
+pub type AppName = String; // Represent name of the app this action belongs to
+pub type AppProcessName = String;
 pub type ActionId = u32; // uniquely identifies what the user is trying to do, ie paste, copy, new tab
                          // Not sure if u32 or string or some special struct is better
                          // Open to change
@@ -63,17 +66,20 @@ pub type ActionName = String;
 #[derive(Debug, Clone, Hash)]
 
 pub struct ContextRoot {
-    pub context_stack: Vec<Context>, // Top of stack is current context, ie chrome
-    pub background_context: Vec<Context>, // Order does not matter. Use to hold other context
+    pub fg_context: Vec<Context>,
+    pub bg_context: Vec<Context>, // Order does not matter. Use to hold other context
 }
 
 impl ContextRoot {
-    pub fn get_current_context(&self) -> Option<&Context> {
-        return self.context_stack.last();
+    pub fn get_active(&self) -> Option<&Context> {
+        return self.fg_context.first();
     }
 }
 
-#[derive(Debug, Clone, Hash)]
-pub struct Context {
-    pub application_process_name: ApplicationProcessName,
+type Context = RawWindowHandle;
+
+pub trait ContextExt {
+    fn get_all_names(&self) -> Vec<String>;
 }
+
+// impl ContextExt for ContextExt {}

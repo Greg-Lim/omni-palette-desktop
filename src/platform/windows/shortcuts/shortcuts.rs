@@ -1,4 +1,4 @@
-// Tooling to automatically detect available shortcuts on current window. Does not work well and probably should be scraped
+// Tooling to automatically detect available shortcuts on current window. Does not work well and probably should be scrape
 
 use windows::core::HSTRING;
 use windows::Win32::Foundation::HWND;
@@ -17,7 +17,7 @@ pub struct AcceleratorInfo {
 pub fn get_all_accelerators(hwnd: HWND) -> Result<Vec<AcceleratorInfo>, windows::core::Error> {
     // 1. Initialize COM
     unsafe {
-        CoInitializeEx(None, COINIT_MULTITHREADED);
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
 
     // 2. Create the main IUIAutomation object (the entry point)

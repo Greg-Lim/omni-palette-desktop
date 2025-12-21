@@ -11,17 +11,19 @@ use std::{
 };
 
 use log::{error, info, warn};
+use windows::Win32::Foundation::HWND;
 
 use crate::{
     core::extensions::extensions::load_config,
     models::{
         action::{
-            self, Action, ActionId, ActionName, AppName, ApplicationID, ApplicationProcessName,
+            self, Action, ActionId, ActionName, AppName, AppProcessName, ApplicationID,
             ContextRoot, FocusState, Os, Priority,
         },
         config::{CmdByOs, Config, KeyChord, Modifier},
         hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
     },
+    platform::platform_interface::RawWindowHandleExt,
 };
 
 #[derive(Default, Debug)]
@@ -29,7 +31,7 @@ pub struct MasterRegistry {
     // represents the global registry to determine all possible commands
     // 2 way: can be lazy generated when the user pulls up the palette or pregenerated.
     pub application_registry: HashMap<ApplicationID, Application>,
-    pub application_process_name_id: HashMap<ApplicationProcessName, ApplicationID>,
+    pub application_process_name_id: HashMap<AppProcessName, ApplicationID>,
 }
 
 impl MasterRegistry {
@@ -63,7 +65,12 @@ impl MasterRegistry {
                                 "Successfully loaded extension: {:?}",
                                 path.file_name().unwrap()
                             );
-                            master_registry.application_registry.insert(idx as u32, app);
+                            master_registry
+                                .application_registry
+                                .insert(idx as u32, app.clone());
+                            master_registry
+                                .application_process_name_id
+                                .insert(app.application_process_name.clone(), idx as u32);
                         }
                         Err(err) => {
                             error!("Failed to load extension at {:?}: {}", path, err);
@@ -76,6 +83,7 @@ impl MasterRegistry {
                 extensions_folder, e
             ),
         };
+
         master_registry
     }
 }
@@ -91,16 +99,17 @@ pub struct UnitAction {
 }
 
 impl MasterRegistry {
-    pub fn get_actions(self, context: ContextRoot) -> Vec<UnitAction> {
+    pub fn get_actions(&self, context: &ContextRoot) -> Vec<UnitAction> {
         // for now we will either call this every time the context change or the user opens the page
         let mut all_actions = vec![];
 
         // Extract background actions
-        for bg_context in context.background_context {
-            let Some(&app_id) = self
-                .application_process_name_id
-                .get(&bg_context.application_process_name)
-            else {
+        for bg_context in &context.bg_context {
+            let Some(process_name) = bg_context.get_app_process_name() else {
+                continue;
+            };
+
+            let Some(&app_id) = self.application_process_name_id.get(&process_name) else {
                 continue;
             };
 
@@ -125,12 +134,24 @@ impl MasterRegistry {
 
         // Extract Focused Actions
         'add_focused_actions: {
-            let Some(app_id) = context.context_stack.last().and_then(|c| {
-                self.application_process_name_id
-                    .get(&c.application_process_name)
-            }) else {
+            dbg!("app_id");
+
+            let Some(active) = context.get_active() else {
                 break 'add_focused_actions;
             };
+            dbg!(&active);
+
+            let Some(process_name) = active.get_app_process_name() else {
+                break 'add_focused_actions;
+            };
+            dbg!(&process_name);
+            dbg!(&self.application_process_name_id);
+
+            let Some(app_id) = self.application_process_name_id.get(&process_name) else {
+                break 'add_focused_actions;
+            };
+
+            dbg!(&app_id);
 
             let Some(app) = self.application_registry.get(&app_id) else {
                 break 'add_focused_actions;
@@ -155,10 +176,10 @@ impl MasterRegistry {
     }
 }
 
-#[derive(Debug)] // Debug is useful for printing
+#[derive(Debug, Clone)] // Debug is useful for printing
 pub struct Application {
     application_name: AppName,
-    application_process_name: ApplicationProcessName,
+    application_process_name: AppProcessName,
     application_registry: HashMap<ActionId, Action>,
 }
 

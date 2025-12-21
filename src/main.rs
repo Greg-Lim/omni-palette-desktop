@@ -2,6 +2,9 @@ use std::path::Path;
 
 use env_logger::Builder;
 
+use crate::core::context;
+use crate::models::action::{AppProcessName, ContextRoot};
+use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
 use crate::{core::registry::registry::MasterRegistry, models::action::Os};
 use std::env::consts::OS;
 use std::io::Write;
@@ -27,6 +30,7 @@ mod platform;
 //     handle.stop(); // unreachable here unless you add a break condition
 //     platform::hotkey_actions::send_ctrl_v();
 // }
+
 fn main() {
     // Set Up logger
     let mut builder = Builder::from_default_env();
@@ -60,58 +64,29 @@ fn main() {
         }
     });
 
+    // Find and load extentions // This needs to be hot loaded in the future
+    let extensions_folder = Path::new("./extensions");
+    let master_registry = MasterRegistry::build(extensions_folder, current_os);
+    let context_root = get_all_context();
+
+    let avail_actions = master_registry.get_actions(&context_root);
+    // dbg!(master_registry);
+    let process_names: AppProcessName = context_root
+        .fg_context
+        .iter()
+        .map(|h| h.get_app_process_name().unwrap_or("missing".into()))
+        .collect();
+    dbg!(process_names);
+    dbg!(avail_actions);
+
     // Keep process alive until Ctrl+C
     loop {
-        std::thread::sleep(std::time::Duration::from_secs(10));
+        // std::thread::sleep(std::time::Duration::from_secs(10));
         break;
     }
 
-    // Find and load extentions // This needs to be hot loaded in the future
-    let extensions_folder = Path::new("./extensions");
-    let mut master_registry = MasterRegistry::build(extensions_folder, current_os);
-
-    // // Use a match on read_dir to handle the folder being missing/inaccessible
-    // match fs::read_dir(extensions_folder) {
-    //     Ok(entries) => {
-    //         for (idx, entry) in entries.enumerate() {
-    //             // Handle individual directory entry errors
-    //             let entry = match entry {
-    //                 Ok(e) => e,
-    //                 Err(err) => {
-    //                     warn!("Failed to read directory entry {}: {}", idx, err);
-    //                     continue;
-    //                 }
-    //             };
-
-    //             let path = entry.path();
-
-    //             // Skip non-toml files
-    //             if path.extension().and_then(|s| s.to_str()) != Some("toml") {
-    //                 continue;
-    //             }
-
-    //             // Load and build application
-    //             match load_config(&path).and_then(|c| Application::new(&c, &current_os)) {
-    //                 Ok(app) => {
-    //                     info!(
-    //                         "Successfully loaded extension: {:?}",
-    //                         path.file_name().unwrap()
-    //                     );
-    //                     master_registry.application_registry.insert(idx as u32, app);
-    //                 }
-    //                 Err(err) => {
-    //                     error!("Failed to load extension at {:?}: {}", path, err);
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     Err(e) => error!(
-    //         "Could not access extensions directory at {:?}: {}",
-    //         extensions_folder, e
-    //     ),
-    // }
-
-    dbg!(&master_registry);
+    // dbg!(&master_registry);
+    // dbg!(master_registry.get_actions(context));
 
     // cleanup
     handle.stop();
