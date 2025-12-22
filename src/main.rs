@@ -3,10 +3,13 @@ use std::path::Path;
 use env_logger::Builder;
 
 use crate::core::context;
+use crate::core::registry::registry::UnitAction;
+use crate::core::search::{get_score, MatchResult};
 use crate::models::action::{AppProcessName, ContextRoot};
 use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
 use crate::{core::registry::registry::MasterRegistry, models::action::Os};
 use std::env::consts::OS;
+use std::io;
 use std::io::Write;
 
 mod core;
@@ -70,14 +73,31 @@ fn main() {
     let context_root = get_all_context();
 
     let avail_actions = master_registry.get_actions(&context_root);
-    // dbg!(master_registry);
+    // dbg!(&master_registry);
     let process_names: AppProcessName = context_root
         .fg_context
         .iter()
         .map(|h| h.get_app_process_name().unwrap_or("missing".into()))
         .collect();
-    dbg!(process_names);
-    dbg!(avail_actions);
+    dbg!(&process_names);
+    dbg!(&avail_actions);
+
+    let mut user_input = String::new();
+
+    // 2. Read the line from stdin
+    println!("Input sarch term: ");
+    io::stdin()
+        .read_line(&mut user_input) // read_line appends the input to the string
+        .expect("Failed to read line"); // Handle potential errors
+    let user_input: String = user_input.trim().to_string();
+
+    let mut match_results: Vec<MatchResult> = vec![];
+    for unit_action in avail_actions {
+        let match_res = get_score(&unit_action.action_name, &user_input);
+        match_results.push(match_res);
+    }
+
+    dbg!(match_results);
 
     // Keep process alive until Ctrl+C
     loop {

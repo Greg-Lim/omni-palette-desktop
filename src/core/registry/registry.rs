@@ -91,11 +91,11 @@ impl MasterRegistry {
 #[derive(Debug)]
 pub struct UnitAction {
     // This struct will be use for search and generating the UI
-    app_name: AppName,
-    action_id: ActionId,
-    action_name: ActionName,
-    focus_state: FocusState,
-    keyboard_shortcut: KeyboardShortcut,
+    pub app_name: AppName,
+    pub action_id: ActionId,
+    pub action_name: ActionName,
+    pub focus_state: FocusState,
+    pub keyboard_shortcut: KeyboardShortcut,
 }
 
 impl MasterRegistry {
