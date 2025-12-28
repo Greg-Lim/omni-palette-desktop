@@ -5,16 +5,23 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crate::platform::windows::models::HotkeyEvent;
+use crate::{
+    models::hotkey::KeyboardShortcut,
+    platform::windows::{
+        mapper::hotkey_mapper::{map_key_back, map_modifier_back},
+        shortcuts,
+    },
+};
 
+use log::warn;
 use windows::{
     core::Result,
     Win32::{
         System::Threading::GetCurrentThreadId,
         UI::{
             Input::KeyboardAndMouse::{
-                RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, VK_P,
-                VK_SPACE,
+                RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_CONTROL, MOD_NOREPEAT,
+                MOD_SHIFT, VIRTUAL_KEY, VK_P, VK_SPACE,
             },
             WindowsAndMessaging::{
                 GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_QUIT,
@@ -44,7 +51,7 @@ impl HotkeyHandle {
     }
 }
 
-pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<HotkeyEvent>) {
+pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<KeyboardShortcut>) {
     let (hk_event_tx, hk_event_rx) = mpsc::channel();
     let (id_tx, id_rx) = mpsc::channel();
 
@@ -67,7 +74,7 @@ pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<HotkeyEvent>) {
     )
 }
 
-fn hotkey_thread_main(tx: Sender<HotkeyEvent>) -> Result<()> {
+fn hotkey_thread_main(tx: Sender<KeyboardShortcut>) -> Result<()> {
     unsafe {
         // Ensure this thread has a message queue before RegisterHotKey
         let mut msg = MSG::default();
@@ -91,8 +98,17 @@ fn hotkey_thread_main(tx: Sender<HotkeyEvent>) -> Result<()> {
                 let id = msg.wParam.0 as i32;
                 let lp = msg.lParam.0 as u32;
                 let modifiers = lp & 0xFFFF;
-                let vk = (lp >> 16) & 0xFFFF;
-                let _ = tx.send(HotkeyEvent { id, vk, modifiers });
+                let vk: VIRTUAL_KEY = VIRTUAL_KEY(((lp >> 16) & 0xFFFF) as u16);
+                let shortcut = map_key_back(vk).map(|k| KeyboardShortcut {
+                    key: k,
+                    modifier: map_modifier_back(HOT_KEY_MODIFIERS(modifiers)),
+                });
+                if shortcut.is_none() {
+                    warn!("Mapping Fail {vk:?}");
+                    break;
+                }
+                let shortcut = shortcut.unwrap();
+                let _ = tx.send(shortcut);
             }
         }
 

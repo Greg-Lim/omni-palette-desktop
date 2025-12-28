@@ -11,7 +11,6 @@ use std::{
 };
 
 use log::{error, info, warn};
-use windows::Win32::Foundation::HWND;
 
 use crate::{
     core::extensions::extensions::load_config,
@@ -230,7 +229,7 @@ impl Application {
 
         let mut count: u32 = 0;
 
-        for (appId, config_action) in app_config.actions.iter() {
+        for (app_id, config_action) in app_config.actions.iter() {
             let binding = extract_os_binding(&config_action.cmd, &current_os);
             let binding = match binding {
                 Err(s) => {

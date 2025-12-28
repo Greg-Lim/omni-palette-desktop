@@ -1,5 +1,4 @@
 use crate::models::hotkey::{self, HotkeyModifiers, Key, Modifier};
-use crate::platform::windows::models::HotkeyEvent;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
 pub fn map_modifier(modifiers: &HotkeyModifiers) -> HOT_KEY_MODIFIERS {
@@ -22,6 +21,22 @@ pub fn map_modifier(modifiers: &HotkeyModifiers) -> HOT_KEY_MODIFIERS {
     }
 
     flags
+}
+
+pub fn map_modifier_back(flags: HOT_KEY_MODIFIERS) -> HotkeyModifiers {
+    HotkeyModifiers {
+        // Check if the CONTROL bit is set in the flags
+        control: (flags & MOD_CONTROL) == MOD_CONTROL,
+
+        // Check if the SHIFT bit is set in the flags
+        shift: (flags & MOD_SHIFT) == MOD_SHIFT,
+
+        // Check if the ALT bit is set in the flags
+        alt: (flags & MOD_ALT) == MOD_ALT,
+
+        // Check if the WIN bit is set in the flags
+        win: (flags & MOD_WIN) == MOD_WIN,
+    }
 }
 
 pub fn map_key(key: Key) -> VIRTUAL_KEY {
@@ -115,5 +130,101 @@ pub fn map_key(key: Key) -> VIRTUAL_KEY {
         Key::RightArrow => VK_RIGHT,
         Key::UpArrow => VK_UP,
         Key::DownArrow => VK_DOWN,
+    }
+}
+
+pub fn map_key_back(vk: VIRTUAL_KEY) -> Option<Key> {
+    match vk {
+        // --- 1. Alphanumeric Keys ---
+        VK_A => Some(Key::KeyA),
+        VK_B => Some(Key::KeyB),
+        VK_C => Some(Key::KeyC),
+        VK_D => Some(Key::KeyD),
+        VK_E => Some(Key::KeyE),
+        VK_F => Some(Key::KeyF),
+        VK_G => Some(Key::KeyG),
+        VK_H => Some(Key::KeyH),
+        VK_I => Some(Key::KeyI),
+        VK_J => Some(Key::KeyJ),
+        VK_K => Some(Key::KeyK),
+        VK_L => Some(Key::KeyL),
+        VK_M => Some(Key::KeyM),
+        VK_N => Some(Key::KeyN),
+        VK_O => Some(Key::KeyO),
+        VK_P => Some(Key::KeyP),
+        VK_Q => Some(Key::KeyQ),
+        VK_R => Some(Key::KeyR),
+        VK_S => Some(Key::KeyS),
+        VK_T => Some(Key::KeyT),
+        VK_U => Some(Key::KeyU),
+        VK_V => Some(Key::KeyV),
+        VK_W => Some(Key::KeyW),
+        VK_X => Some(Key::KeyX),
+        VK_Y => Some(Key::KeyY),
+        VK_Z => Some(Key::KeyZ),
+
+        VK_0 => Some(Key::Key0),
+        VK_1 => Some(Key::Key1),
+        VK_2 => Some(Key::Key2),
+        VK_3 => Some(Key::Key3),
+        VK_4 => Some(Key::Key4),
+        VK_5 => Some(Key::Key5),
+        VK_6 => Some(Key::Key6),
+        VK_7 => Some(Key::Key7),
+        VK_8 => Some(Key::Key8),
+        VK_9 => Some(Key::Key9),
+
+        // --- 2. Function Keys ---
+        VK_F1 => Some(Key::F1),
+        VK_F2 => Some(Key::F2),
+        VK_F3 => Some(Key::F3),
+        VK_F4 => Some(Key::F4),
+        VK_F5 => Some(Key::F5),
+        VK_F6 => Some(Key::F6),
+        VK_F7 => Some(Key::F7),
+        VK_F8 => Some(Key::F8),
+        VK_F9 => Some(Key::F9),
+        VK_F10 => Some(Key::F10),
+        VK_F11 => Some(Key::F11),
+        VK_F12 => Some(Key::F12),
+
+        // --- 3. Punctuation & Symbol Keys ---
+        VK_OEM_1 => Some(Key::Semicolon),
+        VK_OEM_PLUS => Some(Key::Equal),
+        VK_OEM_COMMA => Some(Key::Comma),
+        VK_OEM_MINUS => Some(Key::Minus),
+        VK_OEM_PERIOD => Some(Key::Period),
+        VK_OEM_2 => Some(Key::Slash),
+        VK_OEM_3 => Some(Key::Grave),
+        VK_OEM_4 => Some(Key::LeftBracket),
+        VK_OEM_5 => Some(Key::Backslash),
+        VK_OEM_6 => Some(Key::RightBracket),
+        VK_OEM_7 => Some(Key::Apostrophe),
+
+        // --- 4. Special Keys ---
+        VK_RETURN => Some(Key::Enter),
+        VK_SPACE => Some(Key::Space),
+        VK_TAB => Some(Key::Tab),
+        VK_ESCAPE => Some(Key::Escape),
+        VK_DELETE => Some(Key::Delete),
+        VK_BACK => Some(Key::BackSpace),
+
+        // --- 5. Navigation & Movement Keys ---
+        VK_HOME => Some(Key::Home),
+        VK_END => Some(Key::End),
+        VK_PRIOR => Some(Key::PageUp),
+        VK_NEXT => Some(Key::PageDown),
+        VK_INSERT => Some(Key::Insert),
+        VK_SNAPSHOT => Some(Key::PrintScreen),
+        VK_SCROLL => Some(Key::ScrollLock),
+        VK_PAUSE => Some(Key::Pause),
+
+        VK_LEFT => Some(Key::LeftArrow),
+        VK_RIGHT => Some(Key::RightArrow),
+        VK_UP => Some(Key::UpArrow),
+        VK_DOWN => Some(Key::DownArrow),
+
+        // Handle unknown keys gracefully
+        _ => None,
     }
 }
