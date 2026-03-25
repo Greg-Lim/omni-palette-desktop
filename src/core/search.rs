@@ -1,7 +1,7 @@
 #[derive(Default, Debug)]
 pub struct MatchResult {
-    score: i32,
-    indices: Vec<usize>, // Positions of matching chars for highlighting
+    pub score: i32,
+    pub indices: Vec<usize>, // Positions of matching chars for highlighting
 }
 
 struct PreparedQuery {}
