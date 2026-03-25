@@ -1,3 +1,4 @@
+use crate::core::search::get_score;
 use eframe::egui;
 use std::fmt;
 use std::sync::mpsc::{self, Receiver};
@@ -35,14 +36,42 @@ pub struct CommandPaletteApp {
 
 impl CommandPaletteApp {
     fn new(all_commands: Vec<Command>) -> Self {
-        let mut s = Self {
+        let filtered_indices = (0..all_commands.len()).collect();
+        Self {
             filter_text: String::new(),
             all_commands,
-            filtered_indices: Vec::new(),
+            filtered_indices,
             selected_index: 0,
             is_open: true, // Start visible
-        };
-        s
+        }
+    }
+
+    /// Recompute `filtered_indices` from `filter_text`.
+    /// When the query is empty every command is shown; otherwise commands are
+    /// ranked by `get_score` and non-matches are excluded.
+    fn recompute_filter(&mut self) {
+        if self.filter_text.is_empty() {
+            self.filtered_indices = (0..self.all_commands.len()).collect();
+            return;
+        }
+
+        let mut scored: Vec<(usize, i32)> = self
+            .all_commands
+            .iter()
+            .enumerate()
+            .filter_map(|(i, cmd)| {
+                let result = get_score(&cmd.label, &self.filter_text);
+                if result.score > 0 {
+                    Some((i, result.score))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Highest score first
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        self.filtered_indices = scored.into_iter().map(|(i, _)| i).collect();
     }
 }
 
@@ -100,6 +129,7 @@ impl eframe::App for App {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                         self.palette.filter_text.clear();
                         self.palette.selected_index = 0;
+                        self.palette.recompute_filter(); // show all commands on open
                         println!("Window should now be visible and focused");
                     } else {
                         // Hide window by making it minimized and off-screen
@@ -198,6 +228,7 @@ impl eframe::App for App {
                     resp.request_focus();
                     if resp.changed() {
                         self.palette.selected_index = 0;
+                        self.palette.recompute_filter();
                     }
 
                     ui.add_space(6.0);
