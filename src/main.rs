@@ -104,7 +104,7 @@ fn main() {
     dbg!(&process_names);
     dbg!(&avail_actions);
 
-    let mut user_input = String::new();
+    let user_input = String::new();
 
     // 2. Read the line from stdin
     // println!("Input sarch term: ");

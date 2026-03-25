@@ -1,12 +1,10 @@
 use crate::core::search::get_score;
 use eframe::egui;
 use std::fmt;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::Receiver;
 
-/// Represents a single command entry shown in the palette UI
 pub struct Command {
     pub label: String,
-    // Placeholder for the command action; wiring happens elsewhere.
     pub action: Box<dyn Fn() + Send + Sync>,
 }
 
@@ -19,18 +17,12 @@ impl fmt::Debug for Command {
     }
 }
 
-/// Core UI state for the command palette.
 #[derive(Debug)]
 pub struct CommandPaletteApp {
-    /// What the user is currently typing.
     pub filter_text: String,
-    /// All possible commands available in the system.
     pub all_commands: Vec<Command>,
-    /// Indices of commands from `all_commands` that match `filter_text`.
     pub filtered_indices: Vec<usize>,
-    /// Which item in the filtered list is currently highlighted (via arrow keys).
     pub selected_index: usize,
-    /// Whether the palette is currently visible.
     pub is_open: bool,
 }
 
@@ -42,13 +34,10 @@ impl CommandPaletteApp {
             all_commands,
             filtered_indices,
             selected_index: 0,
-            is_open: true, // Start visible
+            is_open: true,
         }
     }
 
-    /// Recompute `filtered_indices` from `filter_text`.
-    /// When the query is empty every command is shown; otherwise commands are
-    /// ranked by `get_score` and non-matches are excluded.
     fn recompute_filter(&mut self) {
         if self.filter_text.is_empty() {
             self.filtered_indices = (0..self.all_commands.len()).collect();
@@ -69,7 +58,6 @@ impl CommandPaletteApp {
             })
             .collect();
 
-        // Highest score first
         scored.sort_by(|a, b| b.1.cmp(&a.1));
         self.filtered_indices = scored.into_iter().map(|(i, _)| i).collect();
     }
@@ -81,16 +69,12 @@ pub enum UiSignal {
 }
 
 struct App {
-    // UI
-    receiver: Receiver<UiSignal>, // Receives signals from hotkey thread
-
-    // State
+    receiver: Receiver<UiSignal>,
     palette: CommandPaletteApp,
 }
 
 impl App {
     fn new(_cc: &eframe::CreationContext<'_>, receiver: Receiver<UiSignal>) -> Self {
-        // Example commands (replace with real actions when wiring platform)
         let demo_commands = vec![Command {
             label: "Quit".to_string(),
             action: Box::new(|| println!("Action: Quit")),
@@ -101,53 +85,35 @@ impl App {
             receiver,
         }
     }
+
+    fn hide(&self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // CRITICAL: Always request repaint to ensure update loop continues even when hidden
         ctx.request_repaint();
 
-        // CRITICAL: Always process incoming UI signals regardless of visibility
-        let mut signal_received = false;
         while let Ok(sig) = self.receiver.try_recv() {
-            signal_received = true;
-            dbg!(sig);
             match sig {
                 UiSignal::ToggleVisibility => {
-                    let old_state = self.palette.is_open;
                     self.palette.is_open = !self.palette.is_open;
-                    println!(
-                        "Toggle: {} → {} (palette.is_open)",
-                        old_state, self.palette.is_open
-                    );
 
                     if self.palette.is_open {
-                        // Show and focus the window
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                         self.palette.filter_text.clear();
                         self.palette.selected_index = 0;
-                        self.palette.recompute_filter(); // show all commands on open
-                        println!("Window should now be visible and focused");
+                        self.palette.recompute_filter();
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     } else {
-                        // Hide window by making it minimized and off-screen
-                        // This keeps it hidden from Alt+Tab but allows update loop to continue
-                        // this is very hacky
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-                            -2000.0, -2000.0,
-                        )));
-                        println!("Window minimized and moved off-screen (hidden from Alt+Tab)");
+                        self.hide(ctx);
                     }
                 }
             }
         }
 
-        // Only do UI positioning and keyboard handling when visible
         if self.palette.is_open {
-            // Position window once
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
                 (ctx.input(|i| i.viewport().monitor_size.map(|m| m.x))
                     .unwrap_or(1920.0)
@@ -158,20 +124,11 @@ impl eframe::App for App {
                     * 0.15,
             )));
 
-            // Hide on Escape (same behavior as Ctrl+Shift+P)
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.palette.is_open = false;
-                // Hide window by making it minimized and off-screen
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-                    -2000.0, -2000.0,
-                )));
-                println!(
-                    "Escape pressed: Window minimized and moved off-screen (hidden from Alt+Tab)"
-                );
+                self.hide(ctx);
             }
 
-            // Keyboard navigation (only when visible)
             let visible_count = self.palette.filtered_indices.len().min(8);
             if visible_count > 0 {
                 if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
@@ -192,23 +149,18 @@ impl eframe::App for App {
                     {
                         (self.palette.all_commands[orig_idx].action)();
                         self.palette.is_open = false;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-                            -2000.0, -2000.0,
-                        )));
+                        self.hide(ctx);
                     }
                 }
             }
 
-            // Dynamically adjust viewport height based on results
-            let desired_height = 44.0 + (visible_count as f32) * 28.0 + 12.0; // input + rows + padding
+            let desired_height = 44.0 + (visible_count as f32) * 28.0 + 12.0;
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                 600.0,
                 desired_height.max(80.0),
             )));
         }
 
-        // The UI (render only when visible)
         if self.palette.is_open {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let frame = egui::Frame::none()
@@ -219,7 +171,6 @@ impl eframe::App for App {
                 frame.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
 
-                    // Search box
                     let resp = ui.add_sized(
                         [ui.available_width(), 34.0],
                         egui::TextEdit::singleline(&mut self.palette.filter_text)
@@ -233,7 +184,6 @@ impl eframe::App for App {
 
                     ui.add_space(6.0);
 
-                    // Results list (limited)
                     for (idx, &orig_idx) in self.palette.filtered_indices.iter().take(8).enumerate()
                     {
                         let is_selected = idx == self.palette.selected_index;
@@ -243,12 +193,10 @@ impl eframe::App for App {
                             self.palette.selected_index = idx;
                             (self.palette.all_commands[orig_idx].action)();
                             self.palette.is_open = false;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
-                                egui::pos2(-2000.0, -2000.0),
-                            ));
+                            self.hide(ctx);
                         }
                     }
+
                     if self.palette.filtered_indices.is_empty() {
                         ui.label(
                             egui::RichText::new("No commands")
@@ -260,20 +208,19 @@ impl eframe::App for App {
             });
         }
     }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {}
 }
 
 pub fn ui_main(receiver: Receiver<UiSignal>) {
-    let width = 600.0;
-    let height = 180.0;
-
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([width, height])
-            .with_decorations(true) // Add decorations to make it more stable
-            .with_transparent(false) // Disable transparency to avoid issues
+            .with_inner_size([600.0, 180.0])
+            .with_decorations(true)
+            .with_transparent(false)
             .with_always_on_top()
             .with_resizable(false)
-            .with_visible(true) // Start visible for testing
+            .with_visible(true)
             .with_active(true),
         ..Default::default()
     };
@@ -281,6 +228,6 @@ pub fn ui_main(receiver: Receiver<UiSignal>) {
     let _ = eframe::run_native(
         "Command Palette",
         options,
-        Box::new(move |_cc| Ok(Box::new(App::new(_cc, receiver)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, receiver)))),
     );
 }
