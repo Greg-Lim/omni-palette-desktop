@@ -15,7 +15,7 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, String> {
     Ok(config)
 }
 
-fn build_application_registry_from_toml_config(extention_config: Config) -> Application {
+fn build_application_registry_from_toml_config(_extention_config: Config) -> Application {
     todo!("build mapping");
 }
 

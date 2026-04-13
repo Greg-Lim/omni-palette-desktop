@@ -1,4 +1,4 @@
-use crate::models::hotkey::{self, HotkeyModifiers, Key, Modifier};
+use crate::models::hotkey::{HotkeyModifiers, Key};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
 pub fn map_modifier(modifiers: &HotkeyModifiers) -> HOT_KEY_MODIFIERS {

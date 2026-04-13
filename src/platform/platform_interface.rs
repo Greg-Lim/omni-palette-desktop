@@ -3,7 +3,6 @@ use crate::{
     platform::windows as platwins,
 };
 use cfg_if::cfg_if;
-use log::error;
 use raw_window_handle::RawWindowHandle;
 
 pub fn get_all_context() -> ContextRoot {

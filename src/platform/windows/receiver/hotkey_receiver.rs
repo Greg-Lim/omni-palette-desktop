@@ -7,10 +7,7 @@ use std::{
 
 use crate::{
     models::hotkey::KeyboardShortcut,
-    platform::windows::{
-        mapper::hotkey_mapper::{map_key_back, map_modifier_back},
-        shortcuts,
-    },
+    platform::windows::mapper::hotkey_mapper::{map_key_back, map_modifier_back},
 };
 
 use log::warn;
@@ -21,7 +18,7 @@ use windows::{
         UI::{
             Input::KeyboardAndMouse::{
                 RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_CONTROL, MOD_NOREPEAT,
-                MOD_SHIFT, VIRTUAL_KEY, VK_P, VK_SPACE,
+                MOD_SHIFT, VIRTUAL_KEY, VK_P,
             },
             WindowsAndMessaging::{
                 GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_QUIT,
@@ -95,7 +92,7 @@ fn hotkey_thread_main(tx: Sender<KeyboardShortcut>) -> Result<()> {
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
             if msg.message == WM_HOTKEY {
-                let id = msg.wParam.0 as i32;
+                let _id = msg.wParam.0 as i32;
                 let lp = msg.lParam.0 as u32;
                 let modifiers = lp & 0xFFFF;
                 let vk: VIRTUAL_KEY = VIRTUAL_KEY(((lp >> 16) & 0xFFFF) as u16);

@@ -3,17 +3,13 @@ use std::path::Path;
 use env_logger::Builder;
 use log::{error, info};
 
-use crate::core::context;
-use crate::core::registry::registry::UnitAction;
-use crate::core::search::{get_score, MatchResult};
-use crate::models::action::{AppProcessName, ContextRoot};
+use crate::models::action::AppProcessName;
 use crate::models::hotkey::Key;
 use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
 use crate::ui::ui_main;
 use crate::ui::ui_main::UiSignal;
 use crate::{core::registry::registry::MasterRegistry, models::action::Os};
 use std::env::consts::OS;
-use std::io;
 use std::io::Write;
 use std::sync::mpsc;
 
@@ -104,7 +100,7 @@ fn main() {
     dbg!(&process_names);
     dbg!(&avail_actions);
 
-    let user_input = String::new();
+    let _user_input = String::new();
 
     // 2. Read the line from stdin
     // println!("Input sarch term: ");

@@ -1,7 +1,5 @@
-use crate::models::action::ContextRoot;
 use raw_window_handle::{RawWindowHandle, Win32WindowHandle};
-use std::ffi::{OsStr, OsString};
-use std::mem;
+use std::ffi::OsString;
 use std::num::NonZeroIsize;
 use std::os::windows::ffi::OsStringExt;
 use windows::core::BOOL;
@@ -9,7 +7,6 @@ use windows::Win32::Foundation::{HWND, LPARAM, MAX_PATH};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::System::ProcessStatus::GetModuleBaseNameW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
-use windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
     IsWindowVisible,

@@ -1,10 +1,8 @@
-use std::rc::Rc;
 
 use crate::models::hotkey::KeyboardShortcut;
 use raw_window_handle::RawWindowHandle;
 use serde::Deserialize;
 
-use linked_hash_set::LinkedHashSet;
 
 #[derive(Debug, Clone, Hash)]
 pub struct Action {

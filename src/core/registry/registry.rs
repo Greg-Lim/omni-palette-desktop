@@ -1,13 +1,9 @@
 // register action is for the user to register new actions given the context and action
 
 use std::{
-    collections::{HashMap, HashSet},
-    fmt::Error,
+    collections::HashMap,
     fs,
-    ops::Add,
     path::Path,
-    rc::Rc,
-    task::Context,
 };
 
 use log::{error, info, warn};
@@ -16,11 +12,11 @@ use crate::{
     core::extensions::extensions::load_config,
     models::{
         action::{
-            self, Action, ActionId, ActionName, AppName, AppProcessName, ApplicationID,
-            ContextRoot, FocusState, Os, Priority,
+            Action, ActionId, ActionName, AppName, AppProcessName, ApplicationID,
+            ContextRoot, FocusState, Os,
         },
         config::{CmdByOs, Config, KeyChord, Modifier},
-        hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
+        hotkey::{HotkeyModifiers, KeyboardShortcut},
     },
     platform::platform_interface::RawWindowHandleExt,
 };
@@ -229,7 +225,7 @@ impl Application {
 
         let mut count: u32 = 0;
 
-        for (app_id, config_action) in app_config.actions.iter() {
+        for (_app_id, config_action) in app_config.actions.iter() {
             let binding = extract_os_binding(&config_action.cmd, &current_os);
             let binding = match binding {
                 Err(s) => {

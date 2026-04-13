@@ -1,12 +1,11 @@
 // Tooling to automatically detect available shortcuts on current window. Does not work well and probably should be scrape
 
-use windows::core::HSTRING;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::*;
-use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow; // Needed for the test
+ // Needed for the test
 
 // Define a struct to hold the results
 pub struct AcceleratorInfo {

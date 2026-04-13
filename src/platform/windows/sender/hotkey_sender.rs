@@ -1,6 +1,5 @@
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    KEYEVENTF_SCANCODE, VIRTUAL_KEY, VK_C, VK_CONTROL, VK_MENU, VK_TAB, VK_V,
+    SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_MENU, VK_TAB,
 };
 
 // Helper function to create a keyboard press/release event
@@ -11,7 +10,7 @@ fn make_key_event(vk: VIRTUAL_KEY, is_release: bool) -> INPUT {
     }
 
     // The INPUT structure must be initialized carefully
-    let mut input = INPUT {
+    let input = INPUT {
         r#type: INPUT_TYPE(1), // INPUT_KEYBOARD
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
@@ -40,7 +39,7 @@ pub fn send_ctrl_v() {
 
     unsafe {
         // Send the sequence of four events
-        let result = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        let _result = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         // Check result for success/failure...
     }
 }

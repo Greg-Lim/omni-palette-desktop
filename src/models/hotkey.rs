@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use strum_macros::{Display, EnumString};
+use strum_macros::Display;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Modifier {
