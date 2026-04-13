@@ -95,7 +95,7 @@ fn main() {
     let context_root = get_all_context();
 
     let avail_actions = master_registry.get_actions(&context_root);
-    // dbg!(&master_registry);
+    dbg!(&master_registry);
     let process_names: AppProcessName = context_root
         .fg_context
         .iter()
