@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::Deserialize;
 use strum_macros::Display;
 
@@ -162,8 +164,111 @@ pub enum Key {
 }
 
 #[derive(Debug, Clone, Copy, Hash)]
-
 pub struct KeyboardShortcut {
     pub modifier: HotkeyModifiers,
     pub key: Key,
+}
+
+impl fmt::Display for KeyboardShortcut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut parts = Vec::new();
+        if self.modifier.control {
+            parts.push("Ctrl");
+        }
+        if self.modifier.shift {
+            parts.push("Shift");
+        }
+        if self.modifier.alt {
+            parts.push("Alt");
+        }
+        if self.modifier.win {
+            parts.push("Win");
+        }
+        parts.push(self.key.display_name());
+        write!(f, "{}", parts.join("+"))
+    }
+}
+
+impl Key {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Key::KeyA => "A",
+            Key::KeyB => "B",
+            Key::KeyC => "C",
+            Key::KeyD => "D",
+            Key::KeyE => "E",
+            Key::KeyF => "F",
+            Key::KeyG => "G",
+            Key::KeyH => "H",
+            Key::KeyI => "I",
+            Key::KeyJ => "J",
+            Key::KeyK => "K",
+            Key::KeyL => "L",
+            Key::KeyM => "M",
+            Key::KeyN => "N",
+            Key::KeyO => "O",
+            Key::KeyP => "P",
+            Key::KeyQ => "Q",
+            Key::KeyR => "R",
+            Key::KeyS => "S",
+            Key::KeyT => "T",
+            Key::KeyU => "U",
+            Key::KeyV => "V",
+            Key::KeyW => "W",
+            Key::KeyX => "X",
+            Key::KeyY => "Y",
+            Key::KeyZ => "Z",
+            Key::Key0 => "0",
+            Key::Key1 => "1",
+            Key::Key2 => "2",
+            Key::Key3 => "3",
+            Key::Key4 => "4",
+            Key::Key5 => "5",
+            Key::Key6 => "6",
+            Key::Key7 => "7",
+            Key::Key8 => "8",
+            Key::Key9 => "9",
+            Key::F1 => "F1",
+            Key::F2 => "F2",
+            Key::F3 => "F3",
+            Key::F4 => "F4",
+            Key::F5 => "F5",
+            Key::F6 => "F6",
+            Key::F7 => "F7",
+            Key::F8 => "F8",
+            Key::F9 => "F9",
+            Key::F10 => "F10",
+            Key::F11 => "F11",
+            Key::F12 => "F12",
+            Key::Semicolon => ";",
+            Key::Equal => "=",
+            Key::Comma => ",",
+            Key::Minus => "-",
+            Key::Period => ".",
+            Key::Slash => "/",
+            Key::Grave => "`",
+            Key::LeftBracket => "[",
+            Key::Backslash => "\\",
+            Key::RightBracket => "]",
+            Key::Apostrophe => "'",
+            Key::Enter => "Enter",
+            Key::Space => "Space",
+            Key::Tab => "Tab",
+            Key::Escape => "Esc",
+            Key::Delete => "Del",
+            Key::BackSpace => "Backspace",
+            Key::Home => "Home",
+            Key::End => "End",
+            Key::PageUp => "PgUp",
+            Key::PageDown => "PgDn",
+            Key::Insert => "Ins",
+            Key::PrintScreen => "PrtSc",
+            Key::ScrollLock => "ScrLk",
+            Key::Pause => "Pause",
+            Key::LeftArrow => "Left",
+            Key::RightArrow => "Right",
+            Key::UpArrow => "Up",
+            Key::DownArrow => "Down",
+        }
+    }
 }

@@ -7,13 +7,13 @@ use crate::models::hotkey::Key;
 use crate::platform::platform_interface::get_all_context;
 use crate::platform::windows::context::context::{focus_window, get_hwnd_from_raw};
 use crate::platform::windows::sender::hotkey_sender::send_shortcut;
-use windows::Win32::Foundation::HWND;
 use crate::ui::ui_main;
 use crate::ui::ui_main::{Command, UiEvent, UiSignal};
 use crate::{core::registry::registry::MasterRegistry, models::action::Os};
 use std::env::consts::OS;
 use std::io::Write;
 use std::sync::mpsc;
+use windows::Win32::Foundation::HWND;
 
 mod core;
 mod models;
@@ -77,7 +77,8 @@ fn main() {
 
                             let commands: Vec<Command> = unit_actions
                                 .into_iter()
-                                .map(|ua| {
+                                .enumerate()
+                                .map(|(original_order, ua)| {
                                     let label = format!("{}: {}", ua.app_name, ua.action_name);
                                     let shortcut = ua.keyboard_shortcut;
                                     let target_hwnd_val: Option<isize> = ua
@@ -85,8 +86,16 @@ fn main() {
                                         .and_then(|h| get_hwnd_from_raw(h))
                                         .map(|hwnd| hwnd.0 as isize);
 
+                                    let shortcut_text = ua.keyboard_shortcut.to_string();
+
                                     Command {
                                         label,
+                                        shortcut_text,
+                                        priority: ua.metadata.priority,
+                                        focus_state: ua.focus_state,
+                                        starred: ua.metadata.starred,
+                                        tags: ua.metadata.tags,
+                                        original_order,
                                         action: Box::new(move || {
                                             if let Some(val) = target_hwnd_val {
                                                 focus_window(HWND(val as *mut _));

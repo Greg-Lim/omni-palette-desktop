@@ -1,7 +1,10 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::models::{action::FocusState, hotkey::Key};
+use crate::models::{
+    action::{CommandPriority, FocusState},
+    hotkey::Key,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -15,7 +18,9 @@ pub struct App {
     pub id: String,
     pub name: String,
     pub default_focus_state: Option<FocusState>,
-    pub default_priority: Priority,
+    pub default_priority: Option<CommandPriority>,
+    pub default_tags: Option<Vec<String>>,
+    #[serde(alias = "app_os_name")]
     pub application_os_name: AppOsName,
 }
 
@@ -30,6 +35,9 @@ pub struct AppOsName {
 pub struct Action {
     pub name: String,
     pub focus_state: Option<FocusState>,
+    pub priority: Option<CommandPriority>,
+    pub tags: Option<Vec<String>>,
+    pub starred: Option<bool>,
     pub cmd: CmdByOs,
 }
 
@@ -56,22 +64,4 @@ pub enum Modifier {
     Win,
     Fn,
     // Meta,
-}
-
-#[derive(Debug, Deserialize, Clone, Copy)]
-pub enum Priority {
-    #[serde(rename = "OSReserved")]
-    OSReserved,
-    #[serde(rename = "GlobalRemapper")]
-    GlobalRemapper,
-    #[serde(rename = "OSGlobal")]
-    OSGlobal,
-    #[serde(rename = "UserOverrides")]
-    UserOverrides,
-    #[serde(rename = "Application")]
-    Application,
-    #[serde(rename = "ApplicationExtensions")]
-    ApplicationExtensions,
-    #[serde(rename = "DocumentOrWebApp")]
-    DocumentOrWebApp,
 }

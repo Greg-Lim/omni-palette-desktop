@@ -1,12 +1,18 @@
-use crate::core::search::get_score;
+use crate::core::command_filter::{
+    filter_commands, initial_filtered_commands, FilterableCommand, FilteredCommand,
+};
+use crate::core::search::MatchRange;
+use crate::models::action::{CommandPriority, FocusState};
 use eframe::egui;
+use eframe::egui::text::LayoutJob;
 use std::fmt;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
-const PALETTE_WIDTH: f32 = 720.0;
-const MAX_VISIBLE_ROWS: usize = 8;
+const PALETTE_WIDTH: f32 = 780.0;
+const MAX_VISIBLE_ROWS: usize = 15;
 const ROW_HEIGHT: f32 = 40.0;
+const MIN_LIST_ROWS: usize = 15;
 
 const BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
 const CARD_BG: egui::Color32 = egui::Color32::from_rgb(37, 37, 38);
@@ -22,9 +28,17 @@ const TEXT_SELECTED: egui::Color32 = egui::Color32::WHITE;
 const TEXTBOX_TEXT: egui::Color32 = egui::Color32::from_rgb(230, 230, 230);
 const TEXTBOX_HINT: egui::Color32 = egui::Color32::from_rgb(120, 120, 120);
 const TEXTBOX_CURSOR: egui::Color32 = egui::Color32::from_rgb(0, 122, 204);
+const TEXT_MATCH: egui::Color32 = egui::Color32::from_rgb(255, 213, 122);
+const TEXT_MATCH_SELECTED: egui::Color32 = egui::Color32::from_rgb(255, 238, 180);
 
 pub struct Command {
     pub label: String,
+    pub shortcut_text: String,
+    pub priority: CommandPriority,
+    pub focus_state: FocusState,
+    pub starred: bool,
+    pub tags: Vec<String>,
+    pub original_order: usize,
     pub action: Box<dyn Fn() + Send + Sync>,
 }
 
@@ -32,6 +46,12 @@ impl fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Command")
             .field("label", &self.label)
+            .field("shortcut_text", &self.shortcut_text)
+            .field("priority", &self.priority)
+            .field("focus_state", &self.focus_state)
+            .field("starred", &self.starred)
+            .field("tags", &self.tags)
+            .field("original_order", &self.original_order)
             .field("action", &"<function>")
             .finish()
     }
@@ -41,42 +61,105 @@ impl fmt::Debug for Command {
 pub struct CommandPaletteApp {
     pub filter_text: String,
     pub all_commands: Vec<Command>,
-    pub filtered_indices: Vec<usize>,
+    pub filtered_commands: Vec<FilteredCommand>,
     pub selected_index: usize,
     pub is_open: bool,
 }
 
 impl CommandPaletteApp {
     fn new(all_commands: Vec<Command>) -> Self {
-        let filtered_indices = (0..all_commands.len()).collect();
+        let filtered_commands = initial_filtered_commands(all_commands.len());
         Self {
             filter_text: String::new(),
             all_commands,
-            filtered_indices,
+            filtered_commands,
             selected_index: 0,
             is_open: false,
         }
     }
 
     fn recompute_filter(&mut self) {
-        if self.filter_text.is_empty() {
-            self.filtered_indices = (0..self.all_commands.len()).collect();
-            return;
+        self.filtered_commands = filter_commands(&self.all_commands, &self.filter_text);
+    }
+}
+
+impl FilterableCommand for Command {
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn priority(&self) -> CommandPriority {
+        self.priority
+    }
+
+    fn focus_state(&self) -> FocusState {
+        self.focus_state
+    }
+
+    fn starred(&self) -> bool {
+        self.starred
+    }
+
+    fn tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    fn original_order(&self) -> usize {
+        self.original_order
+    }
+}
+
+fn highlighted_label_job(label: &str, ranges: &[MatchRange], is_selected: bool) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let normal_color = if is_selected {
+        TEXT_SELECTED
+    } else {
+        TEXT_PRIMARY
+    };
+    let highlight_color = if is_selected {
+        TEXT_MATCH_SELECTED
+    } else {
+        TEXT_MATCH
+    };
+    let normal_format = egui::TextFormat {
+        font_id: egui::FontId::proportional(15.5),
+        color: normal_color,
+        ..Default::default()
+    };
+    let highlight_format = egui::TextFormat {
+        font_id: egui::FontId::proportional(15.5),
+        color: highlight_color,
+        ..Default::default()
+    };
+
+    let mut cursor = 0;
+    for range in ranges {
+        if range.start > label.len()
+            || range.end > label.len()
+            || range.start >= range.end
+            || !label.is_char_boundary(range.start)
+            || !label.is_char_boundary(range.end)
+        {
+            continue;
         }
 
-        let mut scored: Vec<(usize, i32)> = self
-            .all_commands
-            .iter()
-            .enumerate()
-            .filter_map(|(i, cmd)| {
-                let result = get_score(&cmd.label, &self.filter_text);
-                (result.score > 0).then_some((i, result.score))
-            })
-            .collect();
+        if cursor < range.start {
+            job.append(&label[cursor..range.start], 0.0, normal_format.clone());
+        }
 
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
-        self.filtered_indices = scored.into_iter().map(|(i, _)| i).collect();
+        job.append(
+            &label[range.start..range.end],
+            0.0,
+            highlight_format.clone(),
+        );
+        cursor = range.end;
     }
+
+    if cursor < label.len() {
+        job.append(&label[cursor..], 0.0, normal_format);
+    }
+
+    job
 }
 
 #[derive(Debug)]
@@ -97,6 +180,7 @@ struct App {
     event_tx: Sender<UiEvent>,
     had_focus_since_open: bool,
     needs_text_focus: bool,
+    keyboard_nav: bool,
 }
 
 impl App {
@@ -142,6 +226,7 @@ impl App {
             event_tx,
             had_focus_since_open: false,
             needs_text_focus: false,
+            keyboard_nav: false,
         }
     }
 
@@ -173,14 +258,15 @@ impl App {
     }
 
     fn desired_window_size(&self) -> egui::Vec2 {
-        let visible_count = self.palette.filtered_indices.len().min(MAX_VISIBLE_ROWS);
-        let list_height = if visible_count == 0 {
-            44.0
-        } else {
-            visible_count as f32 * ROW_HEIGHT
-        };
+        let visible_count = self
+            .palette
+            .filtered_commands
+            .len()
+            .max(MIN_LIST_ROWS)
+            .min(MAX_VISIBLE_ROWS);
+        let list_height = visible_count as f32 * ROW_HEIGHT;
 
-        egui::vec2(PALETTE_WIDTH, 16.0 + 52.0 + 8.0 + list_height + 16.0)
+        egui::vec2(PALETTE_WIDTH, 16.0 + 60.0 + 8.0 + list_height + 16.0)
     }
 
     fn sync_viewport(&self, ctx: &egui::Context) {
@@ -196,19 +282,12 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
     }
 
-    fn split_label<'a>(&self, label: &'a str) -> (&'a str, &'a str) {
-        if let Some((app, action)) = label.split_once(": ") {
-            (app, action)
-        } else {
-            ("", label)
-        }
-    }
-
     fn execute_selected(&mut self, ctx: &egui::Context) {
-        if let Some(&orig_idx) = self
+        if let Some(orig_idx) = self
             .palette
-            .filtered_indices
+            .filtered_commands
             .get(self.palette.selected_index)
+            .map(|row| row.command_index)
         {
             self.hide(ctx);
             (self.palette.all_commands[orig_idx].action)();
@@ -220,11 +299,13 @@ impl App {
         &mut self,
         ui: &mut egui::Ui,
         idx: usize,
-        orig_idx: usize,
+        row: &FilteredCommand,
     ) -> Option<usize> {
         let is_selected = idx == self.palette.selected_index;
+        let orig_idx = row.command_index;
         let label = &self.palette.all_commands[orig_idx].label;
-        let (app, action) = self.split_label(label);
+        let shortcut_text = &self.palette.all_commands[orig_idx].shortcut_text;
+        let is_starred = self.palette.all_commands[orig_idx].starred;
 
         let desired_size = egui::vec2(ui.available_width(), ROW_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
@@ -262,33 +343,43 @@ impl App {
                 egui::Layout::left_to_right(egui::Align::Center).with_main_justify(true),
                 |ui| {
                     ui.horizontal(|ui| {
-                        if !app.is_empty() {
-                            ui.label(egui::RichText::new(format!("{app}:")).size(14.5).color(
-                                if is_selected {
-                                    egui::Color32::from_rgb(220, 235, 255)
-                                } else {
-                                    TEXT_MUTED
-                                },
-                            ));
-                            ui.add_space(8.0);
+                        if is_starred {
+                            ui.label(egui::RichText::new("*").size(15.5).color(if is_selected {
+                                TEXT_MATCH_SELECTED
+                            } else {
+                                TEXT_MATCH
+                            }));
+                            ui.add_space(6.0);
                         }
 
-                        ui.label(
-                            egui::RichText::new(action)
-                                .size(15.5)
-                                .color(if is_selected {
-                                    TEXT_SELECTED
-                                } else {
-                                    TEXT_PRIMARY
-                                }),
-                        );
+                        ui.label(highlighted_label_job(
+                            label,
+                            &row.label_matches,
+                            is_selected,
+                        ));
+
+                        if !shortcut_text.is_empty() {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(egui::RichText::new(shortcut_text).size(12.5).color(
+                                        if is_selected {
+                                            egui::Color32::from_rgb(180, 200, 230)
+                                        } else {
+                                            TEXT_MUTED
+                                        },
+                                    ));
+                                },
+                            );
+                        }
                     });
                 },
             );
         });
 
-        if is_selected {
+        if is_selected && self.keyboard_nav {
             response.scroll_to_me(Some(egui::Align::Center));
+            self.keyboard_nav = false;
         }
 
         if response.clicked() {
@@ -331,16 +422,18 @@ impl eframe::App for App {
             return;
         }
 
-        let visible_count = self.palette.filtered_indices.len().min(MAX_VISIBLE_ROWS);
+        let visible_count = self.palette.filtered_commands.len().min(MAX_VISIBLE_ROWS);
 
         if visible_count > 0 {
             if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
                 self.palette.selected_index = (self.palette.selected_index + 1) % visible_count;
+                self.keyboard_nav = true;
             }
 
             if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
                 self.palette.selected_index =
                     (self.palette.selected_index + visible_count - 1) % visible_count;
+                self.keyboard_nav = true;
             }
 
             if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -370,8 +463,8 @@ impl eframe::App for App {
                             .inner_margin(egui::Margin {
                                 left: 12,
                                 right: 12,
-                                top: 10,
-                                bottom: 10,
+                                top: 14,
+                                bottom: 14,
                             })
                             .show(ui, |ui| {
                                 ui.scope(|ui| {
@@ -419,7 +512,7 @@ impl eframe::App for App {
 
                         ui.add_space(8.0);
 
-                        if self.palette.filtered_indices.is_empty() {
+                        if self.palette.filtered_commands.is_empty() {
                             egui::Frame::new()
                                 .fill(BG)
                                 .corner_radius(egui::CornerRadius::same(6))
@@ -442,18 +535,17 @@ impl eframe::App for App {
                             .show(ui, |ui| {
                                 let mut clicked_action: Option<usize> = None;
 
-                                let indices: Vec<(usize, usize)> = self
+                                let rows: Vec<(usize, FilteredCommand)> = self
                                     .palette
-                                    .filtered_indices
+                                    .filtered_commands
                                     .iter()
                                     .take(MAX_VISIBLE_ROWS)
-                                    .copied()
+                                    .cloned()
                                     .enumerate()
                                     .collect();
 
-                                for (idx, orig_idx) in indices {
-                                    if let Some(clicked_idx) =
-                                        self.draw_command_row(ui, idx, orig_idx)
+                                for (idx, row) in rows {
+                                    if let Some(clicked_idx) = self.draw_command_row(ui, idx, &row)
                                     {
                                         clicked_action = Some(clicked_idx);
                                     }
@@ -479,11 +571,11 @@ impl eframe::App for App {
 pub fn ui_main(receiver: Receiver<UiSignal>, event_tx: Sender<UiEvent>) {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([PALETTE_WIDTH, 260.0])
+            .with_inner_size([PALETTE_WIDTH, 700.0])
             .with_decorations(false)
             .with_transparent(true)
             .with_always_on_top()
-            .with_resizable(false)
+            .with_resizable(true)
             .with_visible(false)
             .with_active(true),
         ..Default::default()

@@ -18,24 +18,27 @@ pub fn get_foreground_window_handle() -> HWND {
 }
 
 struct WindowEnumContext {
+    active_hwnd: HWND,
     fg: Vec<RawWindowHandle>,
     bg: Vec<RawWindowHandle>,
 }
 
 pub fn get_all_windows() -> (Vec<RawWindowHandle>, Vec<RawWindowHandle>) {
-    // 1. Initialize our wrapper struct
+    let active_hwnd = get_foreground_window_handle();
+
     let mut context = WindowEnumContext {
+        active_hwnd,
         fg: Vec::new(),
         bg: Vec::new(),
     };
 
-    dbg!("Starting window enumeration with EnumWindows");
-
     unsafe extern "system" fn enum_vc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        // 2. Cast the single pointer back to our struct
         let context = &mut *(lparam.0 as *mut WindowEnumContext);
 
-        // --- GATHER ATTRIBUTES ---
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return BOOL::from(true);
+        }
+
         let is_visible = IsWindowVisible(hwnd).as_bool();
 
         let mut cloaked: i32 = 0;
@@ -47,22 +50,16 @@ pub fn get_all_windows() -> (Vec<RawWindowHandle>, Vec<RawWindowHandle>) {
         );
         let is_cloaked = cloaked != 0;
 
-        let mut text: [u16; 512] = [0; 512];
-
-        // --- SELECTION LOGIC ---
-        // Basic filter: We still want to ignore "Progman" or non-windows
-        if !IsWindow(Some(hwnd)).as_bool() {
+        if !is_visible || is_cloaked {
             return BOOL::from(true);
         }
 
         if let Some(h) = NonZeroIsize::new(hwnd.0 as isize) {
             let handle = RawWindowHandle::Win32(Win32WindowHandle::new(h));
 
-            // Logic: A window is "Foreground/Active" ONLY if it passes all three
-            if is_visible && !is_cloaked {
+            if hwnd == context.active_hwnd {
                 context.fg.push(handle);
             } else {
-                // Otherwise, it's a Background/Inactive window (AHK, PowerToys, etc.)
                 context.bg.push(handle);
             }
         }
@@ -71,18 +68,11 @@ pub fn get_all_windows() -> (Vec<RawWindowHandle>, Vec<RawWindowHandle>) {
     }
 
     unsafe {
-        // 3. Pass the pointer to the whole context struct
         let ptr = &mut context as *mut WindowEnumContext;
         let _ = EnumWindows(Some(enum_vc), LPARAM(ptr as isize));
     }
 
-    dbg!(
-        "Finished window enumeration. Found {} foreground and {} background windows.",
-        context.fg.len(),
-        context.bg.len()
-    );
-    (context.fg, vec![])
-    // (context.fg, context.bg)
+    (context.fg, context.bg)
 }
 
 fn get_window_title(hwnd: &HWND) -> String {

@@ -10,8 +10,8 @@ use crate::{
     core::extensions::extensions::load_config,
     models::{
         action::{
-            Action, ActionId, ActionName, AppName, AppProcessName, ApplicationID, ContextRoot,
-            FocusState, Os,
+            Action, ActionId, ActionMetadata, ActionName, AppName, AppProcessName, ApplicationID,
+            CommandPriority, ContextRoot, FocusState, Os,
         },
         config::{CmdByOs, Config, KeyChord, Modifier},
         hotkey::{HotkeyModifiers, KeyboardShortcut},
@@ -89,14 +89,13 @@ pub struct UnitAction {
     pub action_name: ActionName,
     pub focus_state: FocusState,
     pub keyboard_shortcut: KeyboardShortcut,
+    pub metadata: ActionMetadata,
     pub target_window: Option<RawWindowHandle>,
 }
 
 impl MasterRegistry {
     pub fn get_actions(&self, context: &ContextRoot) -> Vec<UnitAction> {
         let mut all_actions = vec![];
-
-        dbg!(context);
 
         // Extract background actions
         for bg_context in &context.bg_context {
@@ -123,42 +122,13 @@ impl MasterRegistry {
                     action_name: action.name.clone(),
                     focus_state: FocusState::Background,
                     keyboard_shortcut: action.keyboard_shortcut,
+                    metadata: action.metadata.clone(),
                     target_window: Some(*bg_context),
                 });
             }
         }
 
-        // Extract foreground actions
-        for fg_context in &context.fg_context {
-            let Some(process_name) = fg_context.get_app_process_name() else {
-                continue;
-            };
-
-            let Some(&app_id) = self.application_process_name_id.get(&process_name) else {
-                continue;
-            };
-
-            let Some(app) = self.application_registry.get(&app_id) else {
-                continue;
-            };
-
-            for (&action_id, action) in app
-                .application_registry
-                .iter()
-                .filter(|(_, a)| a.focus_state == FocusState::Focused)
-            {
-                all_actions.push(UnitAction {
-                    app_name: app.application_name.clone(),
-                    action_id,
-                    action_name: action.name.clone(),
-                    focus_state: FocusState::Focused,
-                    keyboard_shortcut: action.keyboard_shortcut,
-                    target_window: Some(*fg_context),
-                });
-            }
-        }
-
-        // Extract focused actions
+        // Extract focused actions (only for the single active/foreground window)
         'add_focused_actions: {
             let Some(active) = context.get_active() else {
                 break 'add_focused_actions;
@@ -187,7 +157,26 @@ impl MasterRegistry {
                     action_name: action.name.clone(),
                     focus_state: FocusState::Focused,
                     keyboard_shortcut: action.keyboard_shortcut,
+                    metadata: action.metadata.clone(),
                     target_window: Some(*active),
+                });
+            }
+        }
+
+        for app in self.application_registry.values() {
+            for (&action_id, action) in app
+                .application_registry
+                .iter()
+                .filter(|(_, a)| a.focus_state == FocusState::Global)
+            {
+                all_actions.push(UnitAction {
+                    app_name: app.application_name.clone(),
+                    action_id,
+                    action_name: action.name.clone(),
+                    focus_state: FocusState::Global,
+                    keyboard_shortcut: action.keyboard_shortcut,
+                    metadata: action.metadata.clone(),
+                    target_window: None,
                 });
             }
         }
@@ -227,6 +216,11 @@ impl Application {
         }?;
 
         let mut application_registry: HashMap<ActionId, Action> = HashMap::new();
+        let default_priority = app_config
+            .app
+            .default_priority
+            .unwrap_or(CommandPriority::Normal);
+        let default_tags = app_config.app.default_tags.clone().unwrap_or_default();
 
         fn extract_os_binding<'a>(
             action: &'a CmdByOs,
@@ -260,6 +254,13 @@ impl Application {
                 Ok(binding) => binding,
             };
 
+            let mut tags = default_tags.clone();
+            if let Some(action_tags) = &config_action.tags {
+                tags.extend(action_tags.iter().cloned());
+            }
+            tags.sort();
+            tags.dedup();
+
             // let binding_ref = binding.as_ref();
             let app_action: Action = Action {
                 name: config_action.name.clone(),
@@ -272,13 +273,17 @@ impl Application {
                     },
                     key: binding.key.into(),
                 },
-                focus_state: config_action.focus_state.clone().unwrap_or(
+                focus_state: config_action.focus_state.unwrap_or(
                     app_config
                         .app
                         .default_focus_state
-                        .clone()
-                        .ok_or("No Focus state found".to_string())?,
+                        .unwrap_or(FocusState::Focused),
                 ),
+                metadata: ActionMetadata {
+                    priority: config_action.priority.unwrap_or(default_priority),
+                    starred: config_action.starred.unwrap_or(false),
+                    tags,
+                },
             }
             .into();
             application_registry.insert(count, app_action);
