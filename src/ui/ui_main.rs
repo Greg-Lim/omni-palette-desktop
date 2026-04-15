@@ -42,6 +42,42 @@ pub struct Command {
     pub action: Box<dyn Fn() + Send + Sync>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PaletteWorkArea {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+impl PaletteWorkArea {
+    pub fn from_ltrb(left: i32, top: i32, right: i32, bottom: i32) -> Self {
+        Self {
+            left: left as f32,
+            top: top as f32,
+            right: right as f32,
+            bottom: bottom as f32,
+        }
+    }
+
+    fn width(self) -> f32 {
+        self.right - self.left
+    }
+
+    fn height(self) -> f32 {
+        self.bottom - self.top
+    }
+
+    fn to_points(self, native_pixels_per_point: f32) -> Self {
+        Self {
+            left: self.left / native_pixels_per_point,
+            top: self.top / native_pixels_per_point,
+            right: self.right / native_pixels_per_point,
+            bottom: self.bottom / native_pixels_per_point,
+        }
+    }
+}
+
 impl fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Command")
@@ -164,7 +200,10 @@ fn highlighted_label_job(label: &str, ranges: &[MatchRange], is_selected: bool) 
 
 #[derive(Debug)]
 pub enum UiSignal {
-    Show(Vec<Command>),
+    Show {
+        commands: Vec<Command>,
+        work_area: Option<PaletteWorkArea>,
+    },
     Hide,
 }
 
@@ -181,6 +220,7 @@ struct App {
     had_focus_since_open: bool,
     needs_text_focus: bool,
     keyboard_nav: bool,
+    work_area: Option<PaletteWorkArea>,
 }
 
 impl App {
@@ -227,15 +267,22 @@ impl App {
             had_focus_since_open: false,
             needs_text_focus: false,
             keyboard_nav: false,
+            work_area: None,
         }
     }
 
-    fn show(&mut self, ctx: &egui::Context, commands: Vec<Command>) {
+    fn show(
+        &mut self,
+        ctx: &egui::Context,
+        commands: Vec<Command>,
+        work_area: Option<PaletteWorkArea>,
+    ) {
         self.palette.all_commands = commands;
         self.palette.filter_text.clear();
         self.palette.selected_index = 0;
         self.palette.recompute_filter();
         self.palette.is_open = true;
+        self.work_area = work_area;
         self.had_focus_since_open = false;
         self.needs_text_focus = true;
 
@@ -250,6 +297,7 @@ impl App {
         }
 
         self.palette.is_open = false;
+        self.work_area = None;
         self.had_focus_since_open = false;
         self.needs_text_focus = false;
 
@@ -270,12 +318,23 @@ impl App {
 
     fn sync_viewport(&self, ctx: &egui::Context) {
         let size = self.desired_window_size();
-        let monitor_size = ctx
-            .input(|i| i.viewport().monitor_size)
-            .unwrap_or(egui::vec2(1920.0, 1080.0));
+        let native_pixels_per_point = ctx
+            .input(|i| i.viewport().native_pixels_per_point)
+            .unwrap_or(1.0)
+            .max(1.0);
 
-        let x = (monitor_size.x - size.x) / 2.0;
-        let y = monitor_size.y * 0.10;
+        let (x, y) = if let Some(work_area) = self.work_area {
+            let work_area = work_area.to_points(native_pixels_per_point);
+            (
+                work_area.left + ((work_area.width() - size.x) / 2.0).max(0.0),
+                work_area.top + (work_area.height() * 0.10),
+            )
+        } else {
+            let monitor_size = ctx
+                .input(|i| i.viewport().monitor_size)
+                .unwrap_or(egui::vec2(1920.0, 1080.0));
+            ((monitor_size.x - size.x) / 2.0, monitor_size.y * 0.10)
+        };
 
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
@@ -307,7 +366,7 @@ impl App {
         let is_starred = self.palette.all_commands[orig_idx].starred;
 
         let desired_size = egui::vec2(ui.available_width(), ROW_HEIGHT);
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
         if response.hovered() {
             self.palette.selected_index = idx;
@@ -376,12 +435,18 @@ impl App {
             );
         });
 
+        let click_response = ui.interact(
+            rect,
+            ui.id().with(("command_row", orig_idx)),
+            egui::Sense::click(),
+        );
+
         if is_selected && self.keyboard_nav {
-            response.scroll_to_me(Some(egui::Align::Center));
+            click_response.scroll_to_me(Some(egui::Align::Center));
             self.keyboard_nav = false;
         }
 
-        if response.clicked() {
+        if click_response.clicked() {
             self.palette.selected_index = idx;
             return Some(orig_idx);
         }
@@ -396,7 +461,10 @@ impl eframe::App for App {
 
         while let Ok(sig) = self.receiver.try_recv() {
             match sig {
-                UiSignal::Show(commands) => self.show(ctx, commands),
+                UiSignal::Show {
+                    commands,
+                    work_area,
+                } => self.show(ctx, commands, work_area),
                 UiSignal::Hide => self.hide(ctx),
             }
         }

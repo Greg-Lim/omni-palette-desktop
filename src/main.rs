@@ -5,10 +5,12 @@ use env_logger::Builder;
 
 use crate::models::hotkey::Key;
 use crate::platform::platform_interface::get_all_context;
-use crate::platform::windows::context::context::{focus_window, get_hwnd_from_raw};
+use crate::platform::windows::context::context::{
+    focus_window, get_hwnd_from_raw, monitor_work_area_from_window,
+};
 use crate::platform::windows::sender::hotkey_sender::send_shortcut;
 use crate::ui::ui_main;
-use crate::ui::ui_main::{Command, UiEvent, UiSignal};
+use crate::ui::ui_main::{Command, PaletteWorkArea, UiEvent, UiSignal};
 use crate::{core::registry::registry::MasterRegistry, models::action::Os};
 use std::env::consts::OS;
 use std::io::Write;
@@ -73,6 +75,13 @@ fn main() {
                             let _ = ui_tx.send(UiSignal::Hide);
                         } else {
                             let context_root = get_all_context();
+                            let work_area = context_root
+                                .get_active()
+                                .and_then(|handle| get_hwnd_from_raw(*handle))
+                                .and_then(monitor_work_area_from_window)
+                                .map(|(left, top, right, bottom)| {
+                                    PaletteWorkArea::from_ltrb(left, top, right, bottom)
+                                });
                             let unit_actions = registry_clone.get_actions(&context_root);
 
                             let commands: Vec<Command> = unit_actions
@@ -106,7 +115,13 @@ fn main() {
                                 })
                                 .collect();
 
-                            if ui_tx.send(UiSignal::Show(commands)).is_ok() {
+                            if ui_tx
+                                .send(UiSignal::Show {
+                                    commands,
+                                    work_area,
+                                })
+                                .is_ok()
+                            {
                                 palette_open = true;
                             }
                         }

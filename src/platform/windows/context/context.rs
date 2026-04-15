@@ -5,6 +5,9 @@ use std::os::windows::ffi::OsStringExt;
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, MAX_PATH};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::System::ProcessStatus::GetModuleBaseNameW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 #[cfg(test)]
@@ -169,6 +172,26 @@ pub fn focus_window(hwnd: HWND) {
         let _ = SetForegroundWindow(hwnd);
     }
     std::thread::sleep(std::time::Duration::from_millis(50));
+}
+
+pub fn monitor_work_area_from_window(hwnd: HWND) -> Option<(i32, i32, i32, i32)> {
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    if monitor.is_invalid() {
+        return None;
+    }
+
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+
+    let ok = unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool();
+    ok.then_some((
+        info.rcWork.left,
+        info.rcWork.top,
+        info.rcWork.right,
+        info.rcWork.bottom,
+    ))
 }
 
 #[cfg(test)]
