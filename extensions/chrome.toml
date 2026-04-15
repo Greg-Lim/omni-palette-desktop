@@ -140,7 +140,7 @@ cmd.macos = { mods = ["cmd"], key = "9" }
 [actions.back]
 name = "Go back"
 focus_state = "focused"
-action_priority = "high"
+action_priority = "normal"
 cmd.windows = { mods = ["alt"], key = "LeftArrow" }
 cmd.macos = { mods = ["cmd"], key = "LeftBracket" }
 

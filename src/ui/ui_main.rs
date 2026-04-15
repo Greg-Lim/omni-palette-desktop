@@ -10,9 +10,10 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
 const PALETTE_WIDTH: f32 = 780.0;
-const MAX_VISIBLE_ROWS: usize = 15;
-const ROW_HEIGHT: f32 = 40.0;
-const MIN_LIST_ROWS: usize = 15;
+const MAX_VISIBLE_ROWS: usize = 12;
+const ROW_HEIGHT: f32 = 38.0;
+const MIN_LIST_ROWS: usize = 12;
+const LIST_HEIGHT: f32 = MIN_LIST_ROWS as f32 * ROW_HEIGHT;
 
 const BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
 const CARD_BG: egui::Color32 = egui::Color32::from_rgb(37, 37, 38);
@@ -306,14 +307,7 @@ impl App {
     }
 
     fn desired_window_size(&self) -> egui::Vec2 {
-        let visible_count = self
-            .palette
-            .filtered_commands
-            .len()
-            .clamp(MIN_LIST_ROWS, MAX_VISIBLE_ROWS);
-        let list_height = visible_count as f32 * ROW_HEIGHT;
-
-        egui::vec2(PALETTE_WIDTH, 16.0 + 60.0 + 8.0 + list_height + 16.0)
+        egui::vec2(PALETTE_WIDTH, 16.0 + 60.0 + 8.0 + LIST_HEIGHT + 16.0)
     }
 
     fn sync_viewport(&self, ctx: &egui::Context) {
@@ -579,12 +573,15 @@ impl eframe::App for App {
 
                         ui.add_space(8.0);
 
+                        ui.set_min_height(LIST_HEIGHT);
+
                         if self.palette.filtered_commands.is_empty() {
                             egui::Frame::new()
                                 .fill(BG)
                                 .corner_radius(egui::CornerRadius::same(6))
                                 .inner_margin(egui::Margin::same(12))
                                 .show(ui, |ui| {
+                                    ui.set_min_height(LIST_HEIGHT - 24.0);
                                     ui.label(
                                         egui::RichText::new("No matching commands")
                                             .size(14.5)
@@ -594,10 +591,9 @@ impl eframe::App for App {
                             return;
                         }
 
-                        let max_height = MAX_VISIBLE_ROWS as f32 * ROW_HEIGHT;
-
                         egui::ScrollArea::vertical()
-                            .max_height(max_height)
+                            .max_height(LIST_HEIGHT)
+                            .min_scrolled_height(LIST_HEIGHT)
                             .auto_shrink([false; 2])
                             .show(ui, |ui| {
                                 let mut clicked_action: Option<usize> = None;

@@ -36,7 +36,7 @@ pub fn filter_commands<T: FilterableCommand>(
     filter_text: &str,
 ) -> Vec<FilteredCommand> {
     if filter_text.is_empty() {
-        return initial_filtered_commands(commands.len());
+        return initial_sorted_filtered_commands(commands);
     }
 
     let prepared_query = prepare_query(filter_text);
@@ -58,10 +58,34 @@ pub fn filter_commands<T: FilterableCommand>(
             .then_with(|| b.is_prefix.cmp(&a.is_prefix))
             .then_with(|| a.span.cmp(&b.span))
             .then_with(|| command_a.label().len().cmp(&command_b.label().len()))
+            .then_with(|| compare_labels(command_a.label(), command_b.label()))
             .then_with(|| command_a.original_order().cmp(&command_b.original_order()))
     });
 
     scored
+}
+
+fn initial_sorted_filtered_commands<T: FilterableCommand>(commands: &[T]) -> Vec<FilteredCommand> {
+    let mut rows = initial_filtered_commands(commands.len());
+
+    rows.sort_by(|a, b| {
+        let command_a = &commands[a.command_index];
+        let command_b = &commands[b.command_index];
+
+        command_b
+            .priority()
+            .cmp(&command_a.priority())
+            .then_with(|| compare_labels(command_a.label(), command_b.label()))
+            .then_with(|| command_a.original_order().cmp(&command_b.original_order()))
+    });
+
+    rows
+}
+
+fn compare_labels(a: &str, b: &str) -> std::cmp::Ordering {
+    a.to_ascii_lowercase()
+        .cmp(&b.to_ascii_lowercase())
+        .then_with(|| a.cmp(b))
 }
 
 fn score_command<T: FilterableCommand>(
@@ -216,17 +240,35 @@ mod tests {
     }
 
     #[test]
-    fn empty_filter_returns_default_order_without_scores() {
+    fn empty_filter_sorts_by_priority_then_label_without_scores() {
         let commands = vec![
-            command("First", CommandPriority::Normal, false, &[], 0),
-            command("Second", CommandPriority::High, true, &[], 1),
+            command("Chrome: Zoom in", CommandPriority::Normal, false, &[], 0),
+            command("Chrome: Close tab", CommandPriority::High, true, &[], 1),
+            command("Chrome: New tab", CommandPriority::High, false, &[], 2),
+            command(
+                "Chrome: Bookmark page",
+                CommandPriority::Suppressed,
+                false,
+                &[],
+                3,
+            ),
         ];
 
         let rows = filter_commands(&commands, "");
+        let labels: Vec<&str> = rows
+            .iter()
+            .map(|row| commands[row.command_index].label.as_str())
+            .collect();
 
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].command_index, 0);
-        assert_eq!(rows[1].command_index, 1);
+        assert_eq!(
+            labels,
+            vec![
+                "Chrome: Close tab",
+                "Chrome: New tab",
+                "Chrome: Zoom in",
+                "Chrome: Bookmark page",
+            ]
+        );
         assert!(rows.iter().all(|row| row.score == 0));
         assert!(rows.iter().all(|row| row.label_matches.is_empty()));
     }
@@ -273,6 +315,90 @@ mod tests {
                 "Chrome: Foo high",
                 "Chrome: Foo normal",
                 "Chrome: Foo suppressed",
+            ]
+        );
+    }
+
+    #[test]
+    fn searched_results_use_alphabetical_order_as_final_tiebreaker() {
+        let commands = vec![
+            command(
+                "Chrome: Switch to tab 8",
+                CommandPriority::Suppressed,
+                false,
+                &[],
+                0,
+            ),
+            command(
+                "Chrome: Switch to tab 3",
+                CommandPriority::Suppressed,
+                false,
+                &[],
+                1,
+            ),
+            command(
+                "Chrome: Switch to tab 1",
+                CommandPriority::Suppressed,
+                false,
+                &[],
+                2,
+            ),
+        ];
+
+        let rows = filter_commands(&commands, "sw");
+        let labels: Vec<&str> = rows
+            .iter()
+            .map(|row| commands[row.command_index].label.as_str())
+            .collect();
+
+        assert_eq!(
+            labels,
+            vec![
+                "Chrome: Switch to tab 1",
+                "Chrome: Switch to tab 3",
+                "Chrome: Switch to tab 8",
+            ]
+        );
+    }
+
+    #[test]
+    fn searched_results_keep_priority_before_fuzzy_quality() {
+        let commands = vec![
+            command(
+                "Chrome: Switch to tab 1",
+                CommandPriority::Suppressed,
+                false,
+                &[],
+                0,
+            ),
+            command(
+                "Chrome: Scroll down",
+                CommandPriority::Normal,
+                false,
+                &[],
+                1,
+            ),
+            command(
+                "Chrome: Switch to last tab",
+                CommandPriority::High,
+                false,
+                &[],
+                2,
+            ),
+        ];
+
+        let rows = filter_commands(&commands, "sw");
+        let labels: Vec<&str> = rows
+            .iter()
+            .map(|row| commands[row.command_index].label.as_str())
+            .collect();
+
+        assert_eq!(
+            labels,
+            vec![
+                "Chrome: Switch to last tab",
+                "Chrome: Scroll down",
+                "Chrome: Switch to tab 1",
             ]
         );
     }
