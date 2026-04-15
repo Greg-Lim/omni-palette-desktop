@@ -53,6 +53,9 @@ pub fn filter_commands<T: FilterableCommand>(
         command_b
             .starred()
             .cmp(&command_a.starred())
+            .then_with(|| {
+                focus_rank(command_b.focus_state()).cmp(&focus_rank(command_a.focus_state()))
+            })
             .then_with(|| command_b.priority().cmp(&command_a.priority()))
             .then_with(|| b.score.cmp(&a.score))
             .then_with(|| b.is_prefix.cmp(&a.is_prefix))
@@ -73,13 +76,25 @@ fn initial_sorted_filtered_commands<T: FilterableCommand>(commands: &[T]) -> Vec
         let command_b = &commands[b.command_index];
 
         command_b
-            .priority()
-            .cmp(&command_a.priority())
+            .starred()
+            .cmp(&command_a.starred())
+            .then_with(|| {
+                focus_rank(command_b.focus_state()).cmp(&focus_rank(command_a.focus_state()))
+            })
+            .then_with(|| command_b.priority().cmp(&command_a.priority()))
             .then_with(|| compare_labels(command_a.label(), command_b.label()))
             .then_with(|| command_a.original_order().cmp(&command_b.original_order()))
     });
 
     rows
+}
+
+fn focus_rank(focus_state: FocusState) -> u8 {
+    match focus_state {
+        FocusState::Focused => 2,
+        FocusState::Background => 1,
+        FocusState::Global => 0,
+    }
 }
 
 fn compare_labels(a: &str, b: &str) -> std::cmp::Ordering {
@@ -235,6 +250,22 @@ mod tests {
             focus_state: FocusState::Focused,
             starred,
             tags: tags.iter().map(|tag| tag.to_string()).collect(),
+            original_order,
+        }
+    }
+
+    fn command_with_focus(
+        label: &str,
+        priority: CommandPriority,
+        focus_state: FocusState,
+        original_order: usize,
+    ) -> TestCommand {
+        TestCommand {
+            label: label.to_string(),
+            priority,
+            focus_state,
+            starred: false,
+            tags: Vec::new(),
             original_order,
         }
     }
@@ -400,6 +431,64 @@ mod tests {
                 "Chrome: Scroll down",
                 "Chrome: Switch to tab 1",
             ]
+        );
+    }
+
+    #[test]
+    fn focused_commands_rank_above_global_commands_before_priority() {
+        let commands = vec![
+            command_with_focus(
+                "Windows: Open File Explorer",
+                CommandPriority::High,
+                FocusState::Global,
+                0,
+            ),
+            command_with_focus(
+                "Chrome: Open file",
+                CommandPriority::Suppressed,
+                FocusState::Focused,
+                1,
+            ),
+        ];
+
+        let rows = filter_commands(&commands, "file");
+        let labels: Vec<&str> = rows
+            .iter()
+            .map(|row| commands[row.command_index].label.as_str())
+            .collect();
+
+        assert_eq!(
+            labels,
+            vec!["Chrome: Open file", "Windows: Open File Explorer"]
+        );
+    }
+
+    #[test]
+    fn empty_filter_ranks_focused_commands_above_global_commands_before_priority() {
+        let commands = vec![
+            command_with_focus(
+                "Windows: Open File Explorer",
+                CommandPriority::High,
+                FocusState::Global,
+                0,
+            ),
+            command_with_focus(
+                "Chrome: Open file",
+                CommandPriority::Suppressed,
+                FocusState::Focused,
+                1,
+            ),
+        ];
+
+        let rows = filter_commands(&commands, "");
+        let labels: Vec<&str> = rows
+            .iter()
+            .map(|row| commands[row.command_index].label.as_str())
+            .collect();
+
+        assert_eq!(
+            labels,
+            vec!["Chrome: Open file", "Windows: Open File Explorer"]
         );
     }
 

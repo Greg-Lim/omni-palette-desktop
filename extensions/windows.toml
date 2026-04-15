@@ -1,0 +1,280 @@
+# Curated Windows shortcuts from:
+# https://support.microsoft.com/en-us/windows/keyboard-shortcuts-in-windows-dcc61a57-8ff0-cffe-9796-cb9706c75eec
+
+version = 1
+
+[app]
+id = "windows"
+name = "Windows"
+default_focus_state = "global"
+default_tags = ["windows", "system", "os"]
+
+[app.application_os_name]
+windows = "explorer.exe"
+
+[actions]
+
+[actions.open_file_explorer]
+name = "Open File Explorer"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "E" }
+
+[actions.open_settings]
+name = "Open Settings"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "I" }
+
+[actions.lock_pc]
+name = "Lock PC"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "L" }
+
+[actions.open_run]
+name = "Open Run"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "R" }
+
+[actions.open_search]
+name = "Open Search"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "S" }
+
+[actions.open_quick_link_menu]
+name = "Open Quick Link menu"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "X" }
+
+[actions.show_hide_desktop]
+name = "Show/hide desktop"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "D" }
+
+[actions.open_task_view]
+name = "Open Task View"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "Tab" }
+
+[actions.open_clipboard_history]
+name = "Open Clipboard History"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "V" }
+
+[actions.open_action_center]
+name = "Open Action Center"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "A" }
+
+[actions.open_project_settings]
+name = "Open Project Settings"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "P" }
+
+[actions.screen_snip]
+name = "Screen snip"
+action_priority = "high"
+cmd.windows = { mods = ["win", "shift"], key = "S" }
+
+[actions.save_screenshot]
+name = "Save screenshot"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "PrintScreen" }
+
+[actions.open_accessibility]
+name = "Open Accessibility"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "U" }
+
+[actions.snap_window_left]
+name = "Snap window left"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "LeftArrow" }
+
+[actions.snap_window_right]
+name = "Snap window right"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "RightArrow" }
+
+[actions.maximize_window]
+name = "Maximize window"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "UpArrow" }
+
+[actions.minimize_window]
+name = "Minimize window"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "DownArrow" }
+
+[actions.open_emoji_panel]
+name = "Open Emoji Panel"
+action_priority = "high"
+cmd.windows = { mods = ["win"], key = "Period" }
+
+[actions.open_voice_typing]
+name = "Open Voice Typing"
+action_priority = "normal"
+cmd.windows = { mods = ["win"], key = "H" }
+
+[actions.open_widgets]
+name = "Open Widgets"
+action_priority = "normal"
+cmd.windows = { mods = ["win"], key = "W" }
+
+[actions.open_cast]
+name = "Open Cast"
+action_priority = "normal"
+cmd.windows = { mods = ["win"], key = "K" }
+
+[actions.open_game_bar]
+name = "Open Game Bar"
+action_priority = "normal"
+cmd.windows = { mods = ["win"], key = "G" }
+
+[actions.minimize_all_windows]
+name = "Minimize all windows"
+action_priority = "normal"
+cmd.windows = { mods = ["win"], key = "M" }
+
+[actions.restore_minimized_windows]
+name = "Restore minimized windows"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "shift"], key = "M" }
+
+[actions.move_window_left_monitor]
+name = "Move window to left monitor"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "shift"], key = "LeftArrow" }
+
+[actions.move_window_right_monitor]
+name = "Move window to right monitor"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "shift"], key = "RightArrow" }
+
+[actions.snap_window_top]
+name = "Snap window top"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "alt"], key = "UpArrow" }
+
+[actions.snap_window_bottom]
+name = "Snap window bottom"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "alt"], key = "DownArrow" }
+
+[actions.stretch_window_vertical]
+name = "Stretch window vertically"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "shift"], key = "UpArrow" }
+
+[actions.create_virtual_desktop]
+name = "Create virtual desktop"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "ctrl"], key = "D" }
+
+[actions.next_virtual_desktop]
+name = "Next virtual desktop"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "ctrl"], key = "RightArrow" }
+
+[actions.previous_virtual_desktop]
+name = "Previous virtual desktop"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "ctrl"], key = "LeftArrow" }
+
+[actions.close_virtual_desktop]
+name = "Close virtual desktop"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "ctrl"], key = "F4" }
+
+[actions.open_quick_assist]
+name = "Open Quick Assist"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "ctrl"], key = "Q" }
+
+[actions.open_sound_output]
+name = "Open Sound Output"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "ctrl"], key = "V" }
+
+[actions.open_system_about]
+name = "Open System About"
+action_priority = "normal"
+cmd.windows = { mods = ["win"], key = "Pause" }
+
+[actions.record_screen_region]
+name = "Record screen region"
+action_priority = "normal"
+cmd.windows = { mods = ["win", "shift"], key = "R" }
+
+[actions.toggle_hdr]
+name = "Toggle HDR"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win", "alt"], key = "B" }
+
+[actions.toggle_color_filters]
+name = "Toggle color filters"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win", "ctrl"], key = "C" }
+
+[actions.open_narrator]
+name = "Open Narrator"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win", "ctrl"], key = "Enter" }
+
+[actions.magnifier_zoom_in]
+name = "Magnifier zoom in"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win"], key = "Equal" }
+
+[actions.magnifier_zoom_out]
+name = "Magnifier zoom out"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win"], key = "Minus" }
+
+[actions.close_magnifier]
+name = "Close Magnifier"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win"], key = "Escape" }
+
+[actions.open_feedback_hub]
+name = "Open Feedback Hub"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win"], key = "F" }
+
+[actions.open_recall]
+name = "Open Recall"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win"], key = "J" }
+
+[actions.open_ime_reconversion]
+name = "Open IME reconversion"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win"], key = "Slash" }
+
+[actions.switch_input_language]
+name = "Switch input language"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win"], key = "Space" }
+
+[actions.previous_input_language]
+name = "Previous input language"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win", "shift"], key = "Space" }
+
+[actions.cycle_notifications]
+name = "Cycle notifications"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win", "shift"], key = "V" }
+
+[actions.uwp_full_screen]
+name = "UWP full screen"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win", "shift"], key = "Enter" }
+
+[actions.mixed_reality_input]
+name = "Mixed Reality input"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win"], key = "Y" }
+
+[actions.open_snap_layouts]
+name = "Open Snap Layouts"
+action_priority = "suppressed"
+cmd.windows = { mods = ["win"], key = "Z" }
