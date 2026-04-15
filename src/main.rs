@@ -1,20 +1,28 @@
+use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{
+    mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    Arc,
+};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use env_logger::Builder;
 
-use crate::domain::hotkey::Key;
-use crate::platform::platform_interface::get_all_context;
+use crate::config::ignore::{load_ignored_process_names, normalize_process_name};
+use crate::core::registry::registry::{MasterRegistry, UnitAction};
+use crate::domain::action::{ContextRoot, Os};
+use crate::domain::hotkey::{Key, KeyboardShortcut};
+use crate::platform::hotkey_actions::HotkeyPassthrough;
+use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
 use crate::platform::windows::context::context::{
     focus_window, get_hwnd_from_raw, monitor_work_area_from_window,
 };
 use crate::platform::windows::sender::hotkey_sender::send_shortcut;
 use crate::ui::ui_main;
 use crate::ui::ui_main::{Command, PaletteWorkArea, UiEvent, UiSignal};
-use crate::{core::registry::registry::MasterRegistry, domain::action::Os};
 use std::env::consts::OS;
 use std::io::Write;
-use std::sync::mpsc;
 use windows::Win32::Foundation::HWND;
 
 mod config;
@@ -24,6 +32,36 @@ mod platform;
 mod ui;
 
 fn main() {
+    init_logger();
+
+    let current_os = current_os();
+    let (ui_tx, ui_rx) = mpsc::channel::<UiSignal>();
+    let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
+
+    let extensions_folder = Path::new("./extensions");
+    let master_registry = Arc::new(MasterRegistry::build(extensions_folder, current_os));
+    let ignored_process_names = Arc::new(load_ignored_process_names(
+        &extensions_folder.join(".ignore.toml"),
+        current_os,
+    ));
+
+    let (handle, rx) = platform::hotkey_actions::start_hotkey_listener();
+    let hotkey_passthrough = handle.passthrough_sender();
+    let _hotkey_bridge = spawn_hotkey_bridge(
+        rx,
+        ui_tx,
+        event_rx,
+        Arc::clone(&master_registry),
+        Arc::clone(&ignored_process_names),
+        hotkey_passthrough,
+    );
+
+    ui_main::ui_main(ui_rx, event_tx);
+
+    handle.stop();
+}
+
+fn init_logger() {
     let mut builder = Builder::from_default_env();
 
     builder.format(|buf, record| {
@@ -38,103 +76,160 @@ fn main() {
     });
 
     builder.init();
+}
 
-    let current_os = match OS {
+fn current_os() -> Os {
+    match OS {
         "windows" => Os::Windows,
         "macos" => Os::Mac,
         "linux" => Os::Linux,
         _ => panic!("OS not supported"),
-    };
+    }
+}
 
-    let (ui_tx, ui_rx) = mpsc::channel::<UiSignal>();
-    let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
-
-    let extensions_folder = Path::new("./extensions");
-    let master_registry = Arc::new(MasterRegistry::build(extensions_folder, current_os));
-
-    let (handle, rx) = platform::hotkey_actions::start_hotkey_listener();
-    let registry_clone = Arc::clone(&master_registry);
-
+fn spawn_hotkey_bridge(
+    rx: Receiver<KeyboardShortcut>,
+    ui_tx: Sender<UiSignal>,
+    event_rx: Receiver<UiEvent>,
+    registry: Arc<MasterRegistry>,
+    ignored_process_names: Arc<HashSet<String>>,
+    hotkey_passthrough: HotkeyPassthrough,
+) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        use std::sync::mpsc::RecvTimeoutError;
-        use std::time::Duration;
-
         let mut palette_open = false;
 
         loop {
-            while let Ok(event) = event_rx.try_recv() {
-                match event {
-                    UiEvent::Closed => palette_open = false,
-                    UiEvent::ActionExecuted => {}
-                }
-            }
+            handle_ui_events(&event_rx, &mut palette_open);
 
             match rx.recv_timeout(Duration::from_millis(50)) {
-                Ok(ev) => {
-                    if ev.modifier.control && ev.modifier.shift && matches!(ev.key, Key::KeyP) {
-                        if palette_open {
-                            let _ = ui_tx.send(UiSignal::Hide);
-                        } else {
-                            let context_root = get_all_context();
-                            let work_area = context_root
-                                .get_active()
-                                .and_then(|handle| get_hwnd_from_raw(*handle))
-                                .and_then(monitor_work_area_from_window)
-                                .map(|(left, top, right, bottom)| {
-                                    PaletteWorkArea::from_ltrb(left, top, right, bottom)
-                                });
-                            let unit_actions = registry_clone.get_actions(&context_root);
-
-                            let commands: Vec<Command> = unit_actions
-                                .into_iter()
-                                .enumerate()
-                                .map(|(original_order, ua)| {
-                                    let label = format!("{}: {}", ua.app_name, ua.action_name);
-                                    let shortcut = ua.keyboard_shortcut;
-                                    let target_hwnd_val: Option<isize> = ua
-                                        .target_window
-                                        .and_then(get_hwnd_from_raw)
-                                        .map(|hwnd| hwnd.0 as isize);
-
-                                    let shortcut_text = ua.keyboard_shortcut.to_string();
-
-                                    Command {
-                                        label,
-                                        shortcut_text,
-                                        priority: ua.metadata.priority,
-                                        focus_state: ua.focus_state,
-                                        starred: ua.metadata.starred,
-                                        tags: ua.metadata.tags,
-                                        original_order,
-                                        action: Box::new(move || {
-                                            if let Some(val) = target_hwnd_val {
-                                                focus_window(HWND(val as *mut _));
-                                            }
-                                            send_shortcut(&shortcut);
-                                        }),
-                                    }
-                                })
-                                .collect();
-
-                            if ui_tx
-                                .send(UiSignal::Show {
-                                    commands,
-                                    work_area,
-                                })
-                                .is_ok()
-                            {
-                                palette_open = true;
-                            }
-                        }
-                    }
+                Ok(shortcut) if is_palette_hotkey(shortcut) => {
+                    handle_palette_hotkey(
+                        shortcut,
+                        &ui_tx,
+                        &registry,
+                        &ignored_process_names,
+                        &hotkey_passthrough,
+                        &mut palette_open,
+                    );
                 }
+                Ok(_) => {}
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
-    });
+    })
+}
 
-    ui_main::ui_main(ui_rx, event_tx);
+fn handle_ui_events(event_rx: &Receiver<UiEvent>, palette_open: &mut bool) {
+    while let Ok(event) = event_rx.try_recv() {
+        match event {
+            UiEvent::Closed => *palette_open = false,
+            UiEvent::ActionExecuted => {}
+        }
+    }
+}
 
-    handle.stop();
+fn is_palette_hotkey(shortcut: KeyboardShortcut) -> bool {
+    shortcut.modifier.control && shortcut.modifier.shift && matches!(shortcut.key, Key::KeyP)
+}
+
+fn handle_palette_hotkey(
+    shortcut: KeyboardShortcut,
+    ui_tx: &Sender<UiSignal>,
+    registry: &MasterRegistry,
+    ignored_process_names: &HashSet<String>,
+    hotkey_passthrough: &HotkeyPassthrough,
+    palette_open: &mut bool,
+) {
+    let context_root = get_all_context();
+
+    if let Some(process_name) = ignored_active_process_name(&context_root, ignored_process_names) {
+        log::debug!(
+            "Forwarding palette hotkey to ignored application: {}",
+            process_name
+        );
+        hotkey_passthrough.forward_shortcut(shortcut);
+        return;
+    }
+
+    if *palette_open {
+        let _ = ui_tx.send(UiSignal::Hide);
+        return;
+    }
+
+    show_palette(ui_tx, registry, &context_root, palette_open);
+}
+
+fn ignored_active_process_name(
+    context_root: &ContextRoot,
+    ignored_process_names: &HashSet<String>,
+) -> Option<String> {
+    let process_name = context_root
+        .get_active()
+        .and_then(|handle| handle.get_app_process_name())?;
+    let normalized_name = normalize_process_name(&process_name)?;
+
+    ignored_process_names
+        .contains(&normalized_name)
+        .then_some(process_name)
+}
+
+fn show_palette(
+    ui_tx: &Sender<UiSignal>,
+    registry: &MasterRegistry,
+    context_root: &ContextRoot,
+    palette_open: &mut bool,
+) {
+    let work_area = palette_work_area(context_root);
+    let commands = commands_from_unit_actions(registry.get_actions(context_root));
+
+    if ui_tx
+        .send(UiSignal::Show {
+            commands,
+            work_area,
+        })
+        .is_ok()
+    {
+        *palette_open = true;
+    }
+}
+
+fn palette_work_area(context_root: &ContextRoot) -> Option<PaletteWorkArea> {
+    context_root
+        .get_active()
+        .and_then(|handle| get_hwnd_from_raw(*handle))
+        .and_then(monitor_work_area_from_window)
+        .map(|(left, top, right, bottom)| PaletteWorkArea::from_ltrb(left, top, right, bottom))
+}
+
+fn commands_from_unit_actions(unit_actions: Vec<UnitAction>) -> Vec<Command> {
+    unit_actions
+        .into_iter()
+        .enumerate()
+        .map(command_from_unit_action)
+        .collect()
+}
+
+fn command_from_unit_action((original_order, unit_action): (usize, UnitAction)) -> Command {
+    let shortcut = unit_action.keyboard_shortcut;
+    let target_hwnd_val = unit_action
+        .target_window
+        .and_then(get_hwnd_from_raw)
+        .map(|hwnd| hwnd.0 as isize);
+
+    Command {
+        label: format!("{}: {}", unit_action.app_name, unit_action.action_name),
+        shortcut_text: shortcut.to_string(),
+        priority: unit_action.metadata.priority,
+        focus_state: unit_action.focus_state,
+        starred: unit_action.metadata.starred,
+        tags: unit_action.metadata.tags,
+        original_order,
+        action: Box::new(move || {
+            if let Some(val) = target_hwnd_val {
+                focus_window(HWND(val as *mut _));
+            }
+            send_shortcut(&shortcut);
+        }),
+    }
 }

@@ -37,6 +37,7 @@ pub struct AppOsName {
 pub struct ActionConfig {
     pub name: String,
     pub focus_state: Option<FocusState>,
+    #[serde(alias = "action_priority")]
     pub priority: Option<CommandPriority>,
     pub tags: Option<Vec<String>>,
     pub starred: Option<bool>,

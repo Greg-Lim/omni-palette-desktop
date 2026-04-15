@@ -37,6 +37,7 @@ pub enum FocusState {
     Global,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Os {
     Windows,
     Mac,

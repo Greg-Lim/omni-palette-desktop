@@ -3,11 +3,13 @@
 use std::{
     sync::mpsc::{self, Receiver, Sender},
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use crate::{
     domain::hotkey::KeyboardShortcut,
     platform::windows::mapper::hotkey_mapper::{map_key_back, map_modifier_back},
+    platform::windows::sender::hotkey_sender::send_shortcut,
 };
 
 use log::warn;
@@ -21,18 +23,59 @@ use windows::{
                 MOD_SHIFT, VIRTUAL_KEY, VK_P,
             },
             WindowsAndMessaging::{
-                GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_QUIT,
+                GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_APP, WM_HOTKEY,
+                WM_QUIT,
             },
         },
     },
 };
 
+const PALETTE_HOTKEY_ID: i32 = 1;
+const WM_FORWARD_SHORTCUT: u32 = WM_APP + 1;
+
+enum HotkeyThreadCommand {
+    ForwardShortcut(KeyboardShortcut),
+}
+
+#[derive(Clone)]
+pub struct HotkeyPassthrough {
+    thread_id: u32,
+    command_tx: Sender<HotkeyThreadCommand>,
+}
+
+impl HotkeyPassthrough {
+    pub fn forward_shortcut(&self, shortcut: KeyboardShortcut) {
+        if self
+            .command_tx
+            .send(HotkeyThreadCommand::ForwardShortcut(shortcut))
+            .is_ok()
+        {
+            unsafe {
+                let _ = PostThreadMessageW(
+                    self.thread_id,
+                    WM_FORWARD_SHORTCUT,
+                    Default::default(),
+                    Default::default(),
+                );
+            }
+        }
+    }
+}
+
 pub struct HotkeyHandle {
     thread_id: u32,
+    command_tx: Sender<HotkeyThreadCommand>,
     hotkey_thread_handle: Option<JoinHandle<()>>,
 }
 
 impl HotkeyHandle {
+    pub fn passthrough_sender(&self) -> HotkeyPassthrough {
+        HotkeyPassthrough {
+            thread_id: self.thread_id,
+            command_tx: self.command_tx.clone(),
+        }
+    }
+
     pub fn stop(mut self) {
         unsafe {
             let _ = PostThreadMessageW(
@@ -50,13 +93,14 @@ impl HotkeyHandle {
 
 pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<KeyboardShortcut>) {
     let (hk_event_tx, hk_event_rx) = mpsc::channel();
+    let (command_tx, command_rx) = mpsc::channel();
     let (id_tx, id_rx) = mpsc::channel();
 
     let hotkey_thread_handle = thread::spawn(move || {
         unsafe {
             let _ = id_tx.send(GetCurrentThreadId());
         }
-        if let Err(e) = hotkey_thread_main(hk_event_tx) {
+        if let Err(e) = hotkey_thread_main(hk_event_tx, command_rx) {
             eprintln!("hotkey thread error: {e:?}");
         }
     });
@@ -65,13 +109,28 @@ pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<KeyboardShortcut>) {
     (
         HotkeyHandle {
             thread_id,
+            command_tx,
             hotkey_thread_handle: Some(hotkey_thread_handle),
         },
         hk_event_rx,
     )
 }
 
-fn hotkey_thread_main(tx: Sender<KeyboardShortcut>) -> Result<()> {
+fn register_palette_hotkey() -> Result<()> {
+    unsafe {
+        RegisterHotKey(
+            None,
+            PALETTE_HOTKEY_ID,
+            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+            VK_P.0 as u32,
+        )
+    }
+}
+
+fn hotkey_thread_main(
+    tx: Sender<KeyboardShortcut>,
+    command_rx: Receiver<HotkeyThreadCommand>,
+) -> Result<()> {
     unsafe {
         // Ensure this thread has a message queue before RegisterHotKey
         let mut msg = MSG::default();
@@ -80,14 +139,8 @@ fn hotkey_thread_main(tx: Sender<KeyboardShortcut>) -> Result<()> {
         // before RegisterHotKey is called, making the code reliable.
         let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
 
-        let hotkey_id = 1;
         // TODO: this needs to be moved out to have a mapping not in windows module
-        RegisterHotKey(
-            None,
-            hotkey_id,
-            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-            VK_P.0 as u32,
-        )?;
+        register_palette_hotkey()?;
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
@@ -106,10 +159,21 @@ fn hotkey_thread_main(tx: Sender<KeyboardShortcut>) -> Result<()> {
                 }
                 let shortcut = shortcut.unwrap();
                 let _ = tx.send(shortcut);
+            } else if msg.message == WM_FORWARD_SHORTCUT {
+                while let Ok(HotkeyThreadCommand::ForwardShortcut(shortcut)) = command_rx.try_recv()
+                {
+                    let _ = UnregisterHotKey(None, PALETTE_HOTKEY_ID);
+                    send_shortcut(&shortcut);
+                    thread::sleep(Duration::from_millis(50));
+
+                    if let Err(err) = register_palette_hotkey() {
+                        warn!("Failed to re-register palette hotkey: {err:?}");
+                    }
+                }
             }
         }
 
-        let _ = UnregisterHotKey(None, hotkey_id);
+        let _ = UnregisterHotKey(None, PALETTE_HOTKEY_ID);
         Ok(())
     }
 }

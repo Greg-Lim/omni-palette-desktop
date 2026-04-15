@@ -50,6 +50,9 @@ impl MasterRegistry {
                     if path.extension().and_then(|s| s.to_str()) != Some("toml") {
                         continue;
                     }
+                    if path.file_name().and_then(|s| s.to_str()) == Some(".ignore.toml") {
+                        continue;
+                    }
 
                     // Load and build application
                     match load_config(&path).and_then(|c| Application::new(&c, &current_os)) {

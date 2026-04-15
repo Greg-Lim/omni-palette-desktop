@@ -1,0 +1,10 @@
+# Applications listed here receive Ctrl+Shift+P directly instead of opening
+# Global Palette.
+#
+# You can use either a compact OS list:
+windows = ["Cursor.exe", "WindowsTerminal.exe"]
+
+# Or one block per application when you want names/comments.
+[[applications]]
+name = "Visual Studio Code"
+windows = "Code.exe"
