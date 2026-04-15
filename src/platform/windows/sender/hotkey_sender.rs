@@ -1,5 +1,6 @@
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_MENU, VK_TAB,
+    SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_TAB,
 };
 
 // Helper function to create a keyboard press/release event
@@ -67,7 +68,7 @@ mod tests {
         }
     }
 
-    use windows::Win32::UI::Input::KeyboardAndMouse::VK_DELETE;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, VK_DELETE};
     #[test]
     fn test_send_ctrl_alt_del_sequence_correctness() {
         // Arrange: Prepare the key sequence

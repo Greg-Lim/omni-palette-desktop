@@ -1,13 +1,13 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use env_logger::Builder;
-use log::{error, info};
+use log::error;
 
-use crate::models::action::AppProcessName;
 use crate::models::hotkey::Key;
-use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
+use crate::platform::platform_interface::get_all_context;
 use crate::ui::ui_main;
-use crate::ui::ui_main::UiSignal;
+use crate::ui::ui_main::{Command, UiEvent, UiSignal};
 use crate::{core::registry::registry::MasterRegistry, models::action::Os};
 use std::env::consts::OS;
 use std::io::Write;
@@ -17,27 +17,8 @@ mod core;
 mod models;
 mod platform;
 mod ui;
-// fn main() {
-//     let (handle, rx) = platform::hotkey_actions::start_hotkey_listener();
-
-//     std::thread::spawn(move || {
-//         while let Ok(ev) = rx.recv() {
-//             println!("Hotkey pressed: {ev:?}");
-//         }
-//     });
-
-//     // Keep process alive until Ctrl+C
-//     loop {
-//         std::thread::sleep(std::time::Duration::from_secs(10));
-//         break;
-//     }
-
-//     handle.stop(); // unreachable here unless you add a break condition
-//     platform::hotkey_actions::send_ctrl_v();
-// }
 
 fn main() {
-    // Set Up logger
     let mut builder = Builder::from_default_env();
 
     builder.format(|buf, record| {
@@ -45,8 +26,8 @@ fn main() {
             buf,
             "[{}] {}:{}: {}",
             record.level(),
-            record.file().unwrap_or("unknown"), // The file name
-            record.line().unwrap_or(0),         // The line number
+            record.file().unwrap_or("unknown"),
+            record.line().unwrap_or(0),
             record.args()
         )
     });
@@ -60,67 +41,66 @@ fn main() {
         _ => panic!("OS not supported"),
     };
 
-    // UI channel
     let (ui_tx, ui_rx) = mpsc::channel::<UiSignal>();
+    let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
 
-    // Register and listen for hot keys
+    let extensions_folder = Path::new("./extensions");
+    let master_registry = Arc::new(MasterRegistry::build(extensions_folder, current_os));
+
     let (handle, rx) = platform::hotkey_actions::start_hotkey_listener();
-    let ui_tx_clone = ui_tx.clone();
-    std::thread::spawn(move || {
-        while let Ok(ev) = rx.recv() {
-            dbg!(ev);
+    let registry_clone = Arc::clone(&master_registry);
 
-            // For now we do this
-            if ev.modifier.control && ev.modifier.shift && matches!(ev.key, Key::KeyP) {
-                match ui_tx_clone.send(UiSignal::ToggleVisibility) {
-                    Ok(_) => {
-                        info!("Successfully sent UiSignal::ToggleVisibility");
-                        std::io::stdout().flush().unwrap();
-                        // Give UI thread a moment to process
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
-                    Err(e) => error!("Failed to send UiSignal: {e}"),
+    std::thread::spawn(move || {
+        use std::sync::mpsc::RecvTimeoutError;
+        use std::time::Duration;
+
+        let mut palette_open = false;
+
+        loop {
+            while let Ok(event) = event_rx.try_recv() {
+                match event {
+                    UiEvent::Closed => palette_open = false,
+                    UiEvent::ActionExecuted => {}
                 }
+            }
+
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(ev) => {
+                    if ev.modifier.control && ev.modifier.shift && matches!(ev.key, Key::KeyP) {
+                        if palette_open {
+                            let _ = ui_tx.send(UiSignal::Hide);
+                        } else {
+                            let context_root = get_all_context();
+                            let unit_actions = registry_clone.get_actions(&context_root);
+
+                            let commands: Vec<Command> = unit_actions
+                                .into_iter()
+                                .map(|ua| {
+                                    let label = format!("{}: {}", ua.app_name, ua.action_name);
+                                    let action_label = label.clone();
+
+                                    Command {
+                                        label,
+                                        action: Box::new(move || {
+                                            dbg!("Executing action for command: {}", &action_label);
+                                        }),
+                                    }
+                                })
+                                .collect();
+
+                            if ui_tx.send(UiSignal::Show(commands)).is_ok() {
+                                palette_open = true;
+                            }
+                        }
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
             }
         }
     });
 
-    // Find and load extentions // This needs to be hot loaded in the future
-    let extensions_folder = Path::new("./extensions");
-    let master_registry = MasterRegistry::build(extensions_folder, current_os);
-    let context_root = get_all_context();
+    ui_main::ui_main(ui_rx, event_tx);
 
-    let avail_actions = master_registry.get_actions(&context_root);
-    dbg!(&master_registry);
-    let process_names: AppProcessName = context_root
-        .fg_context
-        .iter()
-        .map(|h| h.get_app_process_name().unwrap_or("missing".into()))
-        .collect();
-    dbg!(&process_names);
-    dbg!(&avail_actions);
-
-    let _user_input = String::new();
-
-    // 2. Read the line from stdin
-    // println!("Input sarch term: ");
-    // io::stdin()
-    //     .read_line(&mut user_input) // read_line appends the input to the string
-    //     .expect("Failed to read line"); // Handle potential errors
-    // let user_input: String = user_input.trim().to_string();
-
-    // let mut match_results: Vec<MatchResult> = vec![];
-    // for unit_action in avail_actions {
-    //     let match_res = get_score(&unit_action.action_name, &user_input);
-    //     match_results.push(match_res);
-    // }
-
-    // dbg!(match_results);
-
-    // Run UI on the main thread (winit requires the event loop on main)
-    ui_main::ui_main(ui_rx);
-
-    // cleanup
     handle.stop();
-    // platform::hotkey_actions::send_ctrl_v();
 }

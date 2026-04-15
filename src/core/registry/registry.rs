@@ -1,10 +1,6 @@
 // register action is for the user to register new actions given the context and action
 
-use std::{
-    collections::HashMap,
-    fs,
-    path::Path,
-};
+use std::{collections::HashMap, fs, path::Path};
 
 use log::{error, info, warn};
 
@@ -12,8 +8,8 @@ use crate::{
     core::extensions::extensions::load_config,
     models::{
         action::{
-            Action, ActionId, ActionName, AppName, AppProcessName, ApplicationID,
-            ContextRoot, FocusState, Os,
+            Action, ActionId, ActionName, AppName, AppProcessName, ApplicationID, ContextRoot,
+            FocusState, Os,
         },
         config::{CmdByOs, Config, KeyChord, Modifier},
         hotkey::{HotkeyModifiers, KeyboardShortcut},
@@ -95,8 +91,9 @@ pub struct UnitAction {
 
 impl MasterRegistry {
     pub fn get_actions(&self, context: &ContextRoot) -> Vec<UnitAction> {
-        // for now we will either call this every time the context change or the user opens the page
         let mut all_actions = vec![];
+
+        dbg!(context);
 
         // Extract background actions
         for bg_context in &context.bg_context {
@@ -119,7 +116,7 @@ impl MasterRegistry {
             {
                 all_actions.push(UnitAction {
                     app_name: app.application_name.clone(),
-                    action_id: action_id,
+                    action_id,
                     action_name: action.name.clone(),
                     focus_state: FocusState::Background,
                     keyboard_shortcut: action.keyboard_shortcut,
@@ -127,28 +124,50 @@ impl MasterRegistry {
             }
         }
 
-        // Extract Focused Actions
-        'add_focused_actions: {
-            dbg!("app_id");
+        // Extract foreground actions
+        for fg_context in &context.fg_context {
+            let Some(process_name) = fg_context.get_app_process_name() else {
+                continue;
+            };
 
+            let Some(&app_id) = self.application_process_name_id.get(&process_name) else {
+                continue;
+            };
+
+            let Some(app) = self.application_registry.get(&app_id) else {
+                continue;
+            };
+
+            for (&action_id, action) in app
+                .application_registry
+                .iter()
+                .filter(|(_, a)| a.focus_state == FocusState::Focused)
+            {
+                all_actions.push(UnitAction {
+                    app_name: app.application_name.clone(),
+                    action_id,
+                    action_name: action.name.clone(),
+                    focus_state: FocusState::Focused,
+                    keyboard_shortcut: action.keyboard_shortcut,
+                });
+            }
+        }
+
+        // Extract focused actions
+        'add_focused_actions: {
             let Some(active) = context.get_active() else {
                 break 'add_focused_actions;
             };
-            dbg!(&active);
 
             let Some(process_name) = active.get_app_process_name() else {
                 break 'add_focused_actions;
             };
-            dbg!(&process_name);
-            dbg!(&self.application_process_name_id);
 
             let Some(app_id) = self.application_process_name_id.get(&process_name) else {
                 break 'add_focused_actions;
             };
 
-            dbg!(&app_id);
-
-            let Some(app) = self.application_registry.get(&app_id) else {
+            let Some(app) = self.application_registry.get(app_id) else {
                 break 'add_focused_actions;
             };
 
@@ -159,9 +178,9 @@ impl MasterRegistry {
             {
                 all_actions.push(UnitAction {
                     app_name: app.application_name.clone(),
-                    action_id: action_id,
+                    action_id,
                     action_name: action.name.clone(),
-                    focus_state: FocusState::Background,
+                    focus_state: FocusState::Focused,
                     keyboard_shortcut: action.keyboard_shortcut,
                 });
             }

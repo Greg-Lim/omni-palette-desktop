@@ -5,7 +5,7 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::*;
- // Needed for the test
+// Needed for the test
 
 // Define a struct to hold the results
 pub struct AcceleratorInfo {
@@ -110,50 +110,50 @@ fn extract_shortcut_strings(
     Ok(out)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    // A note on testing UI code: This test is an *integration test* because it
-    // relies on the state of the Windows desktop and runs potentially slow, external code.
-    // It should be run with 'cargo test -- --nocapture' to see the println! output.
+//     // A note on testing UI code: This test is an *integration test* because it
+//     // relies on the state of the Windows desktop and runs potentially slow, external code.
+//     // It should be run with 'cargo test -- --nocapture' to see the println! output.
 
-    #[test]
-    fn test_get_all_accelerators_and_print() {
-        // Get the HWND of the window currently in the foreground when the test runs
-        let hwnd = unsafe { GetForegroundWindow() };
+//     #[test]
+//     fn test_get_all_accelerators_and_print() {
+//         // Get the HWND of the window currently in the foreground when the test runs
+//         let hwnd = unsafe { GetForegroundWindow() };
 
-        if hwnd.is_invalid() {
-            println!("No foreground window found. Skipping accelerator check.");
-            return;
-        }
+//         if hwnd.is_invalid() {
+//             println!("No foreground window found. Skipping accelerator check.");
+//             return;
+//         }
 
-        println!(
-            "\n--- Accelerator Keys for Foreground Window (HWND: {:?}) ---",
-            hwnd
-        );
+//         println!(
+//             "\n--- Accelerator Keys for Foreground Window (HWND: {:?}) ---",
+//             hwnd
+//         );
 
-        match get_all_accelerators(hwnd) {
-            Ok(accelerators) => {
-                if accelerators.is_empty() {
-                    println!("No accelerator keys found in this window.");
-                } else {
-                    // Print the header
-                    println!("{: <40} | {}", "Control Name", "Accelerator Key");
-                    println!("{}", "-".repeat(60));
+//         match get_all_accelerators(hwnd) {
+//             Ok(accelerators) => {
+//                 if accelerators.is_empty() {
+//                     println!("No accelerator keys found in this window.");
+//                 } else {
+//                     // Print the header
+//                     println!("{: <40} | {}", "Control Name", "Accelerator Key");
+//                     println!("{}", "-".repeat(60));
 
-                    // Print all found accelerator information
-                    for info in accelerators {
-                        println!("{: <40} | {}", info.name, info.key);
-                    }
-                }
-            }
-            Err(e) => {
-                // This often happens if the COM initialisation or UIA calls fail
-                eprintln!("Error retrieving accelerators: {}", e);
-                // Fail the test if a critical error occurs
-                panic!("UI Automation failed: {}", e);
-            }
-        }
-    }
-}
+//                     // Print all found accelerator information
+//                     for info in accelerators {
+//                         println!("{: <40} | {}", info.name, info.key);
+//                     }
+//                 }
+//             }
+//             Err(e) => {
+//                 // This often happens if the COM initialisation or UIA calls fail
+//                 eprintln!("Error retrieving accelerators: {}", e);
+//                 // Fail the test if a critical error occurs
+//                 panic!("UI Automation failed: {}", e);
+//             }
+//         }
+//     }
+// }

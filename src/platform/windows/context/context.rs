@@ -29,6 +29,8 @@ pub fn get_all_windows() -> (Vec<RawWindowHandle>, Vec<RawWindowHandle>) {
         bg: Vec::new(),
     };
 
+    dbg!("Starting window enumeration with EnumWindows");
+
     unsafe extern "system" fn enum_vc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         // 2. Cast the single pointer back to our struct
         let context = &mut *(lparam.0 as *mut WindowEnumContext);
@@ -46,7 +48,6 @@ pub fn get_all_windows() -> (Vec<RawWindowHandle>, Vec<RawWindowHandle>) {
         let is_cloaked = cloaked != 0;
 
         let mut text: [u16; 512] = [0; 512];
-        let title_len = GetWindowTextW(hwnd, &mut text);
 
         // --- SELECTION LOGIC ---
         // Basic filter: We still want to ignore "Progman" or non-windows
@@ -58,7 +59,7 @@ pub fn get_all_windows() -> (Vec<RawWindowHandle>, Vec<RawWindowHandle>) {
             let handle = RawWindowHandle::Win32(Win32WindowHandle::new(h));
 
             // Logic: A window is "Foreground/Active" ONLY if it passes all three
-            if is_visible && !is_cloaked && title_len > 0 {
+            if is_visible && !is_cloaked {
                 context.fg.push(handle);
             } else {
                 // Otherwise, it's a Background/Inactive window (AHK, PowerToys, etc.)
@@ -74,6 +75,12 @@ pub fn get_all_windows() -> (Vec<RawWindowHandle>, Vec<RawWindowHandle>) {
         let ptr = &mut context as *mut WindowEnumContext;
         let _ = EnumWindows(Some(enum_vc), LPARAM(ptr as isize));
     }
+
+    dbg!(
+        "Finished window enumeration. Found {} foreground and {} background windows.",
+        context.fg.len(),
+        context.bg.len()
+    );
     (context.fg, vec![])
     // (context.fg, context.bg)
 }

@@ -6,10 +6,13 @@ use cfg_if::cfg_if;
 use raw_window_handle::RawWindowHandle;
 
 pub fn get_all_context() -> ContextRoot {
+    dbg!("Getting all context from platform interface");
     cfg_if! {
         if #[cfg(target_os = "windows")] {
+            dbg!("Detected Windows OS, using Windows context retrieval");
             // Destructure the tuple returned by your Windows function
             let (fg, bg) = platwins::context::context::get_all_windows();
+            dbg!("Retrieved context from Windows: fg has {} items, bg has {} items", fg.len(), bg.len());
         } else {
             // Fallback for other OSs
             panic!("Not valid os")
@@ -17,6 +20,8 @@ pub fn get_all_context() -> ContextRoot {
             let bg = vec![];
         }
     }
+
+    dbg!("Final context");
 
     ContextRoot {
         fg_context: fg,
@@ -38,6 +43,22 @@ impl RawWindowHandleExt for RawWindowHandle {
                 plat_win_ctx::get_app_process_name(&hwnd)
             }
             _ => todo!("This os is not supported"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn get_all_context_runs() {
+        let context = get_all_context();
+
+        println!("Foreground Context:");
+        for (i, item) in context.fg_context.iter().enumerate() {
+            println!("  {}: {:?}", i, item);
         }
     }
 }

@@ -1,5 +1,6 @@
 {
     "env": {
         "RUST_LOG": "trace"
-    }
+    },
+    "configurations": []
 }
