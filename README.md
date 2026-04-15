@@ -1,5 +1,46 @@
-# Global Palette (Name TBC)
+# Global Palette
 
-# 🚀 Features
+Global Palette is a Windows command palette for launching application shortcuts from anywhere. It works like a small system-wide command launcher: press the global hotkey, search for an action, and run it without leaving the keyboard.
 
-# 🛠 Tech Stack
+![Global Palette usage demo](README/Command_pallete.gif)
+
+## Features
+
+- Open the palette with `Ctrl+Shift+P`.
+- Search actions with fuzzy matching.
+- Prioritize common commands with `high`, `normal`, and `suppressed` priority buckets.
+- Highlight matching text while searching.
+- Execute commands with `Enter` or by clicking a row.
+- Ignore selected applications with `extensions/.ignore.toml` so their own `Ctrl+Shift+P` behavior still works.
+
+## Extensions
+
+Commands are defined in TOML files under `extensions/`. Each extension describes one application and the actions Global Palette can run for it.
+
+Example action:
+
+```toml
+[actions.new_tab]
+name = "New tab"
+focus_state = "focused"
+action_priority = "high"
+cmd.windows = { mods = ["ctrl"], key = "T" }
+```
+
+## Development
+
+This project is built with Rust, egui, and eframe.
+
+```sh
+cargo build
+cargo run
+```
+
+Useful checks:
+
+```sh
+cargo fmt
+cargo check
+cargo test
+cargo clippy --all-targets --all-features
+```
