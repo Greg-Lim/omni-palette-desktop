@@ -2,7 +2,7 @@ use crate::core::command_filter::{
     filter_commands, initial_filtered_commands, FilterableCommand, FilteredCommand,
 };
 use crate::core::search::MatchRange;
-use crate::models::action::{CommandPriority, FocusState};
+use crate::domain::action::{CommandPriority, FocusState};
 use eframe::egui;
 use eframe::egui::text::LayoutJob;
 use std::fmt;

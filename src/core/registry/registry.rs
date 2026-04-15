@@ -7,13 +7,13 @@ use log::{error, info, warn};
 use raw_window_handle::RawWindowHandle;
 
 use crate::{
+    config::extension::{CmdByOs, Config, KeyChord, Modifier},
     core::extensions::extensions::load_config,
-    models::{
+    domain::{
         action::{
             Action, ActionId, ActionMetadata, ActionName, AppName, AppProcessName, ApplicationID,
-            CommandPriority, ContextRoot, FocusState, Os,
+            ContextRoot, FocusState, Os,
         },
-        config::{CmdByOs, Config, KeyChord, Modifier},
         hotkey::{HotkeyModifiers, KeyboardShortcut},
     },
     platform::platform_interface::RawWindowHandleExt,
@@ -85,6 +85,7 @@ impl MasterRegistry {
 pub struct UnitAction {
     // This struct will be use for search and generating the UI
     pub app_name: AppName,
+    #[allow(dead_code)]
     pub action_id: ActionId,
     pub action_name: ActionName,
     pub focus_state: FocusState,
@@ -216,10 +217,6 @@ impl Application {
         }?;
 
         let mut application_registry: HashMap<ActionId, Action> = HashMap::new();
-        let default_priority = app_config
-            .app
-            .default_priority
-            .unwrap_or(CommandPriority::Normal);
         let default_tags = app_config.app.default_tags.clone().unwrap_or_default();
 
         fn extract_os_binding<'a>(
@@ -279,7 +276,7 @@ impl Application {
                         .unwrap_or(FocusState::Focused),
                 ),
                 metadata: ActionMetadata {
-                    priority: config_action.priority.unwrap_or(default_priority),
+                    priority: config_action.priority.unwrap_or_default(),
                     starred: config_action.starred.unwrap_or(false),
                     tags,
                 },
@@ -295,6 +292,7 @@ impl Application {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_action(&self, action_id: &ActionId) -> Option<&Action> {
         self.application_registry.get(action_id)
     }

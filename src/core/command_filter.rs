@@ -1,5 +1,5 @@
 use crate::core::search::{prepare_query, score_fuzzy, MatchRange, PreparedQuery};
-use crate::models::action::{CommandPriority, FocusState};
+use crate::domain::action::{CommandPriority, FocusState};
 
 #[derive(Debug, Clone)]
 pub struct FilteredCommand {

@@ -5,8 +5,6 @@ version = 1
 id = "file_system"                    # Application ID (unique)
 name = "File System"                  # Application Name (OS-agnostic)
 default_focus_state = "focused"  # For app that only want to run commands that are in focused
-default_priority = "Application" # can be OSReserved, GlobalRemapper, OSGlobal, UserOverrides, Application, ApplicationExtensions, DocumentOrWebApp
-
 
 # application_id + OS -> application_os_name
 [app.application_os_name]

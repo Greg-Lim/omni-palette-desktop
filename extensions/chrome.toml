@@ -11,8 +11,6 @@ version = 1
 id = "chrome"                    # Application ID (unique)
 name = "Chrome"                  # Application Name (OS-agnostic)
 default_focus_state = "focused"  # For app that only want to run commands that are in focused
-default_priority = "Application" # can be OSReserved, GlobalRemapper, OSGlobal, UserOverrides, Application, ApplicationExtensions, DocumentOrWebApp
-
 
 # application_id + OS -> application_os_name
 [app.application_os_name]
@@ -28,18 +26,21 @@ macos = "com.google.Chrome"
 [actions.new_tab]
 name = "New tab"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "T" }
 cmd.macos = { mods = ["cmd"], key = "T" }
 
 [actions.close_tab]
 name = "Close tab"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "W" }
 cmd.macos = { mods = ["cmd"], key = "W" }
 
 [actions.reopen_tab]
 name = "Reopen closed tab"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl", "shift"], key = "T" }
 cmd.macos = { mods = ["cmd", "shift"], key = "T" }
 
@@ -48,96 +49,112 @@ cmd.macos = { mods = ["cmd", "shift"], key = "T" }
 [actions.new_window]
 name = "New window"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "N" }
 cmd.macos = { mods = ["cmd"], key = "N" }
 
 [actions.new_incognito_window]
 name = "New Incognito window"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl", "shift"], key = "N" }
 cmd.macos = { mods = ["cmd", "shift"], key = "N" }
 
 [actions.next_tab]
 name = "Next tab"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "Tab" }
 cmd.macos = { mods = ["cmd", "alt"], key = "RightArrow" }
 
 [actions.prev_tab]
 name = "Previous tab"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl", "shift"], key = "Tab" }
 cmd.macos = { mods = ["cmd", "alt"], key = "LeftArrow" }
 
 [actions.tab_1]
 name = "Switch to tab 1"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "1" }
 cmd.macos = { mods = ["cmd"], key = "1" }
 
 [actions.tab_2]
 name = "Switch to tab 2"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "2" }
 cmd.macos = { mods = ["cmd"], key = "2" }
 
 [actions.tab_3]
 name = "Switch to tab 3"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "3" }
 cmd.macos = { mods = ["cmd"], key = "3" }
 
 [actions.tab_4]
 name = "Switch to tab 4"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "4" }
 cmd.macos = { mods = ["cmd"], key = "4" }
 
 [actions.tab_5]
 name = "Switch to tab 5"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "5" }
 cmd.macos = { mods = ["cmd"], key = "5" }
 
 [actions.tab_6]
 name = "Switch to tab 6"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "6" }
 cmd.macos = { mods = ["cmd"], key = "6" }
 
 [actions.tab_7]
 name = "Switch to tab 7"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "7" }
 cmd.macos = { mods = ["cmd"], key = "7" }
 
 [actions.tab_8]
 name = "Switch to tab 8"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "8" }
 cmd.macos = { mods = ["cmd"], key = "8" }
 
 [actions.last_tab]
 name = "Switch to last tab"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "9" }
 cmd.macos = { mods = ["cmd"], key = "9" }
 
 [actions.back]
 name = "Go back"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["alt"], key = "LeftArrow" }
 cmd.macos = { mods = ["cmd"], key = "LeftBracket" }
 
 [actions.forward]
 name = "Go forward"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["alt"], key = "RightArrow" }
 cmd.macos = { mods = ["cmd"], key = "RightBracket" }
 
 [actions.close_window]
 name = "Close window"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["alt"], key = "F4" }
 cmd.macos = { mods = ["cmd", "shift"], key = "W" }
 
@@ -146,66 +163,77 @@ cmd.macos = { mods = ["cmd", "shift"], key = "W" }
 [actions.toggle_bookmarks_bar]
 name = "Show/hide bookmarks bar"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl", "shift"], key = "B" }
 cmd.macos = { mods = ["cmd", "shift"], key = "B" }
 
 [actions.bookmark_manager]
 name = "Open Bookmark Manager"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl", "shift"], key = "O" }
 cmd.macos = { mods = ["cmd", "alt"], key = "B" }
 
 [actions.history]
 name = "Open History"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "H" }
 cmd.macos = { mods = ["cmd"], key = "Y" }
 
 [actions.downloads]
 name = "Open Downloads"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "J" }
 cmd.macos = { mods = ["cmd", "shift"], key = "J" }
 
 [actions.find]
 name = "Find on page"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "F" }
 cmd.macos = { mods = ["cmd"], key = "F" }
 
 [actions.find_next]
 name = "Next find match"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "G" }
 cmd.macos = { mods = ["cmd"], key = "G" }
 
 [actions.find_prev]
 name = "Previous find match"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl", "shift"], key = "G" }
 cmd.macos = { mods = ["cmd", "shift"], key = "G" }
 
 [actions.dev_tools]
 name = "Open Developer Tools"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = [], key = "F12" }
 cmd.macos = { mods = ["cmd", "alt"], key = "I" }
 
 [actions.bookmark_page]
 name = "Bookmark current page"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "D" }
 cmd.macos = { mods = ["cmd"], key = "D" }
 
 [actions.bookmark_all_tabs]
 name = "Bookmark all open tabs"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl", "shift"], key = "D" }
 cmd.macos = { mods = ["cmd", "shift"], key = "D" }
 
 [actions.focus_address_bar]
 name = "Focus address bar"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "L" }
 cmd.macos = { mods = ["cmd"], key = "L" }
 
@@ -218,18 +246,21 @@ cmd.macos = { mods = ["cmd"], key = "P" }
 [actions.save_page]
 name = "Save page"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "S" }
 cmd.macos = { mods = ["cmd"], key = "S" }
 
 [actions.view_source]
 name = "View page source"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "U" }
 cmd.macos = { mods = ["cmd", "alt"], key = "U" }
 
 [actions.clear_browsing_data]
 name = "Clear Browsing Data"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl", "shift"], key = "Delete" }
 cmd.macos = { mods = ["cmd", "shift"], key = "Delete" }
 
@@ -241,6 +272,7 @@ cmd.windows = { mods = [], key = "F11" }
 [actions.task_manager]
 name = "Chrome Task Manager"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["shift"], key = "Escape" }
 
 # --- Webpage shortcuts ---
@@ -248,36 +280,42 @@ cmd.windows = { mods = ["shift"], key = "Escape" }
 [actions.reload]
 name = "Reload page"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = [], key = "F5" }
 cmd.macos = { mods = ["cmd"], key = "R" }
 
 [actions.hard_reload]
 name = "Reload (ignore cache)"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl", "shift"], key = "R" }
 cmd.macos = { mods = ["cmd", "shift"], key = "R" }
 
 [actions.stop_loading]
 name = "Stop page loading"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = [], key = "Escape" }
 cmd.macos = { mods = [], key = "Escape" }
 
 [actions.zoom_in]
 name = "Zoom in"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "Equal" }
 cmd.macos = { mods = ["cmd"], key = "Equal" }
 
 [actions.zoom_out]
 name = "Zoom out"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "Minus" }
 cmd.macos = { mods = ["cmd"], key = "Minus" }
 
 [actions.zoom_reset]
 name = "Reset zoom"
 focus_state = "focused"
+action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "0" }
 cmd.macos = { mods = ["cmd"], key = "0" }
 
@@ -290,17 +328,20 @@ cmd.macos = { mods = [], key = "Space" }
 [actions.go_to_top]
 name = "Go to top of page"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = [], key = "Home" }
 cmd.macos = { mods = ["cmd"], key = "UpArrow" }
 
 [actions.go_to_bottom]
 name = "Go to bottom of page"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = [], key = "End" }
 cmd.macos = { mods = ["cmd"], key = "DownArrow" }
 
 [actions.open_file]
 name = "Open file"
 focus_state = "focused"
+action_priority = "suppressed"
 cmd.windows = { mods = ["ctrl"], key = "O" }
 cmd.macos = { mods = ["cmd"], key = "O" }

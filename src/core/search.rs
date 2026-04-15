@@ -14,6 +14,7 @@ pub struct MatchResult {
 
 #[derive(Debug, Clone)]
 pub struct PreparedQuery {
+    #[allow(dead_code)]
     pub original: String,
     pub normalized: String,
     pub normalized_lower: String,
@@ -38,6 +39,7 @@ struct TargetChar {
 
 const NO_MATCH: usize = 0;
 
+#[allow(dead_code)]
 pub fn get_score(target: &str, query: &str) -> Option<MatchResult> {
     let prepared = prepare_query(query);
     score_fuzzy(target, &prepared)

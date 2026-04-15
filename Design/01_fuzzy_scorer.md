@@ -290,7 +290,6 @@ Keep app defaults, but allow action-level overrides:
 id = "chrome"
 name = "Chrome"
 default_focus_state = "focused"
-default_priority = "normal"
 default_tags = ["browser"]
 
 [actions.new_tab]
@@ -304,8 +303,8 @@ cmd.windows = { mods = ["ctrl"], key = "T" }
 
 Rules:
 
-- `priority` on an action overrides `app.default_priority`.
-- missing priority resolves to `Normal`.
+- `priority` belongs only on an action, never on the app.
+- missing action priority resolves to `Normal`.
 - TOML should use lowercase values: `high`, `normal`, `suppressed`.
 - `Suppressed` is a hard lower priority bucket and must never sort above `Normal` within the same star bucket.
 - `tags` on an action are merged with `app.default_tags`.

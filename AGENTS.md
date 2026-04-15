@@ -56,7 +56,6 @@ version = 1
 id = "chrome"
 name = "Chrome"
 default_focus_state = "focused"
-default_priority = "Application"
 
 [app.application_os_name]
 windows = "chrome.exe"
@@ -65,6 +64,7 @@ macos = "com.google.Chrome"
 [actions.new_tab]
 name = "New tab"
 focus_state = "focused"
+priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "t" }
 cmd.macos = { mods = ["cmd"], key = "t" }
 ```

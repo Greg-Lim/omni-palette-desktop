@@ -2,7 +2,7 @@
 
 use std::{fs, path::Path};
 
-use crate::models::config::Config;
+use crate::config::extension::Config;
 
 pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, String> {
     // 1. Read file. If it fails, convert the io::Error to your String error and return early.
@@ -23,7 +23,6 @@ version = 1
 [app]
 id = "chrome"
 name = "Chrome"
-default_priority = "Application"
 
 [app.app_os_name]
 windows = "chrome.exe"
@@ -42,4 +41,25 @@ cmd.macos = { mods = ["cmd"], key = "t" }
     assert_eq!(cfg.app.id, "chrome");
     assert!(cfg.actions.contains_key("new_tab"));
     // println!("{cfg:?}")
+}
+
+#[test]
+fn rejects_app_level_priority() {
+    let content = r#"
+version = 1
+
+[app]
+id = "chrome"
+name = "Chrome"
+default_focus_state = "focused"
+default_priority = "normal"
+
+[app.app_os_name]
+windows = "chrome.exe"
+
+[actions]
+"#;
+
+    let err = toml::from_str::<Config>(content).expect_err("app priority should not deserialize");
+    assert!(err.to_string().contains("default_priority"));
 }

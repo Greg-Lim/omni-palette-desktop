@@ -1,4 +1,4 @@
-use crate::models::hotkey::KeyboardShortcut;
+use crate::domain::hotkey::KeyboardShortcut;
 use raw_window_handle::RawWindowHandle;
 use serde::Deserialize;
 
@@ -17,21 +17,15 @@ pub struct ActionMetadata {
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Deserialize, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum CommandPriority {
     #[serde(alias = "Suppressed")]
     Suppressed,
-    #[serde(
-        alias = "Normal",
-        alias = "Application",
-        alias = "ApplicationExtensions",
-        alias = "DocumentOrWebApp",
-        alias = "OSGlobal",
-        alias = "GlobalRemapper"
-    )]
+    #[default]
+    #[serde(alias = "Normal")]
     Normal,
-    #[serde(alias = "High", alias = "OSReserved", alias = "UserOverrides")]
+    #[serde(alias = "High")]
     High,
 }
 
@@ -69,6 +63,7 @@ impl ContextRoot {
 
 type Context = RawWindowHandle;
 
+#[allow(dead_code)]
 pub trait ContextExt {
     fn get_all_names(&self) -> Vec<String>;
 }

@@ -1,4 +1,4 @@
-use crate::models::hotkey::KeyboardShortcut;
+use crate::domain::hotkey::KeyboardShortcut;
 use crate::platform::windows::mapper::hotkey_mapper::map_key;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    models::hotkey::KeyboardShortcut,
+    domain::hotkey::KeyboardShortcut,
     platform::windows::mapper::hotkey_mapper::{map_key_back, map_modifier_back},
 };
 

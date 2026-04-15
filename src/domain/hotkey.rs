@@ -3,17 +3,7 @@ use std::fmt;
 use serde::Deserialize;
 use strum_macros::Display;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Modifier {
-    Control, // Ctrl (Windows/Linux) or Control (macOS)
-    Shift,   // Shift
-    Alt,     // Alt (Windows/Linux) or Option (macOS)
-    Win,     // Windows Key (Windows) or Command (macOS/Cmd)
-}
-
-// Optional: Implement a helper struct or method to hold a combination of modifiers
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-
 pub struct HotkeyModifiers {
     pub control: bool,
     pub shift: bool,

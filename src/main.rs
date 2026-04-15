@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use env_logger::Builder;
 
-use crate::models::hotkey::Key;
+use crate::domain::hotkey::Key;
 use crate::platform::platform_interface::get_all_context;
 use crate::platform::windows::context::context::{
     focus_window, get_hwnd_from_raw, monitor_work_area_from_window,
@@ -11,14 +11,15 @@ use crate::platform::windows::context::context::{
 use crate::platform::windows::sender::hotkey_sender::send_shortcut;
 use crate::ui::ui_main;
 use crate::ui::ui_main::{Command, PaletteWorkArea, UiEvent, UiSignal};
-use crate::{core::registry::registry::MasterRegistry, models::action::Os};
+use crate::{core::registry::registry::MasterRegistry, domain::action::Os};
 use std::env::consts::OS;
 use std::io::Write;
 use std::sync::mpsc;
 use windows::Win32::Foundation::HWND;
 
+mod config;
 mod core;
-mod models;
+mod domain;
 mod platform;
 mod ui;
 
