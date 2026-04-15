@@ -214,11 +214,11 @@ impl App {
         visuals.widgets.open.fg_stroke.color = TEXT_SELECTED;
         cc.egui_ctx.set_visuals(visuals);
 
-        let mut style = (*cc.egui_ctx.style()).clone();
+        let mut style = (*cc.egui_ctx.global_style()).clone();
         style.spacing.item_spacing = egui::vec2(0.0, 6.0);
         style.spacing.button_padding = egui::vec2(10.0, 8.0);
         style.spacing.window_margin = egui::Margin::same(0);
-        cc.egui_ctx.set_style(style);
+        cc.egui_ctx.set_global_style(style);
 
         Self {
             palette: CommandPaletteApp::new(vec![]),
@@ -262,8 +262,7 @@ impl App {
             .palette
             .filtered_commands
             .len()
-            .max(MIN_LIST_ROWS)
-            .min(MAX_VISIBLE_ROWS);
+            .clamp(MIN_LIST_ROWS, MAX_VISIBLE_ROWS);
         let list_height = visible_count as f32 * ROW_HEIGHT;
 
         egui::vec2(PALETTE_WIDTH, 16.0 + 60.0 + 8.0 + list_height + 16.0)
@@ -338,7 +337,7 @@ impl App {
 
         let inner = rect.shrink2(egui::vec2(12.0, 8.0));
 
-        ui.allocate_ui_at_rect(inner, |ui| {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
             ui.with_layout(
                 egui::Layout::left_to_right(egui::Align::Center).with_main_justify(true),
                 |ui| {

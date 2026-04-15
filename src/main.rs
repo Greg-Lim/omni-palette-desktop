@@ -83,7 +83,7 @@ fn main() {
                                     let shortcut = ua.keyboard_shortcut;
                                     let target_hwnd_val: Option<isize> = ua
                                         .target_window
-                                        .and_then(|h| get_hwnd_from_raw(h))
+                                        .and_then(get_hwnd_from_raw)
                                         .map(|hwnd| hwnd.0 as isize);
 
                                     let shortcut_text = ua.keyboard_shortcut.to_string();

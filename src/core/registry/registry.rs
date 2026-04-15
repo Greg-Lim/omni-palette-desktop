@@ -245,7 +245,7 @@ impl Application {
         let mut count: u32 = 0;
 
         for (_app_id, config_action) in app_config.actions.iter() {
-            let binding = extract_os_binding(&config_action.cmd, &current_os);
+            let binding = extract_os_binding(&config_action.cmd, current_os);
             let binding = match binding {
                 Err(s) => {
                     warn!("{s}");
@@ -261,7 +261,6 @@ impl Application {
             tags.sort();
             tags.dedup();
 
-            // let binding_ref = binding.as_ref();
             let app_action: Action = Action {
                 name: config_action.name.clone(),
                 keyboard_shortcut: KeyboardShortcut {
@@ -271,7 +270,7 @@ impl Application {
                         alt: binding.mods.contains(&Modifier::Alt),
                         win: binding.mods.contains(&Modifier::Win),
                     },
-                    key: binding.key.into(),
+                    key: binding.key,
                 },
                 focus_state: config_action.focus_state.unwrap_or(
                     app_config
@@ -284,16 +283,15 @@ impl Application {
                     starred: config_action.starred.unwrap_or(false),
                     tags,
                 },
-            }
-            .into();
+            };
             application_registry.insert(count, app_action);
             count += 1;
         }
 
         Ok(Application {
-            application_name: app_config.app.name.clone().into(),
-            application_process_name: application_os_name.into(),
-            application_registry: application_registry.into(),
+            application_name: app_config.app.name.clone(),
+            application_process_name: application_os_name,
+            application_registry,
         })
     }
 

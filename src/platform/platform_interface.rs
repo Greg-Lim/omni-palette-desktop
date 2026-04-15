@@ -6,13 +6,17 @@ use cfg_if::cfg_if;
 use raw_window_handle::RawWindowHandle;
 
 pub fn get_all_context() -> ContextRoot {
-    dbg!("Getting all context from platform interface");
+    log::debug!("Getting all context from platform interface");
     cfg_if! {
         if #[cfg(target_os = "windows")] {
-            dbg!("Detected Windows OS, using Windows context retrieval");
+            log::debug!("Detected Windows OS, using Windows context retrieval");
             // Destructure the tuple returned by your Windows function
             let (fg, bg) = platwins::context::context::get_all_windows();
-            dbg!("Retrieved context from Windows: fg has {} items, bg has {} items", fg.len(), bg.len());
+            log::debug!(
+                "Retrieved context from Windows: fg has {} items, bg has {} items",
+                fg.len(),
+                bg.len()
+            );
         } else {
             // Fallback for other OSs
             panic!("Not valid os")
@@ -21,7 +25,7 @@ pub fn get_all_context() -> ContextRoot {
         }
     }
 
-    dbg!("Final context");
+    log::debug!("Final context");
 
     ContextRoot {
         fg_context: fg,

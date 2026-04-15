@@ -12,24 +12,13 @@ pub enum Modifier {
 }
 
 // Optional: Implement a helper struct or method to hold a combination of modifiers
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 
 pub struct HotkeyModifiers {
     pub control: bool,
     pub shift: bool,
     pub alt: bool,
     pub win: bool,
-}
-
-impl Default for HotkeyModifiers {
-    fn default() -> Self {
-        HotkeyModifiers {
-            control: false,
-            shift: false,
-            alt: false,
-            win: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, Deserialize, Display)]

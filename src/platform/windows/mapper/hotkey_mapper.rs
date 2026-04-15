@@ -95,7 +95,7 @@ pub fn map_key(key: Key) -> VIRTUAL_KEY {
         Key::F12 => VK_F12,
 
         // --- 3. Punctuation & Symbol Keys ---
-        // Note: VK_OEM_* are “layout-dependent” keys (physical key positions). :contentReference[oaicite:1]{index=1}
+        // Note: VK_OEM_* are layout-dependent keys (physical key positions).
         Key::Semicolon => VK_OEM_1,    // ';:' on US
         Key::Equal => VK_OEM_PLUS,     // '=+' on US
         Key::Comma => VK_OEM_COMMA,    // ',<' on US

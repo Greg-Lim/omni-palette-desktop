@@ -2,7 +2,7 @@
 
 use std::{fs, path::Path};
 
-use crate::{core::registry::registry::Application, models::config::Config};
+use crate::models::config::Config;
 
 pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, String> {
     // 1. Read file. If it fails, convert the io::Error to your String error and return early.
@@ -13,10 +13,6 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, String> {
         toml::from_str(&content).map_err(|e| format!("Could not parse config: {e}"))?;
 
     Ok(config)
-}
-
-fn build_application_registry_from_toml_config(_extention_config: Config) -> Application {
-    todo!("build mapping");
 }
 
 #[test]

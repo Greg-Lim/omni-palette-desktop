@@ -7,9 +7,11 @@ use windows::Win32::Foundation::{HWND, LPARAM, MAX_PATH};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::System::ProcessStatus::GetModuleBaseNameW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+#[cfg(test)]
+use windows::Win32::UI::WindowsAndMessaging::GetWindowTextW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-    IsWindowVisible, SetForegroundWindow,
+    EnumWindows, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
+    SetForegroundWindow,
 };
 
 pub fn get_foreground_window_handle() -> HWND {
@@ -75,6 +77,7 @@ pub fn get_all_windows() -> (Vec<RawWindowHandle>, Vec<RawWindowHandle>) {
     (context.fg, context.bg)
 }
 
+#[cfg(test)]
 fn get_window_title(hwnd: &HWND) -> String {
     let mut title_buffer: [u16; 512] = [0; 512]; // Buffer for the title text
     let length = unsafe {
@@ -137,12 +140,13 @@ pub fn get_app_process_name(hwnd: &HWND) -> Option<String> {
     }
 }
 
-pub fn print_window_context(handles: &Vec<HWND>) {
+#[cfg(test)]
+pub fn print_window_context(handles: &[HWND]) {
     // Retrieve the active window handle
     for handle in handles {
         if !handle.is_invalid() {
-            let title = get_window_title(&handle);
-            let app_name = get_app_process_name(&handle);
+            let title = get_window_title(handle);
+            let app_name = get_app_process_name(handle);
 
             println!("--- Window Context ---");
             println!("Handle (HWND): {:?}", handle);
@@ -219,7 +223,7 @@ mod window_tests {
     #[test]
     fn test_print_active_window_context() {
         let hwnd = get_foreground_window_handle();
-        print_window_context(&vec![hwnd]);
+        print_window_context(&[hwnd]);
     }
 
     #[test]
@@ -228,11 +232,11 @@ mod window_tests {
         println!("Active Window Context");
         let all_hwnd: Vec<HWND> = fg_handle
             .into_iter()
-            .map(|handle| get_hwnd_from_raw(handle))
+            .map(get_hwnd_from_raw)
             .filter_map(|hwnd| match hwnd {
                 Some(value) => Some(value),
                 None => {
-                    dbg!(hwnd);
+                    println!("Unable to convert foreground raw window handle");
                     None
                 }
             })
@@ -242,11 +246,11 @@ mod window_tests {
         println!("Background Window Context");
         let all_hwnd: Vec<HWND> = bg_handle
             .into_iter()
-            .map(|handle| get_hwnd_from_raw(handle))
+            .map(get_hwnd_from_raw)
             .filter_map(|hwnd| match hwnd {
                 Some(value) => Some(value),
                 None => {
-                    dbg!(hwnd);
+                    println!("Unable to convert background raw window handle");
                     None
                 }
             })

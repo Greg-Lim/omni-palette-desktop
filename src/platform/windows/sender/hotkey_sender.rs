@@ -7,7 +7,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 
 // Helper function to create a keyboard press/release event
 fn make_key_event(vk: VIRTUAL_KEY, is_release: bool) -> INPUT {
-    let mut flags: KEYBD_EVENT_FLAGS = KEYBD_EVENT_FLAGS(0 as u32);
+    let mut flags: KEYBD_EVENT_FLAGS = KEYBD_EVENT_FLAGS(0_u32);
     if is_release {
         flags |= KEYEVENTF_KEYUP;
     }
