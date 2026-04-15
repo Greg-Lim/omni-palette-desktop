@@ -1,6 +1,8 @@
+use crate::models::hotkey::KeyboardShortcut;
+use crate::platform::windows::mapper::hotkey_mapper::map_key;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_TAB,
+    VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_SHIFT,
 };
 
 // Helper function to create a keyboard press/release event
@@ -10,8 +12,7 @@ fn make_key_event(vk: VIRTUAL_KEY, is_release: bool) -> INPUT {
         flags |= KEYEVENTF_KEYUP;
     }
 
-    // The INPUT structure must be initialized carefully
-    let input = INPUT {
+    INPUT {
         r#type: INPUT_TYPE(1), // INPUT_KEYBOARD
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
@@ -22,26 +23,47 @@ fn make_key_event(vk: VIRTUAL_KEY, is_release: bool) -> INPUT {
                 dwExtraInfo: 0,
             },
         },
-    };
-    input
+    }
 }
 
-pub fn send_ctrl_v() {
-    // 1. CTRL Press
-    let ctrl_press = make_key_event(VK_MENU, false);
-    // 2. C Press
-    let c_press = make_key_event(VK_TAB, false);
-    // 3. C Release
-    let c_release = make_key_event(VK_TAB, true);
-    // 4. CTRL Release
-    let ctrl_release = make_key_event(VK_MENU, true);
+pub fn send_shortcut(shortcut: &KeyboardShortcut) {
+    let mut inputs: Vec<INPUT> = Vec::new();
 
-    let inputs = [ctrl_press, c_press, c_release, ctrl_release];
+    // Press modifiers
+    if shortcut.modifier.control {
+        inputs.push(make_key_event(VK_CONTROL, false));
+    }
+    if shortcut.modifier.shift {
+        inputs.push(make_key_event(VK_SHIFT, false));
+    }
+    if shortcut.modifier.alt {
+        inputs.push(make_key_event(VK_MENU, false));
+    }
+    if shortcut.modifier.win {
+        inputs.push(make_key_event(VK_LWIN, false));
+    }
+
+    // Press and release the main key
+    let vk = map_key(shortcut.key);
+    inputs.push(make_key_event(vk, false));
+    inputs.push(make_key_event(vk, true));
+
+    // Release modifiers in reverse order
+    if shortcut.modifier.win {
+        inputs.push(make_key_event(VK_LWIN, true));
+    }
+    if shortcut.modifier.alt {
+        inputs.push(make_key_event(VK_MENU, true));
+    }
+    if shortcut.modifier.shift {
+        inputs.push(make_key_event(VK_SHIFT, true));
+    }
+    if shortcut.modifier.control {
+        inputs.push(make_key_event(VK_CONTROL, true));
+    }
 
     unsafe {
-        // Send the sequence of four events
         let _result = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-        // Check result for success/failure...
     }
 }
 
@@ -68,7 +90,7 @@ mod tests {
         }
     }
 
-    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, VK_DELETE};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, VK_DELETE, VK_TAB};
     #[test]
     fn test_send_ctrl_alt_del_sequence_correctness() {
         // Arrange: Prepare the key sequence

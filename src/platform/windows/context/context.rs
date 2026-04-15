@@ -9,7 +9,7 @@ use windows::Win32::System::ProcessStatus::GetModuleBaseNameW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-    IsWindowVisible,
+    IsWindowVisible, SetForegroundWindow,
 };
 
 pub fn get_foreground_window_handle() -> HWND {
@@ -168,6 +168,13 @@ pub fn get_hwnd_from_raw(handle: RawWindowHandle) -> Option<HWND> {
         RawWindowHandle::Win32(h) => Some(HWND(h.hwnd.get() as *mut _)),
         _ => None, // It's not a Windows handle
     }
+}
+
+pub fn focus_window(hwnd: HWND) {
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(50));
 }
 
 #[cfg(test)]

@@ -2,10 +2,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use env_logger::Builder;
-use log::error;
 
 use crate::models::hotkey::Key;
 use crate::platform::platform_interface::get_all_context;
+use crate::platform::windows::context::context::{focus_window, get_hwnd_from_raw};
+use crate::platform::windows::sender::hotkey_sender::send_shortcut;
+use windows::Win32::Foundation::HWND;
 use crate::ui::ui_main;
 use crate::ui::ui_main::{Command, UiEvent, UiSignal};
 use crate::{core::registry::registry::MasterRegistry, models::action::Os};
@@ -77,12 +79,19 @@ fn main() {
                                 .into_iter()
                                 .map(|ua| {
                                     let label = format!("{}: {}", ua.app_name, ua.action_name);
-                                    let action_label = label.clone();
+                                    let shortcut = ua.keyboard_shortcut;
+                                    let target_hwnd_val: Option<isize> = ua
+                                        .target_window
+                                        .and_then(|h| get_hwnd_from_raw(h))
+                                        .map(|hwnd| hwnd.0 as isize);
 
                                     Command {
                                         label,
                                         action: Box::new(move || {
-                                            dbg!("Executing action for command: {}", &action_label);
+                                            if let Some(val) = target_hwnd_val {
+                                                focus_window(HWND(val as *mut _));
+                                            }
+                                            send_shortcut(&shortcut);
                                         }),
                                     }
                                 })

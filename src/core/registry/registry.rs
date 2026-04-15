@@ -4,6 +4,8 @@ use std::{collections::HashMap, fs, path::Path};
 
 use log::{error, info, warn};
 
+use raw_window_handle::RawWindowHandle;
+
 use crate::{
     core::extensions::extensions::load_config,
     models::{
@@ -87,6 +89,7 @@ pub struct UnitAction {
     pub action_name: ActionName,
     pub focus_state: FocusState,
     pub keyboard_shortcut: KeyboardShortcut,
+    pub target_window: Option<RawWindowHandle>,
 }
 
 impl MasterRegistry {
@@ -120,6 +123,7 @@ impl MasterRegistry {
                     action_name: action.name.clone(),
                     focus_state: FocusState::Background,
                     keyboard_shortcut: action.keyboard_shortcut,
+                    target_window: Some(*bg_context),
                 });
             }
         }
@@ -149,6 +153,7 @@ impl MasterRegistry {
                     action_name: action.name.clone(),
                     focus_state: FocusState::Focused,
                     keyboard_shortcut: action.keyboard_shortcut,
+                    target_window: Some(*fg_context),
                 });
             }
         }
@@ -182,6 +187,7 @@ impl MasterRegistry {
                     action_name: action.name.clone(),
                     focus_state: FocusState::Focused,
                     keyboard_shortcut: action.keyboard_shortcut,
+                    target_window: Some(*active),
                 });
             }
         }

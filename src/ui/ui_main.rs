@@ -210,9 +210,9 @@ impl App {
             .filtered_indices
             .get(self.palette.selected_index)
         {
+            self.hide(ctx);
             (self.palette.all_commands[orig_idx].action)();
             let _ = self.event_tx.send(UiEvent::ActionExecuted);
-            self.hide(ctx);
         }
     }
 
@@ -460,9 +460,9 @@ impl eframe::App for App {
                                 }
 
                                 if let Some(orig_idx) = clicked_action {
+                                    self.hide(ui.ctx());
                                     (self.palette.all_commands[orig_idx].action)();
                                     let _ = self.event_tx.send(UiEvent::ActionExecuted);
-                                    self.hide(ui.ctx());
                                 }
                             });
                     });
