@@ -1,0 +1,9 @@
+id = "auto_typer"
+name = "Auto Typer"
+version = "0.1.0"
+wasm = "plugin.wasm"
+permissions = ["type_text"]
+
+[app]
+default_focus_state = "global"
+default_tags = ["wasm", "demo", "typing"]

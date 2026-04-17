@@ -1,6 +1,6 @@
 // register action is for the user to register new actions given the context and action
 
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs, path::Path, sync::Arc};
 
 use log::{error, info, warn};
 
@@ -9,14 +9,16 @@ use raw_window_handle::RawWindowHandle;
 use crate::{
     config::extension::{CmdByOs, Config, KeyChord, Modifier},
     core::extensions::extensions::load_config,
+    core::plugins::wasm_plugin::{PluginApplication, PluginRegistry},
     domain::{
         action::{
-            Action, ActionId, ActionMetadata, ActionName, AppName, AppProcessName, ApplicationID,
-            ContextRoot, FocusState, Os,
+            Action, ActionExecution, ActionId, ActionMetadata, ActionName, AppName, AppProcessName,
+            ApplicationID, ContextRoot, FocusState, Os,
         },
         hotkey::{HotkeyModifiers, KeyboardShortcut},
     },
     platform::platform_interface::RawWindowHandleExt,
+    platform::windows::sender::hotkey_sender::send_text,
 };
 
 #[derive(Default, Debug)]
@@ -25,11 +27,17 @@ pub struct MasterRegistry {
     // 2 way: can be lazy generated when the user pulls up the palette or pregenerated.
     pub application_registry: HashMap<ApplicationID, Application>,
     pub application_process_name_id: HashMap<AppProcessName, ApplicationID>,
+    pub plugin_registry: Arc<PluginRegistry>,
 }
 
 impl MasterRegistry {
     pub fn build(extensions_folder: &Path, current_os: Os) -> MasterRegistry {
-        let mut master_registry = MasterRegistry::default();
+        let plugin_registry =
+            Arc::new(PluginRegistry::load(extensions_folder, Arc::new(send_text)));
+        let mut master_registry = MasterRegistry {
+            plugin_registry: Arc::clone(&plugin_registry),
+            ..Default::default()
+        };
 
         // Use a match on read_dir to handle the folder being missing/inaccessible
         match fs::read_dir(extensions_folder) {
@@ -57,21 +65,31 @@ impl MasterRegistry {
                     // Load and build application
                     match load_config(&path).and_then(|c| Application::new(&c, &current_os)) {
                         Ok(app) => {
+                            let app_id = master_registry.application_registry.len() as u32;
                             info!(
                                 "Successfully loaded extension: {:?}",
                                 path.file_name().unwrap()
                             );
                             master_registry
                                 .application_registry
-                                .insert(idx as u32, app.clone());
+                                .insert(app_id, app.clone());
                             master_registry
                                 .application_process_name_id
-                                .insert(app.application_process_name.clone(), idx as u32);
+                                .insert(app.application_process_name.clone(), app_id);
                         }
                         Err(err) => {
                             error!("Failed to load extension at {:?}: {}", path, err);
                         }
                     }
+                }
+
+                for plugin_app in plugin_registry.applications() {
+                    let app_id = master_registry.application_registry.len() as u32;
+                    let app = Application::from_plugin(plugin_app);
+                    master_registry
+                        .application_process_name_id
+                        .insert(app.application_process_name.clone(), app_id);
+                    master_registry.application_registry.insert(app_id, app);
                 }
             }
             Err(e) => error!(
@@ -81,6 +99,10 @@ impl MasterRegistry {
         };
 
         master_registry
+    }
+
+    pub fn plugin_registry(&self) -> Arc<PluginRegistry> {
+        Arc::clone(&self.plugin_registry)
     }
 }
 
@@ -92,7 +114,8 @@ pub struct UnitAction {
     pub action_id: ActionId,
     pub action_name: ActionName,
     pub focus_state: FocusState,
-    pub keyboard_shortcut: KeyboardShortcut,
+    pub execution: ActionExecution,
+    pub shortcut_text: String,
     pub metadata: ActionMetadata,
     pub target_window: Option<RawWindowHandle>,
 }
@@ -125,7 +148,8 @@ impl MasterRegistry {
                     action_id,
                     action_name: action.name.clone(),
                     focus_state: FocusState::Background,
-                    keyboard_shortcut: action.keyboard_shortcut,
+                    execution: action.execution.clone(),
+                    shortcut_text: action.shortcut_text.clone(),
                     metadata: action.metadata.clone(),
                     target_window: Some(*bg_context),
                 });
@@ -160,7 +184,8 @@ impl MasterRegistry {
                     action_id,
                     action_name: action.name.clone(),
                     focus_state: FocusState::Focused,
-                    keyboard_shortcut: action.keyboard_shortcut,
+                    execution: action.execution.clone(),
+                    shortcut_text: action.shortcut_text.clone(),
                     metadata: action.metadata.clone(),
                     target_window: Some(*active),
                 });
@@ -178,7 +203,8 @@ impl MasterRegistry {
                     action_id,
                     action_name: action.name.clone(),
                     focus_state: FocusState::Global,
-                    keyboard_shortcut: action.keyboard_shortcut,
+                    execution: action.execution.clone(),
+                    shortcut_text: action.shortcut_text.clone(),
                     metadata: action.metadata.clone(),
                     target_window: None,
                 });
@@ -261,17 +287,20 @@ impl Application {
             tags.sort();
             tags.dedup();
 
+            let shortcut = KeyboardShortcut {
+                modifier: HotkeyModifiers {
+                    control: binding.mods.contains(&Modifier::Ctrl),
+                    shift: binding.mods.contains(&Modifier::Shift),
+                    alt: binding.mods.contains(&Modifier::Alt),
+                    win: binding.mods.contains(&Modifier::Win),
+                },
+                key: binding.key,
+            };
+
             let app_action: Action = Action {
                 name: config_action.name.clone(),
-                keyboard_shortcut: KeyboardShortcut {
-                    modifier: HotkeyModifiers {
-                        control: binding.mods.contains(&Modifier::Ctrl),
-                        shift: binding.mods.contains(&Modifier::Shift),
-                        alt: binding.mods.contains(&Modifier::Alt),
-                        win: binding.mods.contains(&Modifier::Win),
-                    },
-                    key: binding.key,
-                },
+                shortcut_text: shortcut.to_string(),
+                execution: ActionExecution::Shortcut(shortcut),
                 focus_state: config_action.focus_state.unwrap_or(
                     app_config
                         .app
@@ -293,6 +322,39 @@ impl Application {
             application_process_name: application_os_name,
             application_registry,
         })
+    }
+
+    pub fn from_plugin(plugin: &PluginApplication) -> Application {
+        let application_registry = plugin
+            .commands
+            .iter()
+            .enumerate()
+            .map(|(idx, command)| {
+                (
+                    idx as u32,
+                    Action {
+                        name: command.name.clone(),
+                        shortcut_text: command.shortcut_text.clone(),
+                        execution: ActionExecution::PluginCommand {
+                            plugin_id: plugin.plugin_id.clone(),
+                            command_id: command.id.clone(),
+                        },
+                        focus_state: command.focus_state,
+                        metadata: ActionMetadata {
+                            priority: command.priority,
+                            starred: command.starred,
+                            tags: command.tags.clone(),
+                        },
+                    },
+                )
+            })
+            .collect();
+
+        Application {
+            application_name: plugin.name.clone(),
+            application_process_name: plugin.process_name.clone(),
+            application_registry,
+        }
     }
 
     #[allow(dead_code)]

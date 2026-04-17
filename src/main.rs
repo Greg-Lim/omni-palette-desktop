@@ -10,8 +10,9 @@ use std::time::Duration;
 use env_logger::Builder;
 
 use crate::config::ignore::{load_ignored_process_names, normalize_process_name};
+use crate::core::plugins::wasm_plugin::PluginRegistry;
 use crate::core::registry::registry::{MasterRegistry, UnitAction};
-use crate::domain::action::{ContextRoot, Os};
+use crate::domain::action::{ActionExecution, ContextRoot, Os};
 use crate::domain::hotkey::{Key, KeyboardShortcut};
 use crate::platform::hotkey_actions::HotkeyPassthrough;
 use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
@@ -181,7 +182,15 @@ fn show_palette(
     palette_open: &mut bool,
 ) {
     let work_area = palette_work_area(context_root);
-    let commands = commands_from_unit_actions(registry.get_actions(context_root));
+    let active_hwnd = context_root
+        .get_active()
+        .and_then(|handle| get_hwnd_from_raw(*handle))
+        .map(|hwnd| hwnd.0 as isize);
+    let commands = commands_from_unit_actions(
+        registry.get_actions(context_root),
+        registry.plugin_registry(),
+        active_hwnd,
+    );
 
     if ui_tx
         .send(UiSignal::Show {
@@ -202,16 +211,26 @@ fn palette_work_area(context_root: &ContextRoot) -> Option<PaletteWorkArea> {
         .map(|(left, top, right, bottom)| PaletteWorkArea::from_ltrb(left, top, right, bottom))
 }
 
-fn commands_from_unit_actions(unit_actions: Vec<UnitAction>) -> Vec<Command> {
+fn commands_from_unit_actions(
+    unit_actions: Vec<UnitAction>,
+    plugin_registry: Arc<PluginRegistry>,
+    active_hwnd_val: Option<isize>,
+) -> Vec<Command> {
     unit_actions
         .into_iter()
         .enumerate()
-        .map(command_from_unit_action)
+        .map(|unit_action| {
+            command_from_unit_action(unit_action, Arc::clone(&plugin_registry), active_hwnd_val)
+        })
         .collect()
 }
 
-fn command_from_unit_action((original_order, unit_action): (usize, UnitAction)) -> Command {
-    let shortcut = unit_action.keyboard_shortcut;
+fn command_from_unit_action(
+    (original_order, unit_action): (usize, UnitAction),
+    plugin_registry: Arc<PluginRegistry>,
+    active_hwnd_val: Option<isize>,
+) -> Command {
+    let execution = unit_action.execution;
     let target_hwnd_val = unit_action
         .target_window
         .and_then(get_hwnd_from_raw)
@@ -219,17 +238,31 @@ fn command_from_unit_action((original_order, unit_action): (usize, UnitAction)) 
 
     Command {
         label: format!("{}: {}", unit_action.app_name, unit_action.action_name),
-        shortcut_text: shortcut.to_string(),
+        shortcut_text: unit_action.shortcut_text,
         priority: unit_action.metadata.priority,
         focus_state: unit_action.focus_state,
         starred: unit_action.metadata.starred,
         tags: unit_action.metadata.tags,
         original_order,
-        action: Box::new(move || {
-            if let Some(val) = target_hwnd_val {
-                focus_window(HWND(val as *mut _));
+        action: Box::new(move || match &execution {
+            ActionExecution::Shortcut(shortcut) => {
+                if let Some(val) = target_hwnd_val {
+                    focus_window(HWND(val as *mut _));
+                }
+                send_shortcut(shortcut);
             }
-            send_shortcut(&shortcut);
+            ActionExecution::PluginCommand {
+                plugin_id,
+                command_id,
+            } => {
+                if let Some(val) = active_hwnd_val {
+                    focus_window(HWND(val as *mut _));
+                    std::thread::sleep(Duration::from_millis(75));
+                }
+                if let Err(err) = plugin_registry.execute(plugin_id, command_id) {
+                    log::error!("Failed to execute WASM plugin command: {err}");
+                }
+            }
         }),
     }
 }

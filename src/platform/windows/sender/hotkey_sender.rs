@@ -2,7 +2,7 @@ use crate::domain::hotkey::KeyboardShortcut;
 use crate::platform::windows::mapper::hotkey_mapper::map_key;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_SHIFT,
+    KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_SHIFT,
 };
 
 // Helper function to create a keyboard press/release event
@@ -60,6 +60,38 @@ pub fn send_shortcut(shortcut: &KeyboardShortcut) {
     }
     if shortcut.modifier.control {
         inputs.push(make_key_event(VK_CONTROL, true));
+    }
+
+    unsafe {
+        let _result = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+fn make_unicode_key_event(unit: u16, is_release: bool) -> INPUT {
+    let mut flags = KEYEVENTF_UNICODE;
+    if is_release {
+        flags |= KEYEVENTF_KEYUP;
+    }
+
+    INPUT {
+        r#type: INPUT_TYPE(1), // INPUT_KEYBOARD
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: unit,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+pub fn send_text(text: &str) {
+    let mut inputs = Vec::new();
+    for unit in text.encode_utf16() {
+        inputs.push(make_unicode_key_event(unit, false));
+        inputs.push(make_unicode_key_event(unit, true));
     }
 
     unsafe {

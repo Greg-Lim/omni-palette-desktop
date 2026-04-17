@@ -5,9 +5,19 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Hash)]
 pub struct Action {
     pub name: String,
-    pub keyboard_shortcut: KeyboardShortcut,
+    pub execution: ActionExecution,
+    pub shortcut_text: String,
     pub focus_state: FocusState,
     pub metadata: ActionMetadata,
+}
+
+#[derive(Debug, Clone, Hash)]
+pub enum ActionExecution {
+    Shortcut(KeyboardShortcut),
+    PluginCommand {
+        plugin_id: String,
+        command_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Hash)]
