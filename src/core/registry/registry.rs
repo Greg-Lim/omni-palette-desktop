@@ -1,6 +1,6 @@
 // register action is for the user to register new actions given the context and action
 
-use std::{collections::HashMap, fs, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use log::{error, info, warn};
 
@@ -8,8 +8,10 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::{
     config::extension::{CmdByOs, Config, KeyChord, Modifier},
-    core::extensions::extensions::load_config,
-    core::plugins::wasm_plugin::{PluginApplication, PluginRegistry},
+    core::{
+        extensions::{discovery::ExtensionDiscovery, extensions::load_config},
+        plugins::{PluginApplication, PluginRegistry},
+    },
     domain::{
         action::{
             Action, ActionExecution, ActionId, ActionMetadata, ActionName, AppName, AppProcessName,
@@ -31,72 +33,42 @@ pub struct MasterRegistry {
 }
 
 impl MasterRegistry {
-    pub fn build(extensions_folder: &Path, current_os: Os) -> MasterRegistry {
-        let plugin_registry =
-            Arc::new(PluginRegistry::load(extensions_folder, Arc::new(send_text)));
+    pub fn build(extension_discovery: &ExtensionDiscovery, current_os: Os) -> MasterRegistry {
+        let plugin_registry = Arc::new(PluginRegistry::load(
+            extension_discovery.plugin_manifest_paths(),
+            Arc::new(send_text),
+        ));
         let mut master_registry = MasterRegistry {
             plugin_registry: Arc::clone(&plugin_registry),
             ..Default::default()
         };
 
-        // Use a match on read_dir to handle the folder being missing/inaccessible
-        match fs::read_dir(extensions_folder) {
-            Ok(entries) => {
-                for (idx, entry) in entries.enumerate() {
-                    // Handle individual directory entry errors
-                    let entry = match entry {
-                        Ok(e) => e,
-                        Err(err) => {
-                            warn!("Failed to read directory entry {}: {}", idx, err);
-                            continue;
-                        }
-                    };
-
-                    let path = entry.path();
-
-                    // Skip non-toml files
-                    if path.extension().and_then(|s| s.to_str()) != Some("toml") {
-                        continue;
-                    }
-                    if path.file_name().and_then(|s| s.to_str()) == Some(".ignore.toml") {
-                        continue;
-                    }
-
-                    // Load and build application
-                    match load_config(&path).and_then(|c| Application::new(&c, &current_os)) {
-                        Ok(app) => {
-                            let app_id = master_registry.application_registry.len() as u32;
-                            info!(
-                                "Successfully loaded extension: {:?}",
-                                path.file_name().unwrap()
-                            );
-                            master_registry
-                                .application_registry
-                                .insert(app_id, app.clone());
-                            master_registry
-                                .application_process_name_id
-                                .insert(app.application_process_name.clone(), app_id);
-                        }
-                        Err(err) => {
-                            error!("Failed to load extension at {:?}: {}", path, err);
-                        }
-                    }
-                }
-
-                for plugin_app in plugin_registry.applications() {
+        for path in extension_discovery.static_config_paths() {
+            match load_config(&path).and_then(|c| Application::new(&c, &current_os)) {
+                Ok(app) => {
                     let app_id = master_registry.application_registry.len() as u32;
-                    let app = Application::from_plugin(plugin_app);
+                    info!("Successfully loaded extension: {:?}", path);
+                    master_registry
+                        .application_registry
+                        .insert(app_id, app.clone());
                     master_registry
                         .application_process_name_id
                         .insert(app.application_process_name.clone(), app_id);
-                    master_registry.application_registry.insert(app_id, app);
+                }
+                Err(err) => {
+                    error!("Failed to load extension at {:?}: {}", path, err);
                 }
             }
-            Err(e) => error!(
-                "Could not access extensions directory at {:?}: {}",
-                extensions_folder, e
-            ),
-        };
+        }
+
+        for plugin_app in plugin_registry.applications() {
+            let app_id = master_registry.application_registry.len() as u32;
+            let app = Application::from_plugin(plugin_app);
+            master_registry
+                .application_process_name_id
+                .insert(app.application_process_name.clone(), app_id);
+            master_registry.application_registry.insert(app_id, app);
+        }
 
         master_registry
     }

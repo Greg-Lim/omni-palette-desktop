@@ -1,0 +1,26 @@
+version = 1
+
+[app]
+id = "file_system"
+name = "File System"
+default_focus_state = "focused"
+
+[app.application_os_name]
+windows = "Explorer.EXE"
+
+[actions]
+
+[actions.new_tab]
+name = "New tab"
+focus_state = "focused"
+cmd.windows = { mods = ["ctrl"], key = "T" }
+
+[actions.close_tab]
+name = "Close tab"
+focus_state = "focused"
+cmd.windows = { mods = ["ctrl"], key = "W" }
+
+[actions.rename_item]
+name = "Rename item"
+focus_state = "focused"
+cmd.windows = { mods = ["fn"], key = "F2" }

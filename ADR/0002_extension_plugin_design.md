@@ -1,4 +1,4 @@
-# ADR 0003: Code-Based Extension Plugin Design
+# ADR 0002: Code-Based Extension Plugin Design
 
 ## Status
 
@@ -66,9 +66,12 @@ Future code-based extensions should use a folder-based layout:
 
 ```text
 extensions/
-  plugin_id/
-    plugin.toml
-    plugin.wasm
+  static/
+    chrome.toml
+  plugins/
+    plugin_id/
+      plugin.toml
+      plugin.wasm
 ```
 
 `plugin.toml` should describe metadata and permissions.

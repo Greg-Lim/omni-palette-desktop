@@ -10,7 +10,8 @@ use std::time::Duration;
 use env_logger::Builder;
 
 use crate::config::ignore::{load_ignored_process_names, normalize_process_name};
-use crate::core::plugins::wasm_plugin::PluginRegistry;
+use crate::core::extensions::discovery::ExtensionDiscovery;
+use crate::core::plugins::PluginRegistry;
 use crate::core::registry::registry::{MasterRegistry, UnitAction};
 use crate::domain::action::{ActionExecution, ContextRoot, Os};
 use crate::domain::hotkey::{Key, KeyboardShortcut};
@@ -40,9 +41,10 @@ fn main() {
     let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
 
     let extensions_folder = Path::new("./extensions");
-    let master_registry = Arc::new(MasterRegistry::build(extensions_folder, current_os));
+    let extension_discovery = ExtensionDiscovery::new(extensions_folder);
+    let master_registry = Arc::new(MasterRegistry::build(&extension_discovery, current_os));
     let ignored_process_names = Arc::new(load_ignored_process_names(
-        &extensions_folder.join(".ignore.toml"),
+        &extension_discovery.ignore_file_path(),
         current_os,
     ));
 
