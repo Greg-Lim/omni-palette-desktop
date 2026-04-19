@@ -506,6 +506,7 @@ fn command_from_unit_action(
         .target_window
         .and_then(get_hwnd_from_raw)
         .map(|hwnd| hwnd.0 as isize);
+    let shortcut_focus_target = shortcut_focus_target(target_hwnd_val, active_hwnd_val);
 
     Command {
         label: format!("{}: {}", unit_action.app_name, unit_action.action_name),
@@ -517,7 +518,7 @@ fn command_from_unit_action(
         original_order,
         action: Box::new(move || match &execution {
             ActionExecution::Shortcut(shortcut) => {
-                if let Some(val) = target_hwnd_val {
+                if let Some(val) = shortcut_focus_target {
                     focus_window(HWND(val as *mut _));
                 }
                 send_shortcut(shortcut);
@@ -536,6 +537,13 @@ fn command_from_unit_action(
             }
         }),
     }
+}
+
+fn shortcut_focus_target(
+    target_hwnd_val: Option<isize>,
+    active_hwnd_val: Option<isize>,
+) -> Option<isize> {
+    target_hwnd_val.or(active_hwnd_val)
 }
 
 #[cfg(test)]
@@ -599,5 +607,20 @@ mod tests {
             .expect_err("wrong platform should fail");
 
         assert!(err.contains("no static windows package"));
+    }
+
+    #[test]
+    fn shortcut_focus_target_prefers_specific_target_window() {
+        assert_eq!(shortcut_focus_target(Some(10), Some(20)), Some(10));
+    }
+
+    #[test]
+    fn shortcut_focus_target_falls_back_to_active_window() {
+        assert_eq!(shortcut_focus_target(None, Some(20)), Some(20));
+    }
+
+    #[test]
+    fn shortcut_focus_target_allows_missing_windows() {
+        assert_eq!(shortcut_focus_target(None, None), None);
     }
 }
