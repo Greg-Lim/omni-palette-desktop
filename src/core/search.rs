@@ -14,8 +14,6 @@ pub struct MatchResult {
 
 #[derive(Debug, Clone)]
 pub struct PreparedQuery {
-    #[allow(dead_code)]
-    pub original: String,
     pub normalized: String,
     pub normalized_lower: String,
     pub pieces: Vec<QueryPiece>,
@@ -39,7 +37,7 @@ struct TargetChar {
 
 const NO_MATCH: usize = 0;
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn get_score(target: &str, query: &str) -> Option<MatchResult> {
     let prepared = prepare_query(query);
     score_fuzzy(target, &prepared)
@@ -76,7 +74,6 @@ pub fn prepare_query(query: &str) -> PreparedQuery {
     };
 
     PreparedQuery {
-        original,
         normalized,
         normalized_lower,
         pieces,

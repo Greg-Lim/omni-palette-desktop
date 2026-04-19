@@ -19,8 +19,8 @@ pub struct IgnoreConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct IgnoredApplication {
-    #[allow(dead_code)]
-    pub name: Option<String>,
+    #[serde(rename = "name")]
+    pub _name: Option<String>,
     pub windows: Option<String>,
     pub macos: Option<String>,
     pub linux: Option<String>,

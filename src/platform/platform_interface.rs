@@ -46,7 +46,7 @@ impl RawWindowHandleExt for RawWindowHandle {
                 let hwnd = plat_win_ctx::get_hwnd_from_raw(*self)?;
                 plat_win_ctx::get_app_process_name(&hwnd)
             }
-            _ => todo!("This os is not supported"),
+            _ => None,
         }
     }
 }

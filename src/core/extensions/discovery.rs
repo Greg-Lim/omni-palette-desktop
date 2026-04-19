@@ -22,6 +22,7 @@ pub struct ExtensionDiscovery {
 }
 
 impl ExtensionDiscovery {
+    #[cfg(test)]
     pub fn new(root: impl AsRef<Path>) -> Self {
         Self {
             roots: vec![root.as_ref().to_path_buf()],
@@ -36,6 +37,7 @@ impl ExtensionDiscovery {
         Self { roots }
     }
 
+    #[cfg(test)]
     pub fn with_roots(roots: impl IntoIterator<Item = PathBuf>) -> Self {
         Self {
             roots: roots.into_iter().collect(),

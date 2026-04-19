@@ -116,14 +116,6 @@ impl GitHubExtensionSource {
     pub fn signature_url(&self) -> String {
         format!("{}.sig", self.catalog_url())
     }
-
-    pub fn validate_package_url(&self, package_url: &str) -> bool {
-        let release_prefix = format!(
-            "https://github.com/{}/{}/releases/download/",
-            self.owner, self.repo
-        );
-        package_url.starts_with(&release_prefix)
-    }
 }
 
 impl Default for GitHubExtensionSource {
@@ -297,24 +289,5 @@ extensions = ["extensions/chrome.toml"]
         assert!(config.activation.modifier.control);
         assert!(config.activation.modifier.shift);
         assert_eq!(config.activation.key, Key::Space);
-    }
-
-    #[test]
-    fn github_source_accepts_only_configured_repo_release_assets() {
-        let source = GitHubExtensionSource {
-            owner: "limgr".to_string(),
-            repo: "global-palette-extensions".to_string(),
-            branch: "main".to_string(),
-            catalog_path: "catalog.v1.json".to_string(),
-            public_key: "abc".to_string(),
-            enabled: true,
-        };
-
-        assert!(source.validate_package_url(
-            "https://github.com/limgr/global-palette-extensions/releases/download/chrome-v1/chrome.gpext"
-        ));
-        assert!(!source.validate_package_url(
-            "https://github.com/other/global-palette-extensions/releases/download/chrome-v1/chrome.gpext"
-        ));
     }
 }

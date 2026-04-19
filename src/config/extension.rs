@@ -9,7 +9,6 @@ use crate::domain::{
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    #[allow(dead_code)]
     pub version: u32,
     pub platform: Os,
     pub app: AppConfig,
@@ -19,7 +18,6 @@ pub struct Config {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
-    #[allow(dead_code)]
     pub id: String,
     pub name: String,
     pub process_name: String,

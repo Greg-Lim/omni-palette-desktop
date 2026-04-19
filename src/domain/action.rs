@@ -75,8 +75,3 @@ impl ContextRoot {
 }
 
 type Context = RawWindowHandle;
-
-#[allow(dead_code)]
-pub trait ContextExt {
-    fn get_all_names(&self) -> Vec<String>;
-}

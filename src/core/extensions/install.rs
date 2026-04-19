@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+// Backend for upcoming palette install/update commands. It is covered by unit tests,
+// but is not invoked by the runtime UI yet.
 
 use std::{
     fs,
@@ -73,7 +75,7 @@ impl ExtensionInstallService {
         if entry.kind != ExtensionKind::Static {
             return Err(InstallError::UnsupportedKind(entry.kind));
         }
-        if !source.validate_package_url(&entry.package_url) {
+        if !package_url_allowed(source, &entry.package_url) {
             return Err(InstallError::PackageUrlNotAllowed(
                 entry.package_url.clone(),
             ));
@@ -266,6 +268,14 @@ fn download_file(url: &str, path: &Path, max_bytes: usize) -> Result<(), Install
     Ok(())
 }
 
+fn package_url_allowed(source: &GitHubExtensionSource, package_url: &str) -> bool {
+    let release_prefix = format!(
+        "https://github.com/{}/{}/releases/download/",
+        source.owner, source.repo
+    );
+    package_url.starts_with(&release_prefix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +307,26 @@ mod tests {
         assert_eq!(state.extensions.len(), 1);
         assert_eq!(state.extensions[0].version, "1.1.0");
         assert!(state.enabled_extension_ids().is_empty());
+    }
+
+    #[test]
+    fn package_url_must_match_configured_github_repo() {
+        let source = GitHubExtensionSource {
+            owner: "limgr".to_string(),
+            repo: "global-palette-extensions".to_string(),
+            branch: "main".to_string(),
+            catalog_path: "catalog.v1.json".to_string(),
+            public_key: "abc".to_string(),
+            enabled: true,
+        };
+
+        assert!(package_url_allowed(
+            &source,
+            "https://github.com/limgr/global-palette-extensions/releases/download/chrome-v1/chrome.gpext"
+        ));
+        assert!(!package_url_allowed(
+            &source,
+            "https://github.com/other/global-palette-extensions/releases/download/chrome-v1/chrome.gpext"
+        ));
     }
 }

@@ -1,7 +1,6 @@
 use crate::domain::hotkey::{HotkeyModifiers, Key};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
-#[allow(dead_code)]
 pub fn map_modifier(modifiers: &HotkeyModifiers) -> HOT_KEY_MODIFIERS {
     let mut flags: HOT_KEY_MODIFIERS = HOT_KEY_MODIFIERS::default();
 

@@ -83,8 +83,6 @@ impl MasterRegistry {
 pub struct UnitAction {
     // This struct will be use for search and generating the UI
     pub app_name: AppName,
-    #[allow(dead_code)]
-    pub action_id: ActionId,
     pub action_name: ActionName,
     pub focus_state: FocusState,
     pub execution: ActionExecution,
@@ -111,14 +109,13 @@ impl MasterRegistry {
                 continue;
             };
 
-            for (&action_id, action) in app
+            for action in app
                 .application_registry
-                .iter()
-                .filter(|(_, a)| a.focus_state == FocusState::Background)
+                .values()
+                .filter(|a| a.focus_state == FocusState::Background)
             {
                 all_actions.push(UnitAction {
                     app_name: app.application_name.clone(),
-                    action_id,
                     action_name: action.name.clone(),
                     focus_state: FocusState::Background,
                     execution: action.execution.clone(),
@@ -147,14 +144,13 @@ impl MasterRegistry {
                 break 'add_focused_actions;
             };
 
-            for (&action_id, action) in app
+            for action in app
                 .application_registry
-                .iter()
-                .filter(|(_, a)| a.focus_state == FocusState::Focused)
+                .values()
+                .filter(|a| a.focus_state == FocusState::Focused)
             {
                 all_actions.push(UnitAction {
                     app_name: app.application_name.clone(),
-                    action_id,
                     action_name: action.name.clone(),
                     focus_state: FocusState::Focused,
                     execution: action.execution.clone(),
@@ -166,14 +162,13 @@ impl MasterRegistry {
         }
 
         for app in self.application_registry.values() {
-            for (&action_id, action) in app
+            for action in app
                 .application_registry
-                .iter()
-                .filter(|(_, a)| a.focus_state == FocusState::Global)
+                .values()
+                .filter(|a| a.focus_state == FocusState::Global)
             {
                 all_actions.push(UnitAction {
                     app_name: app.application_name.clone(),
-                    action_id,
                     action_name: action.name.clone(),
                     focus_state: FocusState::Global,
                     execution: action.execution.clone(),
@@ -197,19 +192,26 @@ pub struct Application {
 
 impl Application {
     pub fn new(app_config: &Config, current_os: &Os) -> Result<Application, String> {
+        if app_config.version != 2 {
+            return Err(format!(
+                "Unsupported extension config version: {}",
+                app_config.version
+            ));
+        }
         if app_config.platform != *current_os {
             return Err(format!(
                 "Extension platform {:?} does not match current OS {:?}",
                 app_config.platform, current_os
             ));
         }
+        if app_config.app.id.trim().is_empty() {
+            return Err("Extension app id must not be empty".to_string());
+        }
 
         let mut application_registry: HashMap<ActionId, Action> = HashMap::new();
         let default_tags = app_config.app.default_tags.clone().unwrap_or_default();
 
-        let mut count: u32 = 0;
-
-        for (_app_id, config_action) in app_config.actions.iter() {
+        for (count, (_app_id, config_action)) in (0_u32..).zip(app_config.actions.iter()) {
             let binding = &config_action.cmd;
 
             let mut tags = default_tags.clone();
@@ -246,7 +248,6 @@ impl Application {
                 },
             };
             application_registry.insert(count, app_action);
-            count += 1;
         }
 
         Ok(Application {
@@ -287,10 +288,5 @@ impl Application {
             application_process_name: plugin.process_name.clone(),
             application_registry,
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn get_action(&self, action_id: &ActionId) -> Option<&Action> {
-        self.application_registry.get(action_id)
     }
 }

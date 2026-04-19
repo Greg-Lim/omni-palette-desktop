@@ -12,7 +12,6 @@ pub(crate) struct PluginManifest {
     pub id: String,
     pub name: String,
     pub platform: Os,
-    #[allow(dead_code)]
     pub version: String,
     pub wasm: PathBuf,
     #[serde(default)]
@@ -24,8 +23,11 @@ impl PluginManifest {
     pub(crate) fn load(path: &Path) -> Result<Self, String> {
         let manifest_content = fs::read_to_string(path)
             .map_err(|err| format!("Could not read plugin manifest: {err}"))?;
-        toml::from_str(&manifest_content)
-            .map_err(|err| format!("Could not parse plugin manifest: {err}"))
+        let manifest: Self = toml::from_str(&manifest_content)
+            .map_err(|err| format!("Could not parse plugin manifest: {err}"))?;
+        semver::Version::parse(&manifest.version)
+            .map_err(|err| format!("Invalid plugin version {}: {err}", manifest.version))?;
+        Ok(manifest)
     }
 }
 

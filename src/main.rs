@@ -57,6 +57,20 @@ fn main() {
     if let Some(cache_root) = &runtime_paths.local_cache_root {
         log::debug!("Using local cache root: {:?}", cache_root);
     }
+    if runtime_config.github.enabled {
+        log::info!(
+            "Using GitHub extension catalog: {}",
+            runtime_config.github.catalog_url()
+        );
+        log::debug!(
+            "GitHub extension catalog public key configured: {}",
+            !runtime_config.github.public_key.is_empty()
+        );
+        log::debug!(
+            "Using GitHub extension catalog signature: {}",
+            runtime_config.github.signature_url()
+        );
+    }
 
     let (ui_tx, ui_rx) = mpsc::channel::<UiSignal>();
     let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
