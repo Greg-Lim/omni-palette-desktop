@@ -5,6 +5,8 @@ pub use crate::platform::windows::receiver::hotkey_receiver::*;
 mod stub {
     use std::sync::mpsc::{self, Receiver};
 
+    use crate::domain::hotkey::KeyboardShortcut;
+
     #[derive(Debug, Clone, Copy)]
     pub struct HotkeyEvent {
         pub id: i32,
@@ -17,7 +19,9 @@ mod stub {
         pub fn stop(self) {}
     }
 
-    pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<HotkeyEvent>) {
+    pub fn start_hotkey_listener(
+        _activation_shortcut: KeyboardShortcut,
+    ) -> (HotkeyHandle, Receiver<HotkeyEvent>) {
         // No-op on non-Windows for now
         let (_tx, rx) = mpsc::channel();
         (HotkeyHandle, rx)

@@ -8,7 +8,9 @@ use std::{
 
 use crate::{
     domain::hotkey::KeyboardShortcut,
-    platform::windows::mapper::hotkey_mapper::{map_key_back, map_modifier_back},
+    platform::windows::mapper::hotkey_mapper::{
+        map_key, map_key_back, map_modifier, map_modifier_back,
+    },
     platform::windows::sender::hotkey_sender::send_shortcut,
 };
 
@@ -19,8 +21,7 @@ use windows::{
         System::Threading::GetCurrentThreadId,
         UI::{
             Input::KeyboardAndMouse::{
-                RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_CONTROL, MOD_NOREPEAT,
-                MOD_SHIFT, VIRTUAL_KEY, VK_P,
+                RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT, VIRTUAL_KEY,
             },
             WindowsAndMessaging::{
                 GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_APP, WM_HOTKEY,
@@ -91,7 +92,9 @@ impl HotkeyHandle {
     }
 }
 
-pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<KeyboardShortcut>) {
+pub fn start_hotkey_listener(
+    activation_shortcut: KeyboardShortcut,
+) -> (HotkeyHandle, Receiver<KeyboardShortcut>) {
     let (hk_event_tx, hk_event_rx) = mpsc::channel();
     let (command_tx, command_rx) = mpsc::channel();
     let (id_tx, id_rx) = mpsc::channel();
@@ -100,7 +103,7 @@ pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<KeyboardShortcut>) {
         unsafe {
             let _ = id_tx.send(GetCurrentThreadId());
         }
-        if let Err(e) = hotkey_thread_main(hk_event_tx, command_rx) {
+        if let Err(e) = hotkey_thread_main(hk_event_tx, command_rx, activation_shortcut) {
             eprintln!("hotkey thread error: {e:?}");
         }
     });
@@ -116,20 +119,18 @@ pub fn start_hotkey_listener() -> (HotkeyHandle, Receiver<KeyboardShortcut>) {
     )
 }
 
-fn register_palette_hotkey() -> Result<()> {
+fn register_palette_hotkey(shortcut: KeyboardShortcut) -> Result<()> {
     unsafe {
-        RegisterHotKey(
-            None,
-            PALETTE_HOTKEY_ID,
-            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-            VK_P.0 as u32,
-        )
+        let modifiers = map_modifier(&shortcut.modifier) | MOD_NOREPEAT;
+        let key = map_key(shortcut.key);
+        RegisterHotKey(None, PALETTE_HOTKEY_ID, modifiers, key.0 as u32)
     }
 }
 
 fn hotkey_thread_main(
     tx: Sender<KeyboardShortcut>,
     command_rx: Receiver<HotkeyThreadCommand>,
+    activation_shortcut: KeyboardShortcut,
 ) -> Result<()> {
     unsafe {
         // Ensure this thread has a message queue before RegisterHotKey
@@ -139,8 +140,7 @@ fn hotkey_thread_main(
         // before RegisterHotKey is called, making the code reliable.
         let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
 
-        // TODO: this needs to be moved out to have a mapping not in windows module
-        register_palette_hotkey()?;
+        register_palette_hotkey(activation_shortcut)?;
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
@@ -166,7 +166,7 @@ fn hotkey_thread_main(
                     send_shortcut(&shortcut);
                     thread::sleep(Duration::from_millis(50));
 
-                    if let Err(err) = register_palette_hotkey() {
+                    if let Err(err) = register_palette_hotkey(activation_shortcut) {
                         warn!("Failed to re-register palette hotkey: {err:?}");
                     }
                 }

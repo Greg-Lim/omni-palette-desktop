@@ -9,12 +9,15 @@ use std::time::Duration;
 
 use env_logger::Builder;
 
-use crate::config::ignore::{load_ignored_process_names, normalize_process_name};
+use crate::config::{
+    ignore::{load_ignored_process_names, normalize_process_name},
+    runtime::{RuntimeConfig, RuntimePaths},
+};
 use crate::core::extensions::discovery::ExtensionDiscovery;
 use crate::core::plugins::PluginRegistry;
 use crate::core::registry::registry::{MasterRegistry, UnitAction};
 use crate::domain::action::{ActionExecution, ContextRoot, Os};
-use crate::domain::hotkey::{Key, KeyboardShortcut};
+use crate::domain::hotkey::KeyboardShortcut;
 use crate::platform::hotkey_actions::HotkeyPassthrough;
 use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
 use crate::platform::windows::context::context::{
@@ -37,18 +40,36 @@ fn main() {
     init_logger();
 
     let current_os = current_os();
+    let runtime_paths = RuntimePaths::from_environment();
+    let runtime_config = RuntimeConfig::load(
+        runtime_paths.config_path.as_deref(),
+        Path::new("./config.toml"),
+    );
+    log::info!(
+        "Using palette activation shortcut: {}",
+        runtime_config.activation
+    );
+    log::debug!(
+        "Runtime startup config: launch_on_login={}, start_hidden={}",
+        runtime_config.startup.launch_on_login,
+        runtime_config.startup.start_hidden
+    );
+    if let Some(cache_root) = &runtime_paths.local_cache_root {
+        log::debug!("Using local cache root: {:?}", cache_root);
+    }
+
     let (ui_tx, ui_rx) = mpsc::channel::<UiSignal>();
     let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
 
     let extensions_folder = Path::new("./extensions");
-    let extension_discovery = ExtensionDiscovery::new(extensions_folder);
+    let extension_discovery = ExtensionDiscovery::bundled_with_user_root(extensions_folder);
     let master_registry = Arc::new(MasterRegistry::build(&extension_discovery, current_os));
     let ignored_process_names = Arc::new(load_ignored_process_names(
         &extension_discovery.ignore_file_path(),
         current_os,
     ));
 
-    let (handle, rx) = platform::hotkey_actions::start_hotkey_listener();
+    let (handle, rx) = platform::hotkey_actions::start_hotkey_listener(runtime_config.activation);
     let hotkey_passthrough = handle.passthrough_sender();
     let _hotkey_bridge = spawn_hotkey_bridge(
         rx,
@@ -57,6 +78,7 @@ fn main() {
         Arc::clone(&master_registry),
         Arc::clone(&ignored_process_names),
         hotkey_passthrough,
+        runtime_config.activation,
     );
 
     ui_main::ui_main(ui_rx, event_tx);
@@ -97,6 +119,7 @@ fn spawn_hotkey_bridge(
     registry: Arc<MasterRegistry>,
     ignored_process_names: Arc<HashSet<String>>,
     hotkey_passthrough: HotkeyPassthrough,
+    activation_shortcut: KeyboardShortcut,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut palette_open = false;
@@ -105,7 +128,7 @@ fn spawn_hotkey_bridge(
             handle_ui_events(&event_rx, &mut palette_open);
 
             match rx.recv_timeout(Duration::from_millis(50)) {
-                Ok(shortcut) if is_palette_hotkey(shortcut) => {
+                Ok(shortcut) if is_palette_hotkey(shortcut, activation_shortcut) => {
                     handle_palette_hotkey(
                         shortcut,
                         &ui_tx,
@@ -132,8 +155,8 @@ fn handle_ui_events(event_rx: &Receiver<UiEvent>, palette_open: &mut bool) {
     }
 }
 
-fn is_palette_hotkey(shortcut: KeyboardShortcut) -> bool {
-    shortcut.modifier.control && shortcut.modifier.shift && matches!(shortcut.key, Key::KeyP)
+fn is_palette_hotkey(shortcut: KeyboardShortcut, activation_shortcut: KeyboardShortcut) -> bool {
+    shortcut == activation_shortcut
 }
 
 fn handle_palette_hotkey(

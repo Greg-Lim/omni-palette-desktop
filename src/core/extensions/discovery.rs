@@ -1,62 +1,106 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
 };
 
 use log::warn;
 
+use crate::core::extensions::install::load_installed_state;
+
 const IGNORE_FILE_NAME: &str = ".ignore.toml";
+const INSTALLED_FILE_NAME: &str = "installed.toml";
 const STATIC_DIR_NAME: &str = "static";
+const SOURCES_FILE_NAME: &str = "sources.toml";
 const PLUGINS_DIR_NAME: &str = "plugins";
 const PLUGIN_MANIFEST_NAME: &str = "plugin.toml";
 
 #[derive(Debug, Clone)]
 pub struct ExtensionDiscovery {
-    root: PathBuf,
+    roots: Vec<PathBuf>,
 }
 
 impl ExtensionDiscovery {
     pub fn new(root: impl AsRef<Path>) -> Self {
         Self {
-            root: root.as_ref().to_path_buf(),
+            roots: vec![root.as_ref().to_path_buf()],
+        }
+    }
+
+    pub fn bundled_with_user_root(root: impl AsRef<Path>) -> Self {
+        let mut roots = vec![root.as_ref().to_path_buf()];
+        if let Some(user_root) = user_extensions_root() {
+            roots.push(user_root);
+        }
+        Self { roots }
+    }
+
+    pub fn with_roots(roots: impl IntoIterator<Item = PathBuf>) -> Self {
+        Self {
+            roots: roots.into_iter().collect(),
         }
     }
 
     pub fn ignore_file_path(&self) -> PathBuf {
-        self.root.join(IGNORE_FILE_NAME)
+        self.primary_root().join(IGNORE_FILE_NAME)
     }
 
     pub fn static_config_paths(&self) -> Vec<PathBuf> {
-        let mut paths = toml_files_in(&self.root.join(STATIC_DIR_NAME), false);
-        let static_file_names: HashSet<_> = paths
-            .iter()
-            .filter_map(|path| path.file_name().map(|file_name| file_name.to_os_string()))
-            .collect();
+        let mut merged = BTreeMap::<OsString, PathBuf>::new();
 
-        paths.extend(toml_files_in(&self.root, true).into_iter().filter(|path| {
-            path.file_name()
-                .is_none_or(|file_name| !static_file_names.contains(file_name))
-        }));
-        paths
+        for root in &self.roots {
+            let static_paths = toml_files_in(&root.join(STATIC_DIR_NAME), false);
+            let disabled_ids = disabled_installed_extension_ids(root);
+            let static_file_names: HashSet<_> = static_paths
+                .iter()
+                .filter_map(|path| path.file_name().map(|file_name| file_name.to_os_string()))
+                .collect();
+
+            for path in toml_files_in(root, true)
+                .into_iter()
+                .filter(|path| is_enabled_static_path(path, &disabled_ids))
+                .filter(|path| {
+                    path.file_name()
+                        .is_none_or(|file_name| !static_file_names.contains(file_name))
+                })
+            {
+                if let Some(file_name) = path.file_name() {
+                    merged.insert(file_name.to_os_string(), path);
+                }
+            }
+
+            for path in static_paths
+                .into_iter()
+                .filter(|path| is_enabled_static_path(path, &disabled_ids))
+            {
+                if let Some(file_name) = path.file_name() {
+                    merged.insert(file_name.to_os_string(), path);
+                }
+            }
+        }
+
+        merged.into_values().collect()
     }
 
     pub fn plugin_manifest_paths(&self) -> Vec<PathBuf> {
-        let plugins_root = self.root.join(PLUGINS_DIR_NAME);
-        let entries = match fs::read_dir(&plugins_root) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
-            Err(err) => {
-                warn!(
-                    "Could not scan plugin directory at {:?}: {}",
-                    plugins_root, err
-                );
-                return Vec::new();
-            }
-        };
+        let mut merged = BTreeMap::<OsString, PathBuf>::new();
 
-        let mut paths: Vec<PathBuf> = entries
-            .filter_map(|entry| {
+        for root in &self.roots {
+            let plugins_root = root.join(PLUGINS_DIR_NAME);
+            let entries = match fs::read_dir(&plugins_root) {
+                Ok(entries) => entries,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => {
+                    warn!(
+                        "Could not scan plugin directory at {:?}: {}",
+                        plugins_root, err
+                    );
+                    continue;
+                }
+            };
+
+            for manifest_path in entries.filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();
                 if !path.is_dir() {
@@ -65,11 +109,47 @@ impl ExtensionDiscovery {
 
                 let manifest_path = path.join(PLUGIN_MANIFEST_NAME);
                 manifest_path.exists().then_some(manifest_path)
-            })
-            .collect();
-        paths.sort();
-        paths
+            }) {
+                if let Some(plugin_id) = manifest_path.parent().and_then(|path| path.file_name()) {
+                    merged.insert(plugin_id.to_os_string(), manifest_path);
+                }
+            }
+        }
+
+        merged.into_values().collect()
     }
+
+    fn primary_root(&self) -> &Path {
+        self.roots
+            .first()
+            .map(PathBuf::as_path)
+            .unwrap_or(Path::new("."))
+    }
+}
+
+pub fn user_extensions_root() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|appdata| appdata.join("GlobalPalette").join("extensions"))
+}
+
+fn disabled_installed_extension_ids(root: &Path) -> HashSet<String> {
+    load_installed_state(root)
+        .map(|state| {
+            state
+                .extensions
+                .into_iter()
+                .filter(|extension| !extension.enabled)
+                .map(|extension| extension.id)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn is_enabled_static_path(path: &Path, disabled_ids: &HashSet<String>) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_none_or(|id| !disabled_ids.contains(id))
 }
 
 fn toml_files_in(folder: &Path, exclude_ignore_file: bool) -> Vec<PathBuf> {
@@ -94,11 +174,14 @@ fn toml_files_in(folder: &Path, exclude_ignore_file: bool) -> Vec<PathBuf> {
             if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
                 return None;
             }
-            if exclude_ignore_file
-                && path.file_name().and_then(|file_name| file_name.to_str())
-                    == Some(IGNORE_FILE_NAME)
-            {
-                return None;
+            if exclude_ignore_file {
+                let file_name = path.file_name().and_then(|file_name| file_name.to_str());
+                if matches!(
+                    file_name,
+                    Some(IGNORE_FILE_NAME) | Some(INSTALLED_FILE_NAME) | Some(SOURCES_FILE_NAME)
+                ) {
+                    return None;
+                }
             }
 
             Some(path)
@@ -163,6 +246,70 @@ mod tests {
         assert_eq!(
             discovery.plugin_manifest_paths(),
             vec![root.join("plugins").join("auto_typer").join("plugin.toml")]
+        );
+    }
+
+    #[test]
+    fn later_roots_override_earlier_static_configs_by_file_name() {
+        let bundled = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("bundled-root");
+        let user = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("user-root");
+        reset_dir(&bundled);
+        reset_dir(&user);
+        fs::create_dir_all(bundled.join("static")).expect("bundled static should be created");
+        fs::create_dir_all(user.join("static")).expect("user static should be created");
+        fs::write(bundled.join("static").join("chrome.toml"), "")
+            .expect("bundled chrome should be written");
+        fs::write(user.join("static").join("chrome.toml"), "")
+            .expect("user chrome should be written");
+
+        let discovery = ExtensionDiscovery::with_roots(vec![bundled, user.clone()]);
+
+        assert_eq!(
+            discovery.static_config_paths(),
+            vec![user.join("static").join("chrome.toml")]
+        );
+    }
+
+    #[test]
+    fn disabled_user_static_config_does_not_override_bundled_config() {
+        let bundled = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("disabled-bundled-root");
+        let user = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("disabled-user-root");
+        reset_dir(&bundled);
+        reset_dir(&user);
+        fs::create_dir_all(bundled.join("static")).expect("bundled static should be created");
+        fs::create_dir_all(user.join("static")).expect("user static should be created");
+        fs::write(bundled.join("static").join("chrome.toml"), "")
+            .expect("bundled chrome should be written");
+        fs::write(user.join("static").join("chrome.toml"), "")
+            .expect("user chrome should be written");
+        fs::write(
+            user.join("installed.toml"),
+            r#"
+[[extensions]]
+id = "chrome"
+version = "1.0.0"
+kind = "static"
+source_id = "official"
+package_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+enabled = false
+installed_path = "static/chrome.toml"
+"#,
+        )
+        .expect("installed state should be written");
+
+        let discovery = ExtensionDiscovery::with_roots(vec![bundled.clone(), user]);
+
+        assert_eq!(
+            discovery.static_config_paths(),
+            vec![bundled.join("static").join("chrome.toml")]
         );
     }
 }

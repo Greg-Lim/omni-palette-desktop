@@ -11,7 +11,7 @@ pub struct HotkeyModifiers {
     pub win: bool,
 }
 
-#[derive(Debug, Clone, Copy, Hash, Deserialize, Display)]
+#[derive(Debug, Clone, Copy, Hash, Deserialize, Display, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")] // Converts KeyA to "key_a" automatically
 pub enum Key {
     // --- 1. Alphanumeric Keys ---
@@ -142,7 +142,7 @@ pub enum Key {
     DownArrow,
 }
 
-#[derive(Debug, Clone, Copy, Hash)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct KeyboardShortcut {
     pub modifier: HotkeyModifiers,
     pub key: Key,

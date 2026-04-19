@@ -27,6 +27,35 @@ action_priority = "high"
 cmd.windows = { mods = ["ctrl"], key = "T" }
 ```
 
+Static TOML extensions describe the application's known default shortcuts. If a target
+application lets users customize its own keybindings, Global Palette does not
+automatically detect those app-specific changes in static extensions. Future WASM
+plugins can add app-specific keybinding resolvers for applications that expose readable
+settings or command APIs.
+
+## User Config
+
+At runtime, Global Palette looks for user settings in:
+
+```text
+%APPDATA%\GlobalPalette\config.toml
+```
+
+The repo-root `config.toml` remains a development fallback. The activation shortcut can
+be configured as:
+
+```toml
+activation = { mods = ["ctrl", "shift"], key = "p" }
+
+[extensions.github]
+owner = "global-palette"
+repo = "extensions"
+branch = "main"
+catalog_path = "catalog.v1.json"
+public_key = ""
+enabled = false
+```
+
 ## Development
 
 This project is built with Rust, egui, and eframe.
