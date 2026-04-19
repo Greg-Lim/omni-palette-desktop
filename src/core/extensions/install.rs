@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-// Backend for upcoming palette install/update commands. It is covered by unit tests,
-// but is not invoked by the runtime UI yet.
-
 use std::{
     fs,
     io::{self, Read, Write},
@@ -33,10 +29,6 @@ impl ExtensionInstallService {
         Self {
             install_root: install_root.as_ref().to_path_buf(),
         }
-    }
-
-    pub fn install_root(&self) -> &Path {
-        &self.install_root
     }
 
     pub fn fetch_catalog(
@@ -129,14 +121,6 @@ impl InstalledState {
 
         self.extensions
             .sort_by(|left, right| left.id.cmp(&right.id));
-    }
-
-    pub fn enabled_extension_ids(&self) -> Vec<&str> {
-        self.extensions
-            .iter()
-            .filter(|extension| extension.enabled)
-            .map(|extension| extension.id.as_str())
-            .collect()
     }
 }
 
@@ -306,7 +290,7 @@ mod tests {
 
         assert_eq!(state.extensions.len(), 1);
         assert_eq!(state.extensions[0].version, "1.1.0");
-        assert!(state.enabled_extension_ids().is_empty());
+        assert!(!state.extensions[0].enabled);
     }
 
     #[test]

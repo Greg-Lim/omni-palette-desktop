@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fs;
 use std::path::Path;
 use std::sync::{
     mpsc::{self, Receiver, RecvTimeoutError, Sender},
@@ -7,13 +8,19 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use ed25519_dalek::{Signer, SigningKey};
 use env_logger::Builder;
 
 use crate::config::{
     ignore::{load_ignored_process_names, normalize_process_name},
     runtime::{RuntimeConfig, RuntimePaths},
 };
-use crate::core::extensions::discovery::ExtensionDiscovery;
+use crate::core::extensions::{
+    catalog::{CatalogEntry, ExtensionCatalog, ExtensionKind},
+    discovery::{user_extensions_root, ExtensionDiscovery},
+    install::ExtensionInstallService,
+};
 use crate::core::plugins::PluginRegistry;
 use crate::core::registry::registry::{MasterRegistry, UnitAction};
 use crate::domain::action::{ActionExecution, ContextRoot, Os};
@@ -72,6 +79,15 @@ fn main() {
         );
     }
 
+    match handle_cli_command(&runtime_config, current_os) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    }
+
     let (ui_tx, ui_rx) = mpsc::channel::<UiSignal>();
     let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
 
@@ -123,6 +139,222 @@ fn current_os() -> Os {
         "macos" => Os::Mac,
         "linux" => Os::Linux,
         _ => panic!("OS not supported"),
+    }
+}
+
+fn handle_cli_command(runtime_config: &RuntimeConfig, current_os: Os) -> Result<bool, String> {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.is_empty() {
+        return Ok(false);
+    }
+    if matches!(args[0].as_str(), "-h" | "--help") {
+        print_extension_cli_usage();
+        return Ok(true);
+    }
+    if args[0] != "ext" {
+        return Ok(false);
+    }
+
+    match args.get(1).map(String::as_str) {
+        Some("catalog") if args.len() == 2 => {
+            list_extension_catalog(runtime_config, current_os)?;
+            Ok(true)
+        }
+        Some("install") if args.len() == 3 => {
+            install_extension_from_catalog(runtime_config, current_os, &args[2])?;
+            Ok(true)
+        }
+        Some("public-key") if args.len() == 3 => {
+            print_public_key(&args[2])?;
+            Ok(true)
+        }
+        Some("sign-catalog") if args.len() == 4 => {
+            sign_catalog(Path::new(&args[2]), &args[3])?;
+            Ok(true)
+        }
+        Some("-h" | "--help" | "help") => {
+            print_extension_cli_usage();
+            Ok(true)
+        }
+        _ => Err(extension_cli_usage()),
+    }
+}
+
+fn list_extension_catalog(runtime_config: &RuntimeConfig, current_os: Os) -> Result<(), String> {
+    let service = ExtensionInstallService::new(extension_install_root()?);
+    let catalog = service
+        .fetch_catalog(&runtime_config.github)
+        .map_err(|err| err.to_string())?;
+    let matching_entries = catalog
+        .entries
+        .iter()
+        .filter(|entry| entry.platform == current_os)
+        .collect::<Vec<_>>();
+
+    if matching_entries.is_empty() {
+        println!(
+            "Catalog fetched, but no {} extensions are available.",
+            os_name(current_os)
+        );
+        return Ok(());
+    }
+
+    println!("Available {} extensions:", os_name(current_os));
+    for entry in matching_entries {
+        println!("- {} {} ({:?})", entry.id, entry.version, entry.kind);
+    }
+    Ok(())
+}
+
+fn install_extension_from_catalog(
+    runtime_config: &RuntimeConfig,
+    current_os: Os,
+    extension_id: &str,
+) -> Result<(), String> {
+    let install_root = extension_install_root()?;
+    let service = ExtensionInstallService::new(&install_root);
+    let catalog = service
+        .fetch_catalog(&runtime_config.github)
+        .map_err(|err| err.to_string())?;
+    let entry = find_install_entry(&catalog, extension_id, current_os)?;
+    let installed = service
+        .install_entry(&runtime_config.github, entry, current_os)
+        .map_err(|err| err.to_string())?;
+
+    println!(
+        "Installed {} {} to {}",
+        installed.id,
+        installed.version,
+        installed.installed_path.display()
+    );
+    println!(
+        "Installed metadata: {}",
+        install_root.join("installed.toml").display()
+    );
+    Ok(())
+}
+
+fn find_install_entry<'a>(
+    catalog: &'a ExtensionCatalog,
+    extension_id: &str,
+    current_os: Os,
+) -> Result<&'a CatalogEntry, String> {
+    let same_id = catalog
+        .entries
+        .iter()
+        .filter(|entry| entry.id == extension_id)
+        .collect::<Vec<_>>();
+    if same_id.is_empty() {
+        let available = current_os_catalog_ids(catalog, current_os);
+        return Err(format!(
+            "Extension '{extension_id}' was not found for any platform. Available {} extensions: {}",
+            os_name(current_os),
+            available
+        ));
+    }
+
+    same_id
+        .into_iter()
+        .find(|entry| entry.platform == current_os && entry.kind == ExtensionKind::Static)
+        .ok_or_else(|| {
+            format!(
+                "Extension '{extension_id}' exists in the catalog, but there is no static {} package for it.",
+                os_name(current_os)
+            )
+        })
+}
+
+fn current_os_catalog_ids(catalog: &ExtensionCatalog, current_os: Os) -> String {
+    let ids = catalog
+        .entries
+        .iter()
+        .filter(|entry| entry.platform == current_os)
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>();
+
+    if ids.is_empty() {
+        "(none)".to_string()
+    } else {
+        ids.join(", ")
+    }
+}
+
+fn extension_install_root() -> Result<std::path::PathBuf, String> {
+    user_extensions_root().ok_or_else(|| {
+        "APPDATA is not set, so Omni Palette cannot determine the user extension install folder."
+            .to_string()
+    })
+}
+
+fn sign_catalog(catalog_path: &Path, secret_key_base64: &str) -> Result<(), String> {
+    let catalog_bytes = fs::read(catalog_path)
+        .map_err(|err| format!("Could not read catalog {}: {err}", catalog_path.display()))?;
+    let signing_key = signing_key_from_base64(secret_key_base64)?;
+    let signature = signing_key.sign(&catalog_bytes);
+    let signature_base64 = STANDARD.encode(signature.to_bytes());
+    let signature_path = catalog_signature_path(catalog_path)?;
+
+    fs::write(&signature_path, signature_base64).map_err(|err| {
+        format!(
+            "Could not write signature {}: {err}",
+            signature_path.display()
+        )
+    })?;
+
+    println!("Wrote {}", signature_path.display());
+    println!(
+        "Public key: {}",
+        STANDARD.encode(signing_key.verifying_key().to_bytes())
+    );
+    Ok(())
+}
+
+fn print_public_key(secret_key_base64: &str) -> Result<(), String> {
+    let signing_key = signing_key_from_base64(secret_key_base64)?;
+    println!(
+        "{}",
+        STANDARD.encode(signing_key.verifying_key().to_bytes())
+    );
+    Ok(())
+}
+
+fn signing_key_from_base64(secret_key_base64: &str) -> Result<SigningKey, String> {
+    let bytes = STANDARD
+        .decode(secret_key_base64.trim())
+        .map_err(|err| format!("Could not decode secret key base64: {err}"))?;
+    let key_bytes: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| "Secret key must decode to exactly 32 bytes.".to_string())?;
+    Ok(SigningKey::from_bytes(&key_bytes))
+}
+
+fn catalog_signature_path(catalog_path: &Path) -> Result<std::path::PathBuf, String> {
+    let file_name = catalog_path
+        .file_name()
+        .ok_or_else(|| format!("Catalog path has no file name: {}", catalog_path.display()))?;
+    Ok(catalog_path.with_file_name(format!("{}.sig", file_name.to_string_lossy())))
+}
+
+fn print_extension_cli_usage() {
+    println!("{}", extension_cli_usage());
+}
+
+fn extension_cli_usage() -> String {
+    [
+        "Usage:",
+        "  cargo run -- ext catalog",
+        "  cargo run -- ext install <extension_id>",
+        "  cargo run -- ext public-key <secret_key_base64>",
+        "  cargo run -- ext sign-catalog <catalog_json_path> <secret_key_base64>",
+    ]
+    .join("\n")
+}
+
+fn os_name(os: Os) -> &'static str {
+    match os {
+        Os::Windows => "windows",
+        Os::Mac => "macos",
+        Os::Linux => "linux",
     }
 }
 
@@ -303,5 +535,69 @@ fn command_from_unit_action(
                 }
             }
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn catalog_with_entries(entries: Vec<CatalogEntry>) -> ExtensionCatalog {
+        ExtensionCatalog {
+            schema_version: 1,
+            generated_at: None,
+            expires_at_unix: None,
+            entries,
+        }
+    }
+
+    fn catalog_entry(id: &str, platform: Os, kind: ExtensionKind) -> CatalogEntry {
+        CatalogEntry {
+            id: id.to_string(),
+            name: id.to_string(),
+            version: "1.0.0".to_string(),
+            platform,
+            kind,
+            package_url: format!(
+                "https://github.com/Greg-Lim/Omni-Palette/releases/download/{id}-v1/{id}.gpext"
+            ),
+            package_sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            size_bytes: None,
+            publisher: None,
+            description: None,
+            license: None,
+            homepage: None,
+            repository: None,
+            keywords: Vec::new(),
+            min_app_version: None,
+        }
+    }
+
+    #[test]
+    fn finds_static_entry_for_current_platform() {
+        let catalog = catalog_with_entries(vec![
+            catalog_entry("downloaded_test", Os::Mac, ExtensionKind::Static),
+            catalog_entry("downloaded_test", Os::Windows, ExtensionKind::Static),
+        ]);
+
+        let entry = find_install_entry(&catalog, "downloaded_test", Os::Windows)
+            .expect("windows entry should be selected");
+
+        assert_eq!(entry.platform, Os::Windows);
+    }
+
+    #[test]
+    fn rejects_entry_without_current_platform_static_package() {
+        let catalog = catalog_with_entries(vec![catalog_entry(
+            "downloaded_test",
+            Os::Mac,
+            ExtensionKind::Static,
+        )]);
+
+        let err = find_install_entry(&catalog, "downloaded_test", Os::Windows)
+            .expect_err("wrong platform should fail");
+
+        assert!(err.contains("no static windows package"));
     }
 }

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "generated_at": null,
+  "expires_at_unix": null,
+  "entries": [
+    {
+      "id": "downloaded_test",
+      "name": "Downloaded Test",
+      "version": "0.1.0",
+      "platform": "windows",
+      "kind": "static",
+      "package_url": "https://github.com/Greg-Lim/global_palette/releases/download/downloaded_test-v0.1.0/downloaded_test-0.1.0-windows.gpext",
+      "package_sha256": "f296324d9f6b58fa4dd69fed071c42f4c583b3b5782d428216a3042c19775035",
+      "size_bytes": null,
+      "publisher": "Greg-Lim",
+      "description": "Minimal downloaded extension test",
+      "license": null,
+      "homepage": null,
+      "repository": "https://github.com/Greg-Lim/global_palette",
+      "keywords": ["downloaded", "test"],
+      "min_app_version": null
+    }
+  ]
+}
