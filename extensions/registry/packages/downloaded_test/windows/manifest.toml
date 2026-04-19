@@ -1,0 +1,6 @@
+schema_version = 1
+id = "downloaded_test"
+name = "Downloaded Test"
+platform = "windows"
+version = "0.1.0"
+kind = "static"

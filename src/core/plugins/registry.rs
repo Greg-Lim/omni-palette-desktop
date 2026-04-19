@@ -119,7 +119,15 @@ mod tests {
     use crate::core::extensions::discovery::ExtensionDiscovery;
 
     fn real_plugin_manifests() -> Vec<PathBuf> {
-        ExtensionDiscovery::new("./extensions").plugin_manifest_paths()
+        ExtensionDiscovery::new("./extensions/bundled").plugin_manifest_paths()
+    }
+
+    fn sample_plugin_wasm_path() -> PathBuf {
+        Path::new("extensions")
+            .join("bundled")
+            .join("plugins")
+            .join("auto_typer")
+            .join("plugin.wasm")
     }
 
     #[test]
@@ -171,14 +179,8 @@ mod tests {
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(
-            Path::new("extensions")
-                .join("plugins")
-                .join("auto_typer")
-                .join("plugin.wasm"),
-            plugin_dir.join("plugin.wasm"),
-        )
-        .expect("should copy sample plugin wasm");
+        fs::copy(sample_plugin_wasm_path(), plugin_dir.join("plugin.wasm"))
+            .expect("should copy sample plugin wasm");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "no_permission"
@@ -219,14 +221,8 @@ default_focus_state = "global"
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(
-            Path::new("extensions")
-                .join("plugins")
-                .join("auto_typer")
-                .join("plugin.wasm"),
-            plugin_dir.join("plugin.wasm"),
-        )
-        .expect("should copy sample plugin wasm");
+        fs::copy(sample_plugin_wasm_path(), plugin_dir.join("plugin.wasm"))
+            .expect("should copy sample plugin wasm");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "unknown_permission"
@@ -262,14 +258,8 @@ default_focus_state = "global"
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(
-            Path::new("extensions")
-                .join("plugins")
-                .join("auto_typer")
-                .join("plugin.wasm"),
-            plugin_dir.join("plugin.wasm"),
-        )
-        .expect("should copy sample plugin wasm");
+        fs::copy(sample_plugin_wasm_path(), plugin_dir.join("plugin.wasm"))
+            .expect("should copy sample plugin wasm");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "wrong_platform"

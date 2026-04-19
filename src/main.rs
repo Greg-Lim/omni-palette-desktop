@@ -91,7 +91,7 @@ fn main() {
     let (ui_tx, ui_rx) = mpsc::channel::<UiSignal>();
     let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
 
-    let extensions_folder = Path::new("./extensions");
+    let extensions_folder = Path::new("./extensions/bundled");
     let extension_discovery = ExtensionDiscovery::bundled_with_user_root(extensions_folder);
     let master_registry = Arc::new(MasterRegistry::build(&extension_discovery, current_os));
     let ignored_process_names = Arc::new(load_ignored_process_names(

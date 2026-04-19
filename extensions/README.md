@@ -1,12 +1,22 @@
 # Extensions
 
-Global Palette supports two extension shapes.
+Global Palette keeps bundled extensions and remote-package registry files separate.
+This repository is still the temporary registry host, but it is not using a Git
+submodule or a separate extension repository yet.
 
-## Static Shortcut Extensions
+## Bundled Extensions
 
-Put TOML shortcut mappings in `extensions/static`.
+The app loads bundled runtime extensions from `extensions/bundled`.
 
-These files describe commands that map directly to keyboard shortcuts, such as Chrome or Windows shortcuts. Each file is OS-specific and uses `version = 2` with a single `platform`.
+```text
+extensions/bundled/
+  .ignore.toml
+  static/
+  plugins/
+```
+
+Static shortcut mappings live in `extensions/bundled/static`. Each file is
+OS-specific and uses `version = 2` with a single `platform`.
 
 ```toml
 version = 2
@@ -21,20 +31,11 @@ default_focus_state = "focused"
 [actions.new_tab]
 name = "New tab"
 focus_state = "focused"
-action_priority = "high"
+priority = "high"
 cmd = { mods = ["ctrl"], key = "T" }
 ```
 
-Static shortcut extensions represent known default shortcuts. They do not automatically
-track user-customized keybindings inside the target application. App-specific dynamic
-shortcut discovery should be implemented later as WASM plugin logic when the target app
-stores keybindings in a readable config file or exposes a command API.
-
-## WASM Plugins
-
-Put executable plugins in `extensions/plugins/<plugin_id>`.
-
-Each plugin folder should contain:
+WASM plugins live in `extensions/bundled/plugins/<plugin_id>`.
 
 ```text
 plugin.toml
@@ -52,12 +53,44 @@ wasm = "plugin.wasm"
 permissions = ["type_text"]
 ```
 
-Remote packages should be published per OS, for example `chrome-1.0.0-windows.gpext`.
+Static shortcut extensions represent known default shortcuts. They do not
+automatically track user-customized keybindings inside the target application.
+App-specific dynamic shortcut discovery should be implemented later as WASM
+plugin logic when the target app stores keybindings in a readable config file or
+exposes a command API.
 
-Demo plugins can also keep readable source beside the compiled artifact. `auto_typer/plugin.wat` is kept next to `plugin.wasm` so the sample is easy to inspect.
+## Registry Source
+
+Remote package catalog and source live in `extensions/registry`.
+
+```text
+extensions/registry/
+  catalog.v1.json
+  catalog.v1.json.sig
+  packages/
+    downloaded_test/
+      windows/
+        manifest.toml
+        static/
+          downloaded_test.toml
+```
+
+Package source folders do not include version numbers. Git tags and GitHub
+Releases identify published versions. For example:
+
+```text
+tag: downloaded_test-v0.1.0
+asset: downloaded_test-0.1.0-windows.gpext
+```
+
+The generated `.gpext` file is an installable artifact and should stay out of
+Git. Build it into `target/` and upload it to the matching GitHub Release.
+
+The catalog points to release assets, not raw source files. The signature file
+verifies the catalog contents, so moving `catalog.v1.json` and
+`catalog.v1.json.sig` together does not invalidate the signature.
 
 ## Ignore Config
 
-`.ignore.toml` stays at the root of `extensions`.
-
-Applications listed there receive `Ctrl+Shift+P` normally instead of opening Global Palette.
+`extensions/bundled/.ignore.toml` lists applications that should receive
+`Ctrl+Shift+P` normally instead of opening Global Palette.
