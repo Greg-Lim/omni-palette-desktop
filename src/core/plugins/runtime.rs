@@ -6,6 +6,7 @@ use crate::core::plugins::{
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::{PluginManifest, PluginPermission},
 };
+use crate::domain::action::Os;
 
 const COMMAND_ID_OFFSET: usize = 4096;
 
@@ -21,8 +22,19 @@ pub(crate) struct LoadedPlugin {
 }
 
 impl LoadedPlugin {
-    pub(crate) fn load(manifest_path: &Path, type_text: TypeTextFn) -> Result<Self, String> {
+    pub(crate) fn load(
+        manifest_path: &Path,
+        current_os: Os,
+        type_text: TypeTextFn,
+    ) -> Result<Self, String> {
         let manifest = PluginManifest::load(manifest_path)?;
+        if manifest.platform != current_os {
+            return Err(format!(
+                "Plugin platform {:?} does not match current OS {:?}",
+                manifest.platform, current_os
+            ));
+        }
+
         let plugin_dir = manifest_path
             .parent()
             .ok_or_else(|| "Plugin manifest has no parent directory".to_string())?;

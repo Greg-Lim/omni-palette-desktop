@@ -1,6 +1,6 @@
 use crate::domain::hotkey::KeyboardShortcut;
 use raw_window_handle::RawWindowHandle;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Hash)]
 pub struct Action {
@@ -47,9 +47,11 @@ pub enum FocusState {
     Global,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
 pub enum Os {
     Windows,
+    #[serde(rename = "macos")]
     Mac,
     Linux,
 }

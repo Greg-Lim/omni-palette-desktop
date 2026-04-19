@@ -12,6 +12,7 @@ use zip::ZipArchive;
 use crate::{
     config::extension::Config,
     core::extensions::catalog::{validate_extension_id, validate_sha256_hex, ExtensionKind},
+    domain::action::Os,
 };
 
 const PACKAGE_MANIFEST_NAME: &str = "manifest.toml";
@@ -21,6 +22,7 @@ pub struct ExtensionPackageManifest {
     pub schema_version: u32,
     pub id: String,
     pub name: String,
+    pub platform: Os,
     pub version: String,
     pub kind: ExtensionKind,
     pub publisher: Option<String>,
@@ -61,9 +63,19 @@ pub struct ValidatedPackage {
 }
 
 impl ValidatedPackage {
-    pub fn install_static(self, install_root: &Path) -> Result<PathBuf, PackageError> {
+    pub fn install_static(
+        self,
+        install_root: &Path,
+        current_os: Os,
+    ) -> Result<PathBuf, PackageError> {
         if self.manifest.kind != ExtensionKind::Static {
             return Err(PackageError::UnsupportedKind(self.manifest.kind));
+        }
+        if self.manifest.platform != current_os {
+            return Err(PackageError::PlatformMismatch {
+                expected: current_os,
+                actual: self.manifest.platform,
+            });
         }
 
         let source_static_path = self
@@ -73,6 +85,12 @@ impl ValidatedPackage {
             .join(format!("{}.toml", self.manifest.id));
         let static_content = fs::read_to_string(&source_static_path)?;
         let config: Config = toml::from_str(&static_content)?;
+        if config.platform != self.manifest.platform {
+            return Err(PackageError::InvalidManifest(format!(
+                "package platform {:?} does not match static extension platform {:?}",
+                self.manifest.platform, config.platform
+            )));
+        }
         if config.app.id != self.manifest.id {
             return Err(PackageError::InvalidManifest(format!(
                 "package id {} does not match static extension app id {}",
@@ -97,6 +115,7 @@ pub enum PackageError {
     Toml(toml::de::Error),
     UnsupportedSchema(u32),
     UnsupportedKind(ExtensionKind),
+    PlatformMismatch { expected: Os, actual: Os },
     HashMismatch { expected: String, actual: String },
     InvalidManifest(String),
     UnsafeArchivePath(String),
@@ -133,6 +152,12 @@ impl std::fmt::Display for PackageError {
             PackageError::UnsupportedKind(kind) => {
                 write!(f, "Unsupported package extension kind: {kind:?}")
             }
+            PackageError::PlatformMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Package platform mismatch: expected {expected:?}, found {actual:?}"
+                )
+            }
             PackageError::HashMismatch { expected, actual } => {
                 write!(
                     f,
@@ -155,6 +180,7 @@ impl std::error::Error for PackageError {}
 pub fn validate_package_file(
     package_path: &Path,
     expected_sha256: &str,
+    current_os: Os,
 ) -> Result<ValidatedPackage, PackageError> {
     validate_sha256_hex(expected_sha256)
         .map_err(|err| PackageError::InvalidManifest(err.to_string()))?;
@@ -166,10 +192,13 @@ pub fn validate_package_file(
         });
     }
 
-    extract_and_validate(package_path)
+    extract_and_validate(package_path, current_os)
 }
 
-pub fn extract_and_validate(package_path: &Path) -> Result<ValidatedPackage, PackageError> {
+pub fn extract_and_validate(
+    package_path: &Path,
+    current_os: Os,
+) -> Result<ValidatedPackage, PackageError> {
     let file = fs::File::open(package_path)?;
     let mut archive = ZipArchive::new(file)?;
     let temp_dir = tempfile::tempdir()?;
@@ -200,6 +229,12 @@ pub fn extract_and_validate(package_path: &Path) -> Result<ValidatedPackage, Pac
     let manifest_content = fs::read_to_string(manifest_path)?;
     let manifest: ExtensionPackageManifest = toml::from_str(&manifest_content)?;
     manifest.validate()?;
+    if manifest.platform != current_os {
+        return Err(PackageError::PlatformMismatch {
+            expected: current_os,
+            actual: manifest.platform,
+        });
+    }
 
     if manifest.kind == ExtensionKind::Static {
         let static_path = temp_dir
@@ -280,6 +315,7 @@ mod tests {
             br#"schema_version = 1
 id = "chrome_tools"
 name = "Chrome Tools"
+platform = "windows"
 version = "1.0.0"
 kind = "static"
 "#,
@@ -288,28 +324,32 @@ kind = "static"
         zip.start_file("static/chrome_tools.toml", options)
             .expect("static file should start");
         zip.write_all(
-            br#"version = 1
+            br#"version = 2
+platform = "windows"
 
 [app]
 id = "chrome_tools"
 name = "Chrome Tools"
+process_name = "chrome.exe"
 default_focus_state = "global"
-
-[app.application_os_name]
-windows = "chrome.exe"
 
 [actions.new_tab]
 name = "New tab"
-cmd.windows = { mods = ["ctrl"], key = "T" }
+cmd = { mods = ["ctrl"], key = "T" }
 "#,
         )
         .expect("static file should be written");
         zip.finish().expect("zip should finish");
 
         let hash = sha256_file(&package_path).expect("package hash should compute");
-        let package = validate_package_file(&package_path, &hash).expect("package should validate");
+        let err = validate_package_file(&package_path, &hash, Os::Mac)
+            .expect_err("wrong OS package should fail");
+        assert!(matches!(err, PackageError::PlatformMismatch { .. }));
+
+        let package = validate_package_file(&package_path, &hash, Os::Windows)
+            .expect("package should validate");
         let installed_path = package
-            .install_static(root.path())
+            .install_static(root.path(), Os::Windows)
             .expect("package should install");
 
         assert_eq!(installed_path, root.path().join("static/chrome_tools.toml"));

@@ -2,12 +2,12 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use log::{error, info, warn};
+use log::{error, info};
 
 use raw_window_handle::RawWindowHandle;
 
 use crate::{
-    config::extension::{CmdByOs, Config, KeyChord, Modifier},
+    config::extension::{Config, Modifier},
     core::{
         extensions::{discovery::ExtensionDiscovery, extensions::load_config},
         plugins::{PluginApplication, PluginRegistry},
@@ -36,6 +36,7 @@ impl MasterRegistry {
     pub fn build(extension_discovery: &ExtensionDiscovery, current_os: Os) -> MasterRegistry {
         let plugin_registry = Arc::new(PluginRegistry::load(
             extension_discovery.plugin_manifest_paths(),
+            current_os,
             Arc::new(send_text),
         ));
         let mut master_registry = MasterRegistry {
@@ -196,61 +197,20 @@ pub struct Application {
 
 impl Application {
     pub fn new(app_config: &Config, current_os: &Os) -> Result<Application, String> {
-        let application_os_name = match current_os {
-            Os::Windows => app_config
-                .app
-                .application_os_name
-                .windows
-                .clone()
-                .ok_or("No OS app name"),
-            Os::Mac => app_config
-                .app
-                .application_os_name
-                .macos
-                .clone()
-                .ok_or("No OS app name"),
-            Os::Linux => app_config
-                .app
-                .application_os_name
-                .linux
-                .clone()
-                .ok_or("No OS app name"),
-        }?;
+        if app_config.platform != *current_os {
+            return Err(format!(
+                "Extension platform {:?} does not match current OS {:?}",
+                app_config.platform, current_os
+            ));
+        }
 
         let mut application_registry: HashMap<ActionId, Action> = HashMap::new();
         let default_tags = app_config.app.default_tags.clone().unwrap_or_default();
 
-        fn extract_os_binding<'a>(
-            action: &'a CmdByOs,
-            _current_os: &Os,
-        ) -> Result<&'a KeyChord, String> {
-            match _current_os {
-                Os::Windows => action
-                    .windows
-                    .as_ref()
-                    .ok_or_else(|| "No Windows action".to_string()),
-                Os::Mac => action
-                    .macos
-                    .as_ref()
-                    .ok_or_else(|| "No Mac action".to_string()),
-                Os::Linux => action
-                    .linux
-                    .as_ref()
-                    .ok_or_else(|| "No Linux action".to_string()),
-            }
-        }
-
         let mut count: u32 = 0;
 
         for (_app_id, config_action) in app_config.actions.iter() {
-            let binding = extract_os_binding(&config_action.cmd, current_os);
-            let binding = match binding {
-                Err(s) => {
-                    warn!("{s}");
-                    continue;
-                }
-                Ok(binding) => binding,
-            };
+            let binding = &config_action.cmd;
 
             let mut tags = default_tags.clone();
             if let Some(action_tags) = &config_action.tags {
@@ -291,7 +251,7 @@ impl Application {
 
         Ok(Application {
             application_name: app_config.app.name.clone(),
-            application_process_name: application_os_name,
+            application_process_name: app_config.app.process_name.clone(),
             application_registry,
         })
     }

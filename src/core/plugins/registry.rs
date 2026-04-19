@@ -12,6 +12,7 @@ use crate::core::plugins::{
     command::PluginApplication,
     runtime::{LoadedPlugin, TypeTextFn},
 };
+use crate::domain::action::Os;
 
 const PLUGIN_TIMEOUT: Duration = Duration::from_millis(750);
 
@@ -42,12 +43,16 @@ impl Default for PluginRegistry {
 }
 
 impl PluginRegistry {
-    pub fn load(manifest_paths: impl IntoIterator<Item = PathBuf>, type_text: TypeTextFn) -> Self {
+    pub fn load(
+        manifest_paths: impl IntoIterator<Item = PathBuf>,
+        current_os: Os,
+        type_text: TypeTextFn,
+    ) -> Self {
         let mut plugins = HashMap::new();
         let mut applications = Vec::new();
 
         for manifest_path in manifest_paths {
-            match LoadedPlugin::load(&manifest_path, Arc::clone(&type_text)) {
+            match LoadedPlugin::load(&manifest_path, current_os, Arc::clone(&type_text)) {
                 Ok(plugin) => {
                     applications.push(plugin.application());
                     plugins.insert(plugin.id().to_string(), Arc::new(plugin));
@@ -66,10 +71,12 @@ impl PluginRegistry {
     #[cfg(test)]
     pub fn load_with_type_text_recorder(
         manifest_paths: impl IntoIterator<Item = PathBuf>,
+        current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
     ) -> Self {
         Self::load(
             manifest_paths,
+            current_os,
             Arc::new(move |text| {
                 typed_text
                     .lock()
@@ -118,7 +125,11 @@ mod tests {
     #[test]
     fn loads_auto_typer_plugin_and_registers_command() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_type_text_recorder(real_plugin_manifests(), typed);
+        let registry = PluginRegistry::load_with_type_text_recorder(
+            real_plugin_manifests(),
+            Os::Windows,
+            typed,
+        );
         let app = registry
             .applications()
             .iter()
@@ -136,6 +147,7 @@ mod tests {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_type_text_recorder(
             real_plugin_manifests(),
+            Os::Windows,
             Arc::clone(&typed),
         );
 
@@ -171,6 +183,7 @@ mod tests {
             plugin_dir.join("plugin.toml"),
             r#"id = "no_permission"
 name = "No Permission"
+platform = "windows"
 version = "0.1.0"
 wasm = "plugin.wasm"
 permissions = []
@@ -184,6 +197,7 @@ default_focus_state = "global"
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_type_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
+            Os::Windows,
             Arc::clone(&typed),
         );
 
@@ -217,6 +231,7 @@ default_focus_state = "global"
             plugin_dir.join("plugin.toml"),
             r#"id = "unknown_permission"
 name = "Unknown Permission"
+platform = "windows"
 version = "0.1.0"
 wasm = "plugin.wasm"
 permissions = ["type_txt"]
@@ -230,6 +245,50 @@ default_focus_state = "global"
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_type_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
+            Os::Windows,
+            typed,
+        );
+
+        assert!(registry.applications().is_empty());
+    }
+
+    #[test]
+    fn skips_plugin_for_other_platform() {
+        let root = Path::new("target")
+            .join("plugin-tests")
+            .join("wrong-platform");
+        let plugin_dir = root.join("plugins").join("wrong_platform");
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("should reset test plugin root");
+        }
+        fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
+        fs::copy(
+            Path::new("extensions")
+                .join("plugins")
+                .join("auto_typer")
+                .join("plugin.wasm"),
+            plugin_dir.join("plugin.wasm"),
+        )
+        .expect("should copy sample plugin wasm");
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"id = "wrong_platform"
+name = "Wrong Platform"
+platform = "macos"
+version = "0.1.0"
+wasm = "plugin.wasm"
+permissions = ["type_text"]
+
+[app]
+default_focus_state = "global"
+"#,
+        )
+        .expect("should write test manifest");
+
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_type_text_recorder(
+            ExtensionDiscovery::new(&root).plugin_manifest_paths(),
+            Os::Windows,
             typed,
         );
 

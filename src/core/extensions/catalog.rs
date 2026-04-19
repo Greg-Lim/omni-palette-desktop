@@ -4,6 +4,8 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
+use crate::domain::action::Os;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ExtensionCatalog {
     pub schema_version: u32,
@@ -53,6 +55,7 @@ pub struct CatalogEntry {
     pub id: String,
     pub name: String,
     pub version: String,
+    pub platform: Os,
     pub kind: ExtensionKind,
     pub package_url: String,
     pub package_sha256: String,
@@ -64,8 +67,6 @@ pub struct CatalogEntry {
     pub repository: Option<String>,
     #[serde(default)]
     pub keywords: Vec<String>,
-    #[serde(default)]
-    pub platforms: Vec<String>,
     pub min_app_version: Option<String>,
 }
 
@@ -223,6 +224,7 @@ mod tests {
                 id: "chrome_tools".to_string(),
                 name: "Chrome Tools".to_string(),
                 version: "1.0.0".to_string(),
+                platform: Os::Windows,
                 kind: ExtensionKind::Static,
                 package_url: "https://example.com/chrome_tools-1.0.0.gpext".to_string(),
                 package_sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -234,7 +236,6 @@ mod tests {
                 homepage: None,
                 repository: None,
                 keywords: Vec::new(),
-                platforms: Vec::new(),
                 min_app_version: None,
             }],
         };

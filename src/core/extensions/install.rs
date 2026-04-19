@@ -14,6 +14,7 @@ use crate::{
         catalog::{CatalogEntry, ExtensionCatalog, ExtensionKind},
         package::{validate_package_file, PackageError},
     },
+    domain::action::Os,
 };
 
 const INSTALLED_STATE_FILE: &str = "installed.toml";
@@ -61,7 +62,14 @@ impl ExtensionInstallService {
         &self,
         source: &GitHubExtensionSource,
         entry: &CatalogEntry,
+        current_os: Os,
     ) -> Result<InstalledExtension, InstallError> {
+        if entry.platform != current_os {
+            return Err(InstallError::PlatformMismatch {
+                expected: current_os,
+                actual: entry.platform,
+            });
+        }
         if entry.kind != ExtensionKind::Static {
             return Err(InstallError::UnsupportedKind(entry.kind));
         }
@@ -77,11 +85,12 @@ impl ExtensionInstallService {
         let package_path = download_dir.join(format!("{}-{}.gpext", entry.id, entry.version));
         download_file(&entry.package_url, &package_path, MAX_PACKAGE_BYTES)?;
 
-        let package = validate_package_file(&package_path, &entry.package_sha256)?;
-        let installed_path = package.install_static(&self.install_root)?;
+        let package = validate_package_file(&package_path, &entry.package_sha256, current_os)?;
+        let installed_path = package.install_static(&self.install_root, current_os)?;
         let installed = InstalledExtension {
             id: entry.id.clone(),
             version: entry.version.clone(),
+            platform: entry.platform,
             kind: entry.kind,
             source_id: "github".to_string(),
             package_sha256: entry.package_sha256.clone(),
@@ -133,6 +142,7 @@ impl InstalledState {
 pub struct InstalledExtension {
     pub id: String,
     pub version: String,
+    pub platform: Os,
     pub kind: ExtensionKind,
     pub source_id: String,
     pub package_sha256: String,
@@ -148,6 +158,7 @@ pub enum InstallError {
     Package(PackageError),
     DisabledSource(String),
     UnsupportedKind(ExtensionKind),
+    PlatformMismatch { expected: Os, actual: Os },
     PackageUrlNotAllowed(String),
     DownloadTooLarge { url: String, max_bytes: usize },
     InvalidUtf8(String),
@@ -183,6 +194,12 @@ impl std::fmt::Display for InstallError {
             }
             InstallError::UnsupportedKind(kind) => {
                 write!(f, "Unsupported extension kind for install: {kind:?}")
+            }
+            InstallError::PlatformMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Extension platform mismatch: expected {expected:?}, found {actual:?}"
+                )
             }
             InstallError::PackageUrlNotAllowed(url) => {
                 write!(
@@ -259,6 +276,7 @@ mod tests {
         state.upsert(InstalledExtension {
             id: "chrome_tools".to_string(),
             version: "1.0.0".to_string(),
+            platform: Os::Windows,
             kind: ExtensionKind::Static,
             source_id: "official".to_string(),
             package_sha256: "a".repeat(64),
@@ -268,6 +286,7 @@ mod tests {
         state.upsert(InstalledExtension {
             id: "chrome_tools".to_string(),
             version: "1.1.0".to_string(),
+            platform: Os::Windows,
             kind: ExtensionKind::Static,
             source_id: "official".to_string(),
             package_sha256: "b".repeat(64),

@@ -5,12 +5,13 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::domain::action::FocusState;
+use crate::domain::action::{FocusState, Os};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PluginManifest {
     pub id: String,
     pub name: String,
+    pub platform: Os,
     #[allow(dead_code)]
     pub version: String,
     pub wasm: PathBuf,

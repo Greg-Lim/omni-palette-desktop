@@ -1,5 +1,6 @@
 id = "auto_typer"
 name = "Auto Typer"
+platform = "windows"
 version = "0.1.0"
 wasm = "plugin.wasm"
 permissions = ["type_text"]

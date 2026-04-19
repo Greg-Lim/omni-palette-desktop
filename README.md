@@ -20,12 +20,25 @@ Commands are defined in TOML files under `extensions/`. Each extension describes
 Example action:
 
 ```toml
+version = 2
+platform = "windows"
+
+[app]
+id = "chrome"
+name = "Chrome"
+process_name = "chrome.exe"
+default_focus_state = "focused"
+
 [actions.new_tab]
 name = "New tab"
 focus_state = "focused"
 action_priority = "high"
-cmd.windows = { mods = ["ctrl"], key = "T" }
+cmd = { mods = ["ctrl"], key = "T" }
 ```
+
+Extension files are OS-specific. A Windows package installs only Windows TOML or
+plugin metadata, macOS packages install macOS metadata, and Linux packages install
+Linux metadata.
 
 Static TOML extensions describe the application's known default shortcuts. If a target
 application lets users customize its own keybindings, Global Palette does not

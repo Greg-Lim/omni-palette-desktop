@@ -296,6 +296,7 @@ mod tests {
 [[extensions]]
 id = "chrome"
 version = "1.0.0"
+platform = "windows"
 kind = "static"
 source_id = "official"
 package_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
