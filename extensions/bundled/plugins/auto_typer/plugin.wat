@@ -4,7 +4,7 @@
   (memory (export "memory") 1)
 
   (data (i32.const 1024)
-    "[{\"id\":\"type_hello_world\",\"name\":\"Type hello world\",\"priority\":\"normal\",\"focus_state\":\"global\",\"tags\":[\"wasm\",\"typing\",\"demo\"],\"shortcut_text\":\"WASM\"}]\00")
+    "[{\"id\":\"type_hello_world\",\"name\":\"Type hello world\",\"priority\":\"medium\",\"focus_state\":\"global\",\"tags\":[\"wasm\",\"typing\",\"demo\"],\"shortcut_text\":\"WASM\"}]\00")
   (data (i32.const 2048) "hello world")
 
   (func (export "register_commands_json") (result i32)

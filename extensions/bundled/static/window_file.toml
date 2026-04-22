@@ -29,19 +29,19 @@ cmd = { mods = ["ctrl"], key = "T" }
 [actions.close_tab]
 name = "Close tab"
 focus_state = "focused"
-action_priority = "high"
+action_priority = "low"
 cmd = { mods = ["ctrl"], key = "W" }
 
 [actions.next_tab]
 name = "Next tab"
 focus_state = "focused"
-action_priority = "normal"
+action_priority = "medium"
 cmd = { mods = ["ctrl"], key = "Tab" }
 
 [actions.previous_tab]
 name = "Previous tab"
 focus_state = "focused"
-action_priority = "normal"
+action_priority = "medium"
 cmd = { mods = ["ctrl", "shift"], key = "Tab" }
 
 [actions.new_window]
@@ -83,7 +83,7 @@ cmd = { mods = ["alt"], key = "D" }
 [actions.show_properties]
 name = "Show properties"
 focus_state = "focused"
-action_priority = "normal"
+action_priority = "medium"
 cmd = { mods = ["alt"], key = "Enter" }
 
 [actions.go_back]
@@ -107,13 +107,13 @@ cmd = { mods = ["alt"], key = "UpArrow" }
 [actions.toggle_preview_pane]
 name = "Show or hide preview pane"
 focus_state = "focused"
-action_priority = "normal"
+action_priority = "medium"
 cmd = { mods = ["alt"], key = "P" }
 
 [actions.toggle_details_pane]
 name = "Show or hide details pane"
 focus_state = "focused"
-action_priority = "normal"
+action_priority = "medium"
 cmd = { mods = ["alt", "shift"], key = "P" }
 
 [actions.expand_all_folders]
@@ -125,7 +125,7 @@ cmd = { mods = ["ctrl", "shift"], key = "E" }
 [actions.delete_selected_item]
 name = "Delete selected item"
 focus_state = "focused"
-action_priority = "normal"
+action_priority = "low"
 cmd = { mods = [], key = "Delete" }
 
 [actions.delete_selected_item_permanently]
@@ -137,41 +137,41 @@ cmd = { mods = ["shift"], key = "Delete" }
 [actions.scroll_to_top]
 name = "Scroll to top"
 focus_state = "focused"
-action_priority = "suppressed"
+action_priority = "low"
 cmd = { mods = [], key = "Home" }
 
 [actions.scroll_to_bottom]
 name = "Scroll to bottom"
 focus_state = "focused"
-action_priority = "suppressed"
+action_priority = "low"
 cmd = { mods = [], key = "End" }
 
 [actions.cycle_window_elements]
 name = "Cycle window elements"
 focus_state = "focused"
-action_priority = "suppressed"
+action_priority = "low"
 cmd = { mods = [], key = "F6" }
 
 [actions.toggle_fullscreen]
 name = "Toggle fullscreen"
 focus_state = "focused"
-action_priority = "normal"
+action_priority = "medium"
 cmd = { mods = [], key = "F11" }
 
 [actions.collapse_selection]
 name = "Collapse selection"
 focus_state = "focused"
-action_priority = "suppressed"
+action_priority = "low"
 cmd = { mods = [], key = "LeftArrow" }
 
 [actions.expand_selection]
 name = "Expand selection"
 focus_state = "focused"
-action_priority = "suppressed"
+action_priority = "low"
 cmd = { mods = [], key = "RightArrow" }
 
 [actions.show_context_menu]
 name = "Show context menu"
 focus_state = "focused"
-action_priority = "normal"
+action_priority = "low"
 cmd = { mods = ["shift"], key = "F10" }

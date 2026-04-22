@@ -282,7 +282,7 @@ impl Application {
                 ),
                 metadata: ActionMetadata {
                     priority: config_action.priority.unwrap_or_default(),
-                    starred: config_action.starred.unwrap_or(false),
+                    favorite: config_action.favorite.unwrap_or(false),
                     tags,
                 },
             };
@@ -314,7 +314,7 @@ impl Application {
                         focus_state: command.focus_state,
                         metadata: ActionMetadata {
                             priority: command.priority,
-                            starred: command.starred,
+                            favorite: command.favorite,
                             tags: command.tags.clone(),
                         },
                     },

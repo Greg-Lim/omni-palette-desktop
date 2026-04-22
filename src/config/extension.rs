@@ -33,7 +33,7 @@ pub struct ActionConfig {
     #[serde(alias = "action_priority")]
     pub priority: Option<CommandPriority>,
     pub tags: Option<Vec<String>>,
-    pub starred: Option<bool>,
+    pub favorite: Option<bool>,
     pub cmd: KeyChord,
 }
 

@@ -590,9 +590,9 @@ fn reload_extensions_command(original_order: usize, runtime_state: RuntimeState)
     Command {
         label: "Omni Palette: Reload extensions".to_string(),
         shortcut_text: String::new(),
-        priority: CommandPriority::Normal,
+        priority: CommandPriority::Medium,
         focus_state: FocusState::Global,
-        starred: false,
+        favorite: false,
         tags: vec!["extensions".to_string(), "reload".to_string()],
         original_order,
         action: Box::new(move || {
@@ -652,7 +652,7 @@ fn command_from_unit_action(
         shortcut_text: unit_action.shortcut_text,
         priority: unit_action.metadata.priority,
         focus_state: unit_action.focus_state,
-        starred: unit_action.metadata.starred,
+        favorite: unit_action.metadata.favorite,
         tags: unit_action.metadata.tags,
         original_order,
         action: Box::new(move || match &execution {

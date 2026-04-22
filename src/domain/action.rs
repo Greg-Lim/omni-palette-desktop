@@ -23,7 +23,7 @@ pub enum ActionExecution {
 #[derive(Debug, Clone, Hash)]
 pub struct ActionMetadata {
     pub priority: CommandPriority,
-    pub starred: bool,
+    pub favorite: bool,
     pub tags: Vec<String>,
 }
 
@@ -32,9 +32,11 @@ pub struct ActionMetadata {
 pub enum CommandPriority {
     #[serde(alias = "Suppressed")]
     Suppressed,
+    #[serde(alias = "Low")]
+    Low,
     #[default]
-    #[serde(alias = "Normal")]
-    Normal,
+    #[serde(alias = "normal", alias = "Normal", alias = "Medium")]
+    Medium,
     #[serde(alias = "High")]
     High,
 }

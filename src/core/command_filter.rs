@@ -14,7 +14,7 @@ pub trait FilterableCommand {
     fn label(&self) -> &str;
     fn priority(&self) -> CommandPriority;
     fn focus_state(&self) -> FocusState;
-    fn starred(&self) -> bool;
+    fn favorite(&self) -> bool;
     fn tags(&self) -> &[String];
     fn original_order(&self) -> usize;
 }
@@ -51,8 +51,8 @@ pub fn filter_commands<T: FilterableCommand>(
         let command_b = &commands[b.command_index];
 
         command_b
-            .starred()
-            .cmp(&command_a.starred())
+            .favorite()
+            .cmp(&command_a.favorite())
             .then_with(|| {
                 focus_rank(command_b.focus_state()).cmp(&focus_rank(command_a.focus_state()))
             })
@@ -76,8 +76,8 @@ fn initial_sorted_filtered_commands<T: FilterableCommand>(commands: &[T]) -> Vec
         let command_b = &commands[b.command_index];
 
         command_b
-            .starred()
-            .cmp(&command_a.starred())
+            .favorite()
+            .cmp(&command_a.favorite())
             .then_with(|| {
                 focus_rank(command_b.focus_state()).cmp(&focus_rank(command_a.focus_state()))
             })
@@ -206,7 +206,7 @@ mod tests {
         label: String,
         priority: CommandPriority,
         focus_state: FocusState,
-        starred: bool,
+        favorite: bool,
         tags: Vec<String>,
         original_order: usize,
     }
@@ -224,8 +224,8 @@ mod tests {
             self.focus_state
         }
 
-        fn starred(&self) -> bool {
-            self.starred
+        fn favorite(&self) -> bool {
+            self.favorite
         }
 
         fn tags(&self) -> &[String] {
@@ -240,7 +240,7 @@ mod tests {
     fn command(
         label: &str,
         priority: CommandPriority,
-        starred: bool,
+        favorite: bool,
         tags: &[&str],
         original_order: usize,
     ) -> TestCommand {
@@ -248,7 +248,7 @@ mod tests {
             label: label.to_string(),
             priority,
             focus_state: FocusState::Focused,
-            starred,
+            favorite,
             tags: tags.iter().map(|tag| tag.to_string()).collect(),
             original_order,
         }
@@ -264,7 +264,7 @@ mod tests {
             label: label.to_string(),
             priority,
             focus_state,
-            starred: false,
+            favorite: false,
             tags: Vec::new(),
             original_order,
         }
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn empty_filter_sorts_by_priority_then_label_without_scores() {
         let commands = vec![
-            command("Chrome: Zoom in", CommandPriority::Normal, false, &[], 0),
+            command("Chrome: Zoom in", CommandPriority::Medium, false, &[], 0),
             command("Chrome: Close tab", CommandPriority::High, true, &[], 1),
             command("Chrome: New tab", CommandPriority::High, false, &[], 2),
             command(
@@ -305,9 +305,9 @@ mod tests {
     }
 
     #[test]
-    fn sorting_uses_star_then_priority_then_fuzzy_score() {
+    fn sorting_uses_favorite_then_priority_then_fuzzy_score() {
         let commands = vec![
-            command("Chrome: Foo normal", CommandPriority::Normal, false, &[], 0),
+            command("Chrome: Foo medium", CommandPriority::Medium, false, &[], 0),
             command("Chrome: Foo high", CommandPriority::High, false, &[], 1),
             command(
                 "Chrome: Foo suppressed",
@@ -317,14 +317,14 @@ mod tests {
                 2,
             ),
             command(
-                "Chrome: Foo starred suppressed",
+                "Chrome: Foo favorite suppressed",
                 CommandPriority::Suppressed,
                 true,
                 &[],
                 3,
             ),
             command(
-                "Chrome: Foo starred high",
+                "Chrome: Foo favorite high",
                 CommandPriority::High,
                 true,
                 &[],
@@ -341,10 +341,10 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                "Chrome: Foo starred high",
-                "Chrome: Foo starred suppressed",
+                "Chrome: Foo favorite high",
+                "Chrome: Foo favorite suppressed",
                 "Chrome: Foo high",
-                "Chrome: Foo normal",
+                "Chrome: Foo medium",
                 "Chrome: Foo suppressed",
             ]
         );
@@ -404,7 +404,7 @@ mod tests {
             ),
             command(
                 "Chrome: Scroll down",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 1,
@@ -496,7 +496,7 @@ mod tests {
     fn tag_only_matches_are_included_without_label_highlights() {
         let commands = vec![command(
             "Chrome: Open Developer Tools",
-            CommandPriority::Normal,
+            CommandPriority::Medium,
             false,
             &["debug"],
             0,
@@ -514,7 +514,7 @@ mod tests {
     fn non_matching_commands_are_excluded() {
         let commands = vec![command(
             "Chrome: Open Developer Tools",
-            CommandPriority::Normal,
+            CommandPriority::Medium,
             false,
             &["debug"],
             0,
@@ -530,26 +530,26 @@ mod tests {
         let commands = vec![
             command(
                 "Chrome: Reopen closed tab",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 0,
             ),
             command(
                 "Chrome: Reload page",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 1,
             ),
             command(
                 "Chrome: Open Developer Tools",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 2,
             ),
-            command("Chrome: Reset zoom", CommandPriority::Normal, false, &[], 3),
+            command("Chrome: Reset zoom", CommandPriority::Medium, false, &[], 3),
         ];
 
         let rows = filter_commands(&commands, "rp");
@@ -574,19 +574,19 @@ mod tests {
         let commands = vec![
             command(
                 "Chrome: Reload page",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 0,
             ),
             command(
                 "Chrome: Page reload",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 1,
             ),
-            command("Chrome: Print page", CommandPriority::Normal, false, &[], 2),
+            command("Chrome: Print page", CommandPriority::Medium, false, &[], 2),
         ];
 
         let rp_rows = filter_commands(&commands, "rp");
@@ -605,10 +605,10 @@ mod tests {
     #[test]
     fn reload_page_initials_rank_above_print_page_for_rp() {
         let commands = vec![
-            command("Chrome: Print page", CommandPriority::Normal, false, &[], 0),
+            command("Chrome: Print page", CommandPriority::Medium, false, &[], 0),
             command(
                 "Chrome: Reload page",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 1,
@@ -637,22 +637,22 @@ mod tests {
         let commands = vec![
             command(
                 "Chrome: Previous find match",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 0,
             ),
-            command("Chrome: Print page", CommandPriority::Normal, false, &[], 1),
+            command("Chrome: Print page", CommandPriority::Medium, false, &[], 1),
             command(
                 "Chrome: Reload page",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 2,
             ),
             command(
                 "Chrome: Reload (ignore cache)",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 3,
@@ -687,17 +687,17 @@ mod tests {
     #[test]
     fn close_query_highlights_contiguous_close_word_not_app_prefix() {
         let commands = vec![
-            command("Chrome: Close tab", CommandPriority::Normal, false, &[], 0),
+            command("Chrome: Close tab", CommandPriority::Medium, false, &[], 0),
             command(
                 "Chrome: Close window",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 1,
             ),
             command(
                 "Chrome: Reopen closed tab",
-                CommandPriority::Normal,
+                CommandPriority::Medium,
                 false,
                 &[],
                 2,

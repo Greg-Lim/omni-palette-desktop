@@ -11,5 +11,5 @@ default_tags = ["reload", "test"]
 [actions.type_a]
 name = "Type B"
 focus_state = "global"
-priority = "normal"
+priority = "medium"
 cmd = { mods = [], key = "B" }

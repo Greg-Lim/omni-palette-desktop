@@ -33,13 +33,17 @@ const TEXTBOX_HINT: egui::Color32 = egui::Color32::from_rgb(120, 120, 120);
 const TEXTBOX_CURSOR: egui::Color32 = egui::Color32::from_rgb(0, 122, 204);
 const TEXT_MATCH: egui::Color32 = egui::Color32::from_rgb(255, 213, 122);
 const TEXT_MATCH_SELECTED: egui::Color32 = egui::Color32::from_rgb(255, 238, 180);
+const HEART_ICON: &str = "♥";
+const INDICATOR_SIZE: f32 = 12.0;
+const HEART_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 106, 148);
+const HEART_COLOR_SELECTED: egui::Color32 = egui::Color32::from_rgb(255, 190, 214);
 
 pub struct Command {
     pub label: String,
     pub shortcut_text: String,
     pub priority: CommandPriority,
     pub focus_state: FocusState,
-    pub starred: bool,
+    pub favorite: bool,
     pub tags: Vec<String>,
     pub original_order: usize,
     pub action: Box<dyn Fn() + Send + Sync>,
@@ -88,7 +92,7 @@ impl fmt::Debug for Command {
             .field("shortcut_text", &self.shortcut_text)
             .field("priority", &self.priority)
             .field("focus_state", &self.focus_state)
-            .field("starred", &self.starred)
+            .field("favorite", &self.favorite)
             .field("tags", &self.tags)
             .field("original_order", &self.original_order)
             .field("action", &"<function>")
@@ -135,8 +139,8 @@ impl FilterableCommand for Command {
         self.focus_state
     }
 
-    fn starred(&self) -> bool {
-        self.starred
+    fn favorite(&self) -> bool {
+        self.favorite
     }
 
     fn tags(&self) -> &[String] {
@@ -370,8 +374,7 @@ impl App {
         let orig_idx = row.command_index;
         let label = &self.palette.all_commands[orig_idx].label;
         let shortcut_text = &self.palette.all_commands[orig_idx].shortcut_text;
-        let is_starred = self.palette.all_commands[orig_idx].starred;
-
+        let is_favorite = self.palette.all_commands[orig_idx].favorite;
         let desired_size = egui::vec2(ui.available_width(), ROW_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
@@ -408,35 +411,34 @@ impl App {
                 egui::Layout::left_to_right(egui::Align::Center).with_main_justify(true),
                 |ui| {
                     ui.horizontal(|ui| {
-                        if is_starred {
-                            ui.label(egui::RichText::new("*").size(15.5).color(if is_selected {
-                                TEXT_MATCH_SELECTED
-                            } else {
-                                TEXT_MATCH
-                            }));
-                            ui.add_space(6.0);
-                        }
-
                         ui.label(highlighted_label_job(
                             label,
                             &row.label_matches,
                             is_selected,
                         ));
 
-                        if !shortcut_text.is_empty() {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(egui::RichText::new(shortcut_text).size(12.5).color(
-                                        if is_selected {
-                                            egui::Color32::from_rgb(180, 200, 230)
-                                        } else {
-                                            TEXT_MUTED
-                                        },
-                                    ));
+                        if is_favorite {
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new(HEART_ICON).size(INDICATOR_SIZE).color(
+                                if is_selected {
+                                    HEART_COLOR_SELECTED
+                                } else {
+                                    HEART_COLOR
                                 },
-                            );
+                            ));
                         }
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if !shortcut_text.is_empty() {
+                                ui.label(egui::RichText::new(shortcut_text).size(12.5).color(
+                                    if is_selected {
+                                        egui::Color32::from_rgb(180, 200, 230)
+                                    } else {
+                                        TEXT_MUTED
+                                    },
+                                ));
+                            }
+                        });
                     });
                 },
             );

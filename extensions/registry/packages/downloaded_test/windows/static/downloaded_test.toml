@@ -11,5 +11,5 @@ default_tags = ["downloaded", "test"]
 [actions.open_emoji_panel]
 name = "Open emoji panel"
 focus_state = "global"
-priority = "normal"
+priority = "medium"
 cmd = { mods = ["win"], key = "Period" }

@@ -19,7 +19,7 @@ pub struct PluginCommand {
     pub name: String,
     pub priority: CommandPriority,
     pub focus_state: FocusState,
-    pub starred: bool,
+    pub favorite: bool,
     pub tags: Vec<String>,
     pub shortcut_text: String,
 }
@@ -33,7 +33,7 @@ pub(crate) struct RawCommandDescriptor {
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
-    starred: bool,
+    favorite: bool,
     shortcut_text: Option<String>,
 }
 
@@ -54,7 +54,7 @@ impl RawCommandDescriptor {
                 .focus_state
                 .or_else(|| app.and_then(|app| app.default_focus_state))
                 .unwrap_or(FocusState::Global),
-            starred: self.starred,
+            favorite: self.favorite,
             tags,
             shortcut_text: self.shortcut_text.unwrap_or_else(|| "WASM".to_string()),
         }
