@@ -34,6 +34,22 @@ pub struct MasterRegistry {
 
 impl MasterRegistry {
     pub fn build(extension_discovery: &ExtensionDiscovery, current_os: Os) -> MasterRegistry {
+        Self::build_internal(extension_discovery, current_os, false)
+            .expect("best-effort registry build should not fail")
+    }
+
+    pub fn build_strict(
+        extension_discovery: &ExtensionDiscovery,
+        current_os: Os,
+    ) -> Result<MasterRegistry, RegistryBuildError> {
+        Self::build_internal(extension_discovery, current_os, true)
+    }
+
+    fn build_internal(
+        extension_discovery: &ExtensionDiscovery,
+        current_os: Os,
+        fail_on_static_errors: bool,
+    ) -> Result<MasterRegistry, RegistryBuildError> {
         let plugin_registry = Arc::new(PluginRegistry::load(
             extension_discovery.plugin_manifest_paths(),
             current_os,
@@ -43,6 +59,7 @@ impl MasterRegistry {
             plugin_registry: Arc::clone(&plugin_registry),
             ..Default::default()
         };
+        let mut errors = Vec::new();
 
         for path in extension_discovery.static_config_paths() {
             match load_config(&path).and_then(|c| Application::new(&c, &current_os)) {
@@ -58,6 +75,7 @@ impl MasterRegistry {
                 }
                 Err(err) => {
                     error!("Failed to load extension at {:?}: {}", path, err);
+                    errors.push(format!("{}: {err}", path.display()));
                 }
             }
         }
@@ -71,13 +89,34 @@ impl MasterRegistry {
             master_registry.application_registry.insert(app_id, app);
         }
 
-        master_registry
+        if fail_on_static_errors && !errors.is_empty() {
+            Err(RegistryBuildError { errors })
+        } else {
+            Ok(master_registry)
+        }
     }
 
     pub fn plugin_registry(&self) -> Arc<PluginRegistry> {
         Arc::clone(&self.plugin_registry)
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct RegistryBuildError {
+    errors: Vec<String>,
+}
+
+impl std::fmt::Display for RegistryBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Failed to reload extensions")?;
+        for error in &self.errors {
+            write!(f, "; {error}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for RegistryBuildError {}
 
 #[derive(Debug)]
 pub struct UnitAction {
@@ -288,5 +327,40 @@ impl Application {
             application_process_name: plugin.process_name.clone(),
             application_registry,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn strict_build_rejects_invalid_static_extension() {
+        let root = tempfile::tempdir().expect("temp root should be created");
+        let static_dir = root.path().join("static");
+        fs::create_dir_all(&static_dir).expect("static dir should be created");
+        fs::write(static_dir.join("broken.toml"), "version = [")
+            .expect("broken extension should be written");
+
+        let discovery = ExtensionDiscovery::new(root.path());
+        let err = MasterRegistry::build_strict(&discovery, Os::Windows)
+            .expect_err("strict registry build should fail on invalid extension");
+
+        assert!(err.to_string().contains("broken.toml"));
+    }
+
+    #[test]
+    fn best_effort_build_skips_invalid_static_extension() {
+        let root = tempfile::tempdir().expect("temp root should be created");
+        let static_dir = root.path().join("static");
+        fs::create_dir_all(&static_dir).expect("static dir should be created");
+        fs::write(static_dir.join("broken.toml"), "version = [")
+            .expect("broken extension should be written");
+
+        let discovery = ExtensionDiscovery::new(root.path());
+        let registry = MasterRegistry::build(&discovery, Os::Windows);
+
+        assert!(registry.application_registry.is_empty());
     }
 }

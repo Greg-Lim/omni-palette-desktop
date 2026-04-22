@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{
     mpsc::{self, Receiver, RecvTimeoutError, Sender},
-    Arc,
+    Arc, RwLock,
 };
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -23,7 +23,7 @@ use crate::core::extensions::{
 };
 use crate::core::plugins::PluginRegistry;
 use crate::core::registry::registry::{MasterRegistry, UnitAction};
-use crate::domain::action::{ActionExecution, ContextRoot, Os};
+use crate::domain::action::{ActionExecution, CommandPriority, ContextRoot, FocusState, Os};
 use crate::domain::hotkey::KeyboardShortcut;
 use crate::platform::hotkey_actions::HotkeyPassthrough;
 use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
@@ -42,6 +42,19 @@ mod core;
 mod domain;
 mod platform;
 mod ui;
+
+const BUNDLED_EXTENSIONS_ROOT: &str = "./extensions/bundled";
+
+type SharedRegistry = Arc<RwLock<MasterRegistry>>;
+type SharedIgnoredProcessNames = Arc<RwLock<HashSet<String>>>;
+
+#[derive(Clone)]
+struct RuntimeState {
+    registry: SharedRegistry,
+    ignored_process_names: SharedIgnoredProcessNames,
+    current_os: Os,
+    bundled_extensions_root: PathBuf,
+}
 
 fn main() {
     init_logger();
@@ -91,13 +104,22 @@ fn main() {
     let (ui_tx, ui_rx) = mpsc::channel::<UiSignal>();
     let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
 
-    let extensions_folder = Path::new("./extensions/bundled");
-    let extension_discovery = ExtensionDiscovery::bundled_with_user_root(extensions_folder);
-    let master_registry = Arc::new(MasterRegistry::build(&extension_discovery, current_os));
-    let ignored_process_names = Arc::new(load_ignored_process_names(
+    let bundled_extensions_root = PathBuf::from(BUNDLED_EXTENSIONS_ROOT);
+    let extension_discovery = ExtensionDiscovery::bundled_with_user_root(&bundled_extensions_root);
+    let registry = Arc::new(RwLock::new(MasterRegistry::build(
+        &extension_discovery,
+        current_os,
+    )));
+    let ignored_process_names = Arc::new(RwLock::new(load_ignored_process_names(
         &extension_discovery.ignore_file_path(),
         current_os,
-    ));
+    )));
+    let runtime_state = RuntimeState {
+        registry,
+        ignored_process_names,
+        current_os,
+        bundled_extensions_root,
+    };
 
     let (handle, rx) = platform::hotkey_actions::start_hotkey_listener(runtime_config.activation);
     let hotkey_passthrough = handle.passthrough_sender();
@@ -105,8 +127,7 @@ fn main() {
         rx,
         ui_tx,
         event_rx,
-        Arc::clone(&master_registry),
-        Arc::clone(&ignored_process_names),
+        runtime_state,
         hotkey_passthrough,
         runtime_config.activation,
     );
@@ -362,8 +383,7 @@ fn spawn_hotkey_bridge(
     rx: Receiver<KeyboardShortcut>,
     ui_tx: Sender<UiSignal>,
     event_rx: Receiver<UiEvent>,
-    registry: Arc<MasterRegistry>,
-    ignored_process_names: Arc<HashSet<String>>,
+    runtime_state: RuntimeState,
     hotkey_passthrough: HotkeyPassthrough,
     activation_shortcut: KeyboardShortcut,
 ) -> JoinHandle<()> {
@@ -378,8 +398,7 @@ fn spawn_hotkey_bridge(
                     handle_palette_hotkey(
                         shortcut,
                         &ui_tx,
-                        &registry,
-                        &ignored_process_names,
+                        &runtime_state,
                         &hotkey_passthrough,
                         &mut palette_open,
                     );
@@ -408,14 +427,15 @@ fn is_palette_hotkey(shortcut: KeyboardShortcut, activation_shortcut: KeyboardSh
 fn handle_palette_hotkey(
     shortcut: KeyboardShortcut,
     ui_tx: &Sender<UiSignal>,
-    registry: &MasterRegistry,
-    ignored_process_names: &HashSet<String>,
+    runtime_state: &RuntimeState,
     hotkey_passthrough: &HotkeyPassthrough,
     palette_open: &mut bool,
 ) {
     let context_root = get_all_context();
 
-    if let Some(process_name) = ignored_active_process_name(&context_root, ignored_process_names) {
+    if let Some(process_name) =
+        ignored_active_process_name_from_shared(&context_root, &runtime_state.ignored_process_names)
+    {
         log::debug!(
             "Forwarding palette hotkey to ignored application: {}",
             process_name
@@ -429,7 +449,18 @@ fn handle_palette_hotkey(
         return;
     }
 
-    show_palette(ui_tx, registry, &context_root, palette_open);
+    show_palette(ui_tx, runtime_state, &context_root, palette_open);
+}
+
+fn ignored_active_process_name_from_shared(
+    context_root: &ContextRoot,
+    ignored_process_names: &SharedIgnoredProcessNames,
+) -> Option<String> {
+    let ignored_process_names = ignored_process_names.read().map_err(|err| {
+        log::error!("Ignored process registry lock poisoned: {err}");
+    });
+    let ignored_process_names = ignored_process_names.ok()?;
+    ignored_active_process_name(context_root, &ignored_process_names)
 }
 
 fn ignored_active_process_name(
@@ -448,7 +479,7 @@ fn ignored_active_process_name(
 
 fn show_palette(
     ui_tx: &Sender<UiSignal>,
-    registry: &MasterRegistry,
+    runtime_state: &RuntimeState,
     context_root: &ContextRoot,
     palette_open: &mut bool,
 ) {
@@ -457,11 +488,24 @@ fn show_palette(
         .get_active()
         .and_then(|handle| get_hwnd_from_raw(*handle))
         .map(|hwnd| hwnd.0 as isize);
-    let commands = commands_from_unit_actions(
-        registry.get_actions(context_root),
-        registry.plugin_registry(),
+    let registry_read = match runtime_state.registry.read() {
+        Ok(registry) => registry,
+        Err(err) => {
+            log::error!("Extension registry lock poisoned: {err}");
+            return;
+        }
+    };
+    let mut commands = commands_from_unit_actions(
+        registry_read.get_actions(context_root),
+        registry_read.plugin_registry(),
         active_hwnd,
     );
+    drop(registry_read);
+
+    commands.push(reload_extensions_command(
+        commands.len(),
+        runtime_state.clone(),
+    ));
 
     if ui_tx
         .send(UiSignal::Show {
@@ -471,6 +515,73 @@ fn show_palette(
         .is_ok()
     {
         *palette_open = true;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReloadReport {
+    application_count: usize,
+    ignored_process_count: usize,
+}
+
+fn reload_runtime_state(
+    registry: &SharedRegistry,
+    ignored_process_names: &SharedIgnoredProcessNames,
+    bundled_extensions_root: &Path,
+    current_os: Os,
+) -> Result<ReloadReport, String> {
+    let extension_discovery = ExtensionDiscovery::bundled_with_user_root(bundled_extensions_root);
+    let new_registry = MasterRegistry::build_strict(&extension_discovery, current_os)
+        .map_err(|err| err.to_string())?;
+    let application_count = new_registry.application_registry.len();
+    let new_ignored_process_names =
+        load_ignored_process_names(&extension_discovery.ignore_file_path(), current_os);
+    let ignored_process_count = new_ignored_process_names.len();
+
+    {
+        let mut registry = registry
+            .write()
+            .map_err(|err| format!("Extension registry lock poisoned: {err}"))?;
+        *registry = new_registry;
+    }
+
+    {
+        let mut ignored_process_names = ignored_process_names
+            .write()
+            .map_err(|err| format!("Ignored process registry lock poisoned: {err}"))?;
+        *ignored_process_names = new_ignored_process_names;
+    }
+
+    Ok(ReloadReport {
+        application_count,
+        ignored_process_count,
+    })
+}
+
+fn reload_extensions_command(original_order: usize, runtime_state: RuntimeState) -> Command {
+    Command {
+        label: "Omni Palette: Reload extensions".to_string(),
+        shortcut_text: String::new(),
+        priority: CommandPriority::Normal,
+        focus_state: FocusState::Global,
+        starred: false,
+        tags: vec!["extensions".to_string(), "reload".to_string()],
+        original_order,
+        action: Box::new(move || {
+            match reload_runtime_state(
+                &runtime_state.registry,
+                &runtime_state.ignored_process_names,
+                &runtime_state.bundled_extensions_root,
+                runtime_state.current_os,
+            ) {
+                Ok(report) => log::info!(
+                    "Reloaded extensions: {} applications, {} ignored processes",
+                    report.application_count,
+                    report.ignored_process_count
+                ),
+                Err(err) => log::error!("Failed to reload extensions: {err}"),
+            }
+        }),
     }
 }
 
