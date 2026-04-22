@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{
     mpsc::{self, Receiver, RecvTimeoutError, Sender},
-    Arc, RwLock,
+    Arc, OnceLock, RwLock,
 };
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -32,7 +33,9 @@ use crate::platform::windows::context::context::{
 };
 use crate::platform::windows::sender::hotkey_sender::send_shortcut;
 use crate::ui::ui_main;
-use crate::ui::ui_main::{Command, PaletteWorkArea, UiEvent, UiSignal};
+use crate::ui::ui_main::{
+    Command, PaletteWorkArea, SharedUiContext, SharedUiVisibility, UiEvent, UiSignal,
+};
 use std::env::consts::OS;
 use std::io::Write;
 use windows::Win32::Foundation::HWND;
@@ -103,6 +106,8 @@ fn main() {
 
     let (ui_tx, ui_rx) = mpsc::channel::<UiSignal>();
     let (event_tx, event_rx) = mpsc::channel::<UiEvent>();
+    let ui_context: SharedUiContext = Arc::new(OnceLock::new());
+    let ui_visibility: SharedUiVisibility = Arc::new(AtomicBool::new(false));
 
     let bundled_extensions_root = PathBuf::from(BUNDLED_EXTENSIONS_ROOT);
     let extension_discovery = ExtensionDiscovery::bundled_with_user_root(&bundled_extensions_root);
@@ -127,12 +132,16 @@ fn main() {
         rx,
         ui_tx,
         event_rx,
-        runtime_state,
+        runtime_state.clone(),
         hotkey_passthrough,
         runtime_config.activation,
+        Arc::clone(&ui_context),
     );
+    #[cfg(debug_assertions)]
+    let _telemetry_thread =
+        spawn_debug_telemetry(runtime_state.clone(), Arc::clone(&ui_visibility));
 
-    ui_main::ui_main(ui_rx, event_tx);
+    ui_main::ui_main_with_shared_state(ui_rx, event_tx, ui_context, ui_visibility);
 
     handle.stop();
 }
@@ -386,6 +395,7 @@ fn spawn_hotkey_bridge(
     runtime_state: RuntimeState,
     hotkey_passthrough: HotkeyPassthrough,
     activation_shortcut: KeyboardShortcut,
+    ui_context: SharedUiContext,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut palette_open = false;
@@ -401,6 +411,7 @@ fn spawn_hotkey_bridge(
                         &runtime_state,
                         &hotkey_passthrough,
                         &mut palette_open,
+                        &ui_context,
                     );
                 }
                 Ok(_) => {}
@@ -430,6 +441,7 @@ fn handle_palette_hotkey(
     runtime_state: &RuntimeState,
     hotkey_passthrough: &HotkeyPassthrough,
     palette_open: &mut bool,
+    ui_context: &SharedUiContext,
 ) {
     let context_root = get_all_context();
 
@@ -445,11 +457,19 @@ fn handle_palette_hotkey(
     }
 
     if *palette_open {
-        let _ = ui_tx.send(UiSignal::Hide);
+        if ui_tx.send(UiSignal::Hide).is_ok() {
+            request_ui_repaint(ui_context);
+        }
         return;
     }
 
-    show_palette(ui_tx, runtime_state, &context_root, palette_open);
+    show_palette(
+        ui_tx,
+        runtime_state,
+        &context_root,
+        palette_open,
+        ui_context,
+    );
 }
 
 fn ignored_active_process_name_from_shared(
@@ -482,6 +502,7 @@ fn show_palette(
     runtime_state: &RuntimeState,
     context_root: &ContextRoot,
     palette_open: &mut bool,
+    ui_context: &SharedUiContext,
 ) {
     let work_area = palette_work_area(context_root);
     let active_hwnd = context_root
@@ -515,6 +536,13 @@ fn show_palette(
         .is_ok()
     {
         *palette_open = true;
+        request_ui_repaint(ui_context);
+    }
+}
+
+fn request_ui_repaint(ui_context: &SharedUiContext) {
+    if let Some(ctx) = ui_context.get() {
+        ctx.request_repaint();
     }
 }
 
@@ -655,6 +683,114 @@ fn shortcut_focus_target(
     active_hwnd_val: Option<isize>,
 ) -> Option<isize> {
     target_hwnd_val.or(active_hwnd_val)
+}
+
+#[cfg(debug_assertions)]
+fn spawn_debug_telemetry(
+    runtime_state: RuntimeState,
+    ui_visibility: SharedUiVisibility,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(60));
+
+        let (application_count, plugin_snapshot) = match runtime_state.registry.read() {
+            Ok(registry) => (
+                registry.application_registry.len(),
+                registry.plugin_registry().execution_snapshot(),
+            ),
+            Err(err) => {
+                log::error!("Could not collect telemetry; registry lock poisoned: {err}");
+                continue;
+            }
+        };
+
+        let ignored_process_count = match runtime_state.ignored_process_names.read() {
+            Ok(ignored) => ignored.len(),
+            Err(err) => {
+                log::error!("Could not collect telemetry; ignored-process lock poisoned: {err}");
+                continue;
+            }
+        };
+
+        let palette_visible = ui_visibility.load(Ordering::Relaxed);
+        let memory = debug_process_memory_bytes();
+        let thread_count = debug_process_thread_count();
+
+        log::debug!(
+            "Runtime telemetry: visible={}, apps={}, plugins={}, plugin_apps={}, ignored_processes={}, plugin_started={}, plugin_completed={}, plugin_failed={}, plugin_timed_out={}, memory_private_bytes={:?}, thread_count={:?}",
+            palette_visible,
+            application_count,
+            plugin_snapshot.loaded_plugins,
+            plugin_snapshot.registered_applications,
+            ignored_process_count,
+            plugin_snapshot.started,
+            plugin_snapshot.completed,
+            plugin_snapshot.failed,
+            plugin_snapshot.timed_out,
+            memory,
+            thread_count,
+        );
+    })
+}
+
+#[cfg(debug_assertions)]
+fn debug_process_memory_bytes() -> Option<usize> {
+    use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        ..Default::default()
+    };
+
+    unsafe {
+        K32GetProcessMemoryInfo(
+            GetCurrentProcess(),
+            &mut counters,
+            std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        )
+        .as_bool()
+        .then_some(counters.WorkingSetSize)
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_process_thread_count() -> Option<u32> {
+    use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0).ok()? };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return None;
+    }
+
+    let process_id = unsafe { GetCurrentProcessId() };
+    let mut entry = THREADENTRY32 {
+        dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
+    let mut count = 0_u32;
+
+    unsafe {
+        if Thread32First(snapshot, &mut entry).is_ok() {
+            loop {
+                if entry.th32OwnerProcessID == process_id {
+                    count += 1;
+                }
+
+                if Thread32Next(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+
+        let _ = CloseHandle(snapshot);
+    }
+
+    Some(count)
 }
 
 #[cfg(test)]

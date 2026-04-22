@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc, Arc,
+    },
     thread,
     time::Duration,
 };
@@ -20,7 +23,8 @@ const PLUGIN_TIMEOUT: Duration = Duration::from_millis(750);
 pub struct PluginRegistry {
     plugins: Arc<HashMap<String, Arc<LoadedPlugin>>>,
     applications: Arc<Vec<PluginApplication>>,
-    type_text: TypeTextFn,
+    executor_tx: mpsc::Sender<PluginRequest>,
+    stats: Arc<PluginExecutionStats>,
 }
 
 impl std::fmt::Debug for PluginRegistry {
@@ -34,10 +38,14 @@ impl std::fmt::Debug for PluginRegistry {
 
 impl Default for PluginRegistry {
     fn default() -> Self {
+        let type_text: TypeTextFn = Arc::new(|_| {});
+        let plugins = Arc::new(HashMap::new());
+        let executor_tx = spawn_plugin_executor(Arc::clone(&plugins), Arc::clone(&type_text));
         Self {
-            plugins: Arc::new(HashMap::new()),
+            plugins,
             applications: Arc::new(Vec::new()),
-            type_text: Arc::new(|_| {}),
+            executor_tx,
+            stats: Arc::new(PluginExecutionStats::default()),
         }
     }
 }
@@ -60,11 +68,14 @@ impl PluginRegistry {
                 Err(err) => warn!("Failed to load WASM plugin at {:?}: {}", manifest_path, err),
             }
         }
+        let plugins = Arc::new(plugins);
+        let executor_tx = spawn_plugin_executor(Arc::clone(&plugins), Arc::clone(&type_text));
 
         Self {
-            plugins: Arc::new(plugins),
+            plugins,
             applications: Arc::new(applications),
-            type_text,
+            executor_tx,
+            stats: Arc::new(PluginExecutionStats::default()),
         }
     }
 
@@ -91,24 +102,101 @@ impl PluginRegistry {
     }
 
     pub fn execute(&self, plugin_id: &str, command_id: &str) -> Result<(), String> {
-        let plugin = self
-            .plugins
-            .get(plugin_id)
-            .cloned()
-            .ok_or_else(|| format!("Unknown WASM plugin: {plugin_id}"))?;
-        let command_id = command_id.to_string();
-        let timeout_command_id = command_id.clone();
-        let type_text = Arc::clone(&self.type_text);
+        self.stats.started.fetch_add(1, Ordering::Relaxed);
+        log::debug!("Starting WASM plugin command: {plugin_id}:{command_id}");
+
         let (tx, rx) = mpsc::channel();
+        let request = PluginRequest {
+            plugin_id: plugin_id.to_string(),
+            command_id: command_id.to_string(),
+            response_tx: tx,
+        };
 
-        thread::spawn(move || {
-            let _ = tx.send(plugin.execute_sync(&command_id, type_text));
-        });
+        if self.executor_tx.send(request).is_err() {
+            self.stats.failed.fetch_add(1, Ordering::Relaxed);
+            return Err("WASM plugin executor is unavailable".to_string());
+        }
 
-        rx.recv_timeout(PLUGIN_TIMEOUT).map_err(|_| {
-            format!("WASM plugin command timed out: {plugin_id}:{timeout_command_id}")
-        })?
+        match rx.recv_timeout(PLUGIN_TIMEOUT) {
+            Ok(Ok(())) => {
+                self.stats.completed.fetch_add(1, Ordering::Relaxed);
+                log::debug!("Completed WASM plugin command: {plugin_id}:{command_id}");
+                Ok(())
+            }
+            Ok(Err(err)) => {
+                self.stats.failed.fetch_add(1, Ordering::Relaxed);
+                warn!("WASM plugin command failed: {plugin_id}:{command_id}: {err}");
+                Err(err)
+            }
+            Err(_) => {
+                self.stats.timed_out.fetch_add(1, Ordering::Relaxed);
+                warn!("WASM plugin command timed out: {plugin_id}:{command_id}");
+                Err(format!(
+                    "WASM plugin command timed out: {plugin_id}:{command_id}"
+                ))
+            }
+        }
     }
+
+    pub fn execution_snapshot(&self) -> PluginExecutionSnapshot {
+        PluginExecutionSnapshot {
+            loaded_plugins: self.plugins.len(),
+            registered_applications: self.applications.len(),
+            started: self.stats.started.load(Ordering::Relaxed),
+            completed: self.stats.completed.load(Ordering::Relaxed),
+            failed: self.stats.failed.load(Ordering::Relaxed),
+            timed_out: self.stats.timed_out.load(Ordering::Relaxed),
+        }
+    }
+}
+
+struct PluginRequest {
+    plugin_id: String,
+    command_id: String,
+    response_tx: mpsc::Sender<Result<(), String>>,
+}
+
+#[derive(Default)]
+struct PluginExecutionStats {
+    started: AtomicU64,
+    completed: AtomicU64,
+    failed: AtomicU64,
+    timed_out: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PluginExecutionSnapshot {
+    pub loaded_plugins: usize,
+    pub registered_applications: usize,
+    pub started: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub timed_out: u64,
+}
+
+fn spawn_plugin_executor(
+    plugins: Arc<HashMap<String, Arc<LoadedPlugin>>>,
+    type_text: TypeTextFn,
+) -> mpsc::Sender<PluginRequest> {
+    let (tx, rx) = mpsc::channel::<PluginRequest>();
+
+    thread::Builder::new()
+        .name("plugin-executor".to_string())
+        .spawn(move || {
+            while let Ok(request) = rx.recv() {
+                let result = plugins
+                    .get(&request.plugin_id)
+                    .cloned()
+                    .ok_or_else(|| format!("Unknown WASM plugin: {}", request.plugin_id))
+                    .and_then(|plugin| {
+                        plugin.execute_sync(&request.command_id, Arc::clone(&type_text))
+                    });
+                let _ = request.response_tx.send(result);
+            }
+        })
+        .expect("plugin executor thread should start");
+
+    tx
 }
 
 #[cfg(test)]

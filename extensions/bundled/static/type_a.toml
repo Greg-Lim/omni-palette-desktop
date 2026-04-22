@@ -1,0 +1,15 @@
+version = 2
+platform = "windows"
+
+[app]
+id = "type_a"
+name = "Reload Test"
+process_name = "explorer.exe"
+default_focus_state = "global"
+default_tags = ["reload", "test"]
+
+[actions.type_a]
+name = "Type B"
+focus_state = "global"
+priority = "normal"
+cmd = { mods = [], key = "B" }

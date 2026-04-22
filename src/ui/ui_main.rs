@@ -6,7 +6,9 @@ use crate::domain::action::{CommandPriority, FocusState};
 use eframe::egui;
 use eframe::egui::text::LayoutJob;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 const PALETTE_WIDTH: f32 = 780.0;
@@ -214,6 +216,9 @@ pub enum UiEvent {
     ActionExecuted,
 }
 
+pub type SharedUiContext = Arc<OnceLock<egui::Context>>;
+pub type SharedUiVisibility = Arc<AtomicBool>;
+
 struct App {
     receiver: Receiver<UiSignal>,
     palette: CommandPaletteApp,
@@ -222,6 +227,7 @@ struct App {
     needs_text_focus: bool,
     keyboard_nav: bool,
     work_area: Option<PaletteWorkArea>,
+    visibility: SharedUiVisibility,
 }
 
 impl App {
@@ -229,6 +235,8 @@ impl App {
         cc: &eframe::CreationContext<'_>,
         receiver: Receiver<UiSignal>,
         event_tx: Sender<UiEvent>,
+        shared_context: SharedUiContext,
+        visibility: SharedUiVisibility,
     ) -> Self {
         let mut visuals = egui::Visuals::dark();
         visuals.panel_fill = egui::Color32::TRANSPARENT;
@@ -260,6 +268,8 @@ impl App {
         style.spacing.button_padding = egui::vec2(10.0, 8.0);
         style.spacing.window_margin = egui::Margin::same(0);
         cc.egui_ctx.set_global_style(style);
+        let _ = shared_context.set(cc.egui_ctx.clone());
+        visibility.store(false, Ordering::Relaxed);
 
         Self {
             palette: CommandPaletteApp::new(vec![]),
@@ -269,6 +279,7 @@ impl App {
             needs_text_focus: false,
             keyboard_nav: false,
             work_area: None,
+            visibility,
         }
     }
 
@@ -286,6 +297,7 @@ impl App {
         self.work_area = work_area;
         self.had_focus_since_open = false;
         self.needs_text_focus = true;
+        self.visibility.store(true, Ordering::Relaxed);
 
         self.sync_viewport(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -301,6 +313,7 @@ impl App {
         self.work_area = None;
         self.had_focus_since_open = false;
         self.needs_text_focus = false;
+        self.visibility.store(false, Ordering::Relaxed);
 
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         let _ = self.event_tx.send(UiEvent::Closed);
@@ -451,8 +464,6 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.request_repaint_after(Duration::from_millis(16));
-
         while let Ok(sig) = self.receiver.try_recv() {
             match sig {
                 UiSignal::Show {
@@ -467,6 +478,8 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             return;
         }
+
+        ctx.request_repaint_after(Duration::from_millis(16));
 
         self.sync_viewport(ctx);
 
@@ -631,7 +644,12 @@ impl eframe::App for App {
     }
 }
 
-pub fn ui_main(receiver: Receiver<UiSignal>, event_tx: Sender<UiEvent>) {
+pub fn ui_main_with_shared_state(
+    receiver: Receiver<UiSignal>,
+    event_tx: Sender<UiEvent>,
+    shared_context: SharedUiContext,
+    visibility: SharedUiVisibility,
+) {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([PALETTE_WIDTH, 700.0])
@@ -647,6 +665,14 @@ pub fn ui_main(receiver: Receiver<UiSignal>, event_tx: Sender<UiEvent>) {
     let _ = eframe::run_native(
         "Command Palette",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, receiver, event_tx)))),
+        Box::new(move |cc| {
+            Ok(Box::new(App::new(
+                cc,
+                receiver,
+                event_tx,
+                Arc::clone(&shared_context),
+                Arc::clone(&visibility),
+            )))
+        }),
     );
 }
