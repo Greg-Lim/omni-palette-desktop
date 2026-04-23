@@ -6,11 +6,13 @@ use log::{error, info};
 
 use raw_window_handle::RawWindowHandle;
 
+#[cfg(debug_assertions)]
+use crate::core::performance::process_performance_snapshot_logger;
+
 use crate::{
     config::extension::{Config, Modifier},
     core::{
         extensions::{discovery::ExtensionDiscovery, extensions::load_config},
-        performance::process_performance_snapshot_logger,
         plugins::{PluginApplication, PluginRegistry},
     },
     domain::{
@@ -55,6 +57,7 @@ impl MasterRegistry {
             extension_discovery.plugin_manifest_paths(),
             current_os,
             Arc::new(send_text),
+            #[cfg(debug_assertions)]
             process_performance_snapshot_logger(),
         ));
         let mut master_registry = MasterRegistry {

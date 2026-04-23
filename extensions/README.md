@@ -10,7 +10,7 @@ The app loads bundled runtime extensions from `extensions/bundled`.
 
 ```text
 extensions/bundled/
-  .ignore.toml
+  ignore.toml
   static/
   plugins/
 ```
@@ -92,5 +92,5 @@ verifies the catalog contents, so moving `catalog.v1.json` and
 
 ## Ignore Config
 
-`extensions/bundled/.ignore.toml` lists applications that should receive
+`extensions/bundled/ignore.toml` lists applications that should receive
 `Ctrl+Shift+P` normally instead of opening Global Palette.

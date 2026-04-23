@@ -9,12 +9,14 @@ use log::warn;
 
 use crate::core::extensions::install::load_installed_state;
 
-const IGNORE_FILE_NAME: &str = ".ignore.toml";
+const IGNORE_FILE_NAME: &str = "ignore.toml";
 const INSTALLED_FILE_NAME: &str = "installed.toml";
 const STATIC_DIR_NAME: &str = "static";
 const SOURCES_FILE_NAME: &str = "sources.toml";
 const PLUGINS_DIR_NAME: &str = "plugins";
 const PLUGIN_MANIFEST_NAME: &str = "plugin.toml";
+#[cfg(not(debug_assertions))]
+const DEBUG_ONLY_PLUGIN_IDS: &[&str] = &["performance_tracker"];
 
 #[derive(Debug, Clone)]
 pub struct ExtensionDiscovery {
@@ -110,7 +112,19 @@ impl ExtensionDiscovery {
                 }
 
                 let manifest_path = path.join(PLUGIN_MANIFEST_NAME);
-                manifest_path.exists().then_some(manifest_path)
+                if !manifest_path.exists() {
+                    return None;
+                }
+
+                #[cfg(not(debug_assertions))]
+                {
+                    let plugin_id = path.file_name()?.to_str()?;
+                    if DEBUG_ONLY_PLUGIN_IDS.contains(&plugin_id) {
+                        return None;
+                    }
+                }
+
+                Some(manifest_path)
             }) {
                 if let Some(plugin_id) = manifest_path.parent().and_then(|path| path.file_name()) {
                     merged.insert(plugin_id.to_os_string(), manifest_path);
@@ -211,7 +225,7 @@ mod tests {
             .join("static-configs");
         reset_dir(&root);
         fs::create_dir_all(root.join("static")).expect("static directory should be created");
-        fs::write(root.join(".ignore.toml"), "").expect("ignore config should be written");
+        fs::write(root.join("ignore.toml"), "").expect("ignore config should be written");
         fs::write(root.join("legacy.toml"), "").expect("legacy config should be written");
         fs::write(root.join("chrome.toml"), "").expect("duplicate fallback should be written");
         fs::write(root.join("static").join("chrome.toml"), "")
@@ -223,7 +237,7 @@ mod tests {
         assert!(paths.contains(&root.join("static").join("chrome.toml")));
         assert!(paths.contains(&root.join("legacy.toml")));
         assert!(!paths.contains(&root.join("chrome.toml")));
-        assert!(!paths.contains(&root.join(".ignore.toml")));
+        assert!(!paths.contains(&root.join("ignore.toml")));
     }
 
     #[test]
@@ -249,6 +263,28 @@ mod tests {
             discovery.plugin_manifest_paths(),
             vec![root.join("plugins").join("auto_typer").join("plugin.toml")]
         );
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn skips_debug_only_plugin_manifests() {
+        let root = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("debug-only-plugins");
+        reset_dir(&root);
+        fs::create_dir_all(root.join("plugins").join("performance_tracker"))
+            .expect("debug plugin directory should be created");
+        fs::write(
+            root.join("plugins")
+                .join("performance_tracker")
+                .join("plugin.toml"),
+            "",
+        )
+        .expect("debug plugin manifest should be written");
+
+        let discovery = ExtensionDiscovery::new(&root);
+
+        assert!(discovery.plugin_manifest_paths().is_empty());
     }
 
     #[test]

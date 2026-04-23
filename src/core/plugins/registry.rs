@@ -11,10 +11,12 @@ use std::{
 
 use log::warn;
 
+#[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
+    capabilities::TypeTextFn,
     command::PluginApplication,
-    runtime::{LoadedPlugin, TypeTextFn},
+    runtime::LoadedPlugin,
 };
 use crate::domain::action::Os;
 
@@ -55,6 +57,7 @@ impl PluginRegistry {
         manifest_paths: impl IntoIterator<Item = PathBuf>,
         current_os: Os,
         type_text: TypeTextFn,
+        #[cfg(debug_assertions)]
         log_performance_snapshot: LogPerformanceSnapshotFn,
     ) -> Self {
         let mut plugins = HashMap::new();
@@ -65,6 +68,7 @@ impl PluginRegistry {
                 &manifest_path,
                 current_os,
                 Arc::clone(&type_text),
+                #[cfg(debug_assertions)]
                 Arc::clone(&log_performance_snapshot),
             ) {
                 Ok(plugin) => {
@@ -104,6 +108,7 @@ impl PluginRegistry {
         manifest_paths: impl IntoIterator<Item = PathBuf>,
         current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
+        #[cfg(debug_assertions)]
         performance_logs: Arc<std::sync::Mutex<Vec<String>>>,
     ) -> Self {
         Self::load(
@@ -115,6 +120,7 @@ impl PluginRegistry {
                     .expect("typed text lock poisoned")
                     .push(text.to_string());
             }),
+            #[cfg(debug_assertions)]
             Arc::new(move || {
                 performance_logs
                     .lock()
@@ -291,6 +297,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     fn loads_performance_tracker_plugin_and_registers_command() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -313,6 +320,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     fn executes_performance_tracker_through_host_logger() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -379,6 +387,7 @@ default_focus_state = "global"
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     fn rejects_performance_logging_when_permission_is_missing() {
         let root = Path::new("target")
             .join("plugin-tests")

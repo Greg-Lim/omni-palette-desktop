@@ -11,7 +11,7 @@ Global Palette is a Windows command palette for launching application shortcuts 
 - Prioritize common commands with `high`, `normal`, and `suppressed` priority buckets.
 - Highlight matching text while searching.
 - Execute commands with `Enter` or by clicking a row.
-- Ignore selected applications with `extensions/.ignore.toml` so their own `Ctrl+Shift+P` behavior still works.
+- Ignore selected applications with `extensions/ignore.toml` so their own `Ctrl+Shift+P` behavior still works.
 
 ## Extensions
 

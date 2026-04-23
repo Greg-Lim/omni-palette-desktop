@@ -5,6 +5,7 @@ use std::{
 
 use serde::Deserialize;
 
+use crate::core::plugins::capabilities::PluginPermission;
 use crate::domain::action::{FocusState, Os};
 
 #[derive(Debug, Deserialize)]
@@ -29,13 +30,6 @@ impl PluginManifest {
             .map_err(|err| format!("Invalid plugin version {}: {err}", manifest.version))?;
         Ok(manifest)
     }
-}
-
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PluginPermission {
-    TypeText,
-    PerformanceMetrics,
 }
 
 #[derive(Debug, Deserialize)]

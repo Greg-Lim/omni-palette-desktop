@@ -1,17 +1,17 @@
-use std::{collections::HashSet, path::Path, sync::Arc};
+use std::path::Path;
 
-use wasmtime::{Caller, Config, Engine, Linker, Module, Store};
+use wasmtime::{Config, Engine, Linker, Module, Store};
 
-use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
+    capabilities::{register_capabilities, PluginHostContext, PluginStoreState, TypeTextFn},
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
-    manifest::{PluginManifest, PluginPermission},
+    manifest::PluginManifest,
 };
+#[cfg(debug_assertions)]
+use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::domain::action::Os;
 
 const COMMAND_ID_OFFSET: usize = 4096;
-
-pub(crate) type TypeTextFn = Arc<dyn Fn(&str) + Send + Sync>;
 
 pub(crate) struct LoadedPlugin {
     id: String,
@@ -20,8 +20,7 @@ pub(crate) struct LoadedPlugin {
     engine: Engine,
     module: Module,
     commands: Vec<PluginCommand>,
-    type_text: TypeTextFn,
-    log_performance_snapshot: LogPerformanceSnapshotFn,
+    host_context: PluginHostContext,
 }
 
 impl LoadedPlugin {
@@ -29,6 +28,7 @@ impl LoadedPlugin {
         manifest_path: &Path,
         current_os: Os,
         type_text: TypeTextFn,
+        #[cfg(debug_assertions)]
         log_performance_snapshot: LogPerformanceSnapshotFn,
     ) -> Result<Self, String> {
         let manifest = PluginManifest::load(manifest_path)?;
@@ -58,8 +58,11 @@ impl LoadedPlugin {
             engine,
             module,
             commands: Vec::new(),
-            type_text,
-            log_performance_snapshot,
+            host_context: PluginHostContext {
+                type_text,
+                #[cfg(debug_assertions)]
+                log_performance_snapshot,
+            },
         };
         plugin.commands = plugin.register_commands()?;
         Ok(plugin)
@@ -136,8 +139,7 @@ impl LoadedPlugin {
             &self.engine,
             PluginStoreState {
                 permissions: self.manifest.permissions.iter().cloned().collect(),
-                type_text: Arc::clone(&self.type_text),
-                log_performance_snapshot: Arc::clone(&self.log_performance_snapshot),
+                host_context: self.host_context.clone(),
                 allow_host_effects,
             },
         );
@@ -146,62 +148,7 @@ impl LoadedPlugin {
             .map_err(|err| format!("Could not set plugin fuel: {err}"))?;
 
         let mut linker = Linker::new(&self.engine);
-        linker
-            .func_wrap(
-                "env",
-                "host_type_text",
-                |mut caller: Caller<'_, PluginStoreState>, ptr: i32, len: i32| -> i32 {
-                    if !caller.data().allow_host_effects
-                        || !caller
-                            .data()
-                            .permissions
-                            .contains(&PluginPermission::TypeText)
-                    {
-                        return 1;
-                    }
-
-                    let Some(memory) = caller
-                        .get_export("memory")
-                        .and_then(|item| item.into_memory())
-                    else {
-                        return 2;
-                    };
-                    let data = memory.data(&caller);
-                    let start = ptr.max(0) as usize;
-                    let end = start.saturating_add(len.max(0) as usize);
-                    let Some(bytes) = data.get(start..end) else {
-                        return 3;
-                    };
-                    let Ok(text) = std::str::from_utf8(bytes) else {
-                        return 4;
-                    };
-
-                    (caller.data().type_text)(text);
-                    0
-                },
-            )
-            .map_err(|err| format!("Could not define host_type_text: {err}"))?;
-        linker
-            .func_wrap(
-                "env",
-                "host_log_performance_snapshot",
-                |caller: Caller<'_, PluginStoreState>| -> i32 {
-                    if !caller.data().allow_host_effects
-                        || !caller
-                            .data()
-                            .permissions
-                            .contains(&PluginPermission::PerformanceMetrics)
-                    {
-                        return 1;
-                    }
-
-                    match (caller.data().log_performance_snapshot)() {
-                        Ok(()) => 0,
-                        Err(_) => 2,
-                    }
-                },
-            )
-            .map_err(|err| format!("Could not define host_log_performance_snapshot: {err}"))?;
+        register_capabilities(&mut linker)?;
 
         let instance = linker
             .instantiate(&mut store, &self.module)
@@ -209,13 +156,6 @@ impl LoadedPlugin {
 
         Ok((store, instance))
     }
-}
-
-struct PluginStoreState {
-    permissions: HashSet<PluginPermission>,
-    type_text: TypeTextFn,
-    log_performance_snapshot: LogPerformanceSnapshotFn,
-    allow_host_effects: bool,
 }
 
 fn read_guest_c_string(
