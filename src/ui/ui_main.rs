@@ -364,6 +364,26 @@ impl App {
         }
     }
 
+    fn handle_list_navigation_keys(&mut self, ctx: &egui::Context, visible_count: usize) {
+        if visible_count == 0 {
+            return;
+        }
+
+        let move_down = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
+        if move_down {
+            self.palette.selected_index =
+                wrapped_selection_index(self.palette.selected_index, visible_count, 1);
+            self.keyboard_nav = true;
+        }
+
+        let move_up = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp));
+        if move_up {
+            self.palette.selected_index =
+                wrapped_selection_index(self.palette.selected_index, visible_count, -1);
+            self.keyboard_nav = true;
+        }
+    }
+
     fn draw_command_row(
         &mut self,
         ui: &mut egui::Ui,
@@ -464,6 +484,16 @@ impl App {
     }
 }
 
+fn wrapped_selection_index(current: usize, visible_count: usize, delta: isize) -> usize {
+    if visible_count == 0 {
+        return 0;
+    }
+
+    let visible_count = visible_count as isize;
+    let current = current as isize;
+    (current + delta).rem_euclid(visible_count) as usize
+}
+
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(sig) = self.receiver.try_recv() {
@@ -499,19 +529,9 @@ impl eframe::App for App {
         }
 
         let visible_count = self.palette.filtered_commands.len().min(MAX_VISIBLE_ROWS);
+        self.handle_list_navigation_keys(ctx, visible_count);
 
         if visible_count > 0 {
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                self.palette.selected_index = (self.palette.selected_index + 1) % visible_count;
-                self.keyboard_nav = true;
-            }
-
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                self.palette.selected_index =
-                    (self.palette.selected_index + visible_count - 1) % visible_count;
-                self.keyboard_nav = true;
-            }
-
             if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
                 self.execute_selected(ctx);
                 return;
@@ -677,4 +697,34 @@ pub fn ui_main_with_shared_state(
             )))
         }),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrapped_selection_index;
+
+    #[test]
+    fn wrapped_selection_moves_down_from_middle() {
+        assert_eq!(wrapped_selection_index(3, 8, 1), 4);
+    }
+
+    #[test]
+    fn wrapped_selection_moves_up_from_middle() {
+        assert_eq!(wrapped_selection_index(3, 8, -1), 2);
+    }
+
+    #[test]
+    fn wrapped_selection_wraps_from_last_to_first() {
+        assert_eq!(wrapped_selection_index(7, 8, 1), 0);
+    }
+
+    #[test]
+    fn wrapped_selection_wraps_from_first_to_last() {
+        assert_eq!(wrapped_selection_index(0, 8, -1), 7);
+    }
+
+    #[test]
+    fn wrapped_selection_is_zero_when_no_rows_are_visible() {
+        assert_eq!(wrapped_selection_index(4, 0, 1), 0);
+    }
 }
