@@ -11,6 +11,7 @@ use std::{
 
 use log::warn;
 
+use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
     command::PluginApplication,
     runtime::{LoadedPlugin, TypeTextFn},
@@ -38,9 +39,8 @@ impl std::fmt::Debug for PluginRegistry {
 
 impl Default for PluginRegistry {
     fn default() -> Self {
-        let type_text: TypeTextFn = Arc::new(|_| {});
         let plugins = Arc::new(HashMap::new());
-        let executor_tx = spawn_plugin_executor(Arc::clone(&plugins), Arc::clone(&type_text));
+        let executor_tx = spawn_plugin_executor(Arc::clone(&plugins));
         Self {
             plugins,
             applications: Arc::new(Vec::new()),
@@ -55,12 +55,18 @@ impl PluginRegistry {
         manifest_paths: impl IntoIterator<Item = PathBuf>,
         current_os: Os,
         type_text: TypeTextFn,
+        log_performance_snapshot: LogPerformanceSnapshotFn,
     ) -> Self {
         let mut plugins = HashMap::new();
         let mut applications = Vec::new();
 
         for manifest_path in manifest_paths {
-            match LoadedPlugin::load(&manifest_path, current_os, Arc::clone(&type_text)) {
+            match LoadedPlugin::load(
+                &manifest_path,
+                current_os,
+                Arc::clone(&type_text),
+                Arc::clone(&log_performance_snapshot),
+            ) {
                 Ok(plugin) => {
                     applications.push(plugin.application());
                     plugins.insert(plugin.id().to_string(), Arc::new(plugin));
@@ -69,7 +75,7 @@ impl PluginRegistry {
             }
         }
         let plugins = Arc::new(plugins);
-        let executor_tx = spawn_plugin_executor(Arc::clone(&plugins), Arc::clone(&type_text));
+        let executor_tx = spawn_plugin_executor(Arc::clone(&plugins));
 
         Self {
             plugins,
@@ -85,6 +91,21 @@ impl PluginRegistry {
         current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
     ) -> Self {
+        Self::load_with_host_recorders(
+            manifest_paths,
+            current_os,
+            typed_text,
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        )
+    }
+
+    #[cfg(test)]
+    pub fn load_with_host_recorders(
+        manifest_paths: impl IntoIterator<Item = PathBuf>,
+        current_os: Os,
+        typed_text: Arc<std::sync::Mutex<Vec<String>>>,
+        performance_logs: Arc<std::sync::Mutex<Vec<String>>>,
+    ) -> Self {
         Self::load(
             manifest_paths,
             current_os,
@@ -93,6 +114,13 @@ impl PluginRegistry {
                     .lock()
                     .expect("typed text lock poisoned")
                     .push(text.to_string());
+            }),
+            Arc::new(move || {
+                performance_logs
+                    .lock()
+                    .expect("performance log lock poisoned")
+                    .push("performance snapshot".to_string());
+                Ok(())
             }),
         )
     }
@@ -176,7 +204,6 @@ pub struct PluginExecutionSnapshot {
 
 fn spawn_plugin_executor(
     plugins: Arc<HashMap<String, Arc<LoadedPlugin>>>,
-    type_text: TypeTextFn,
 ) -> mpsc::Sender<PluginRequest> {
     let (tx, rx) = mpsc::channel::<PluginRequest>();
 
@@ -188,9 +215,7 @@ fn spawn_plugin_executor(
                     .get(&request.plugin_id)
                     .cloned()
                     .ok_or_else(|| format!("Unknown WASM plugin: {}", request.plugin_id))
-                    .and_then(|plugin| {
-                        plugin.execute_sync(&request.command_id, Arc::clone(&type_text))
-                    });
+                    .and_then(|plugin| plugin.execute_sync(&request.command_id));
                 let _ = request.response_tx.send(result);
             }
         })
@@ -216,6 +241,14 @@ mod tests {
             .join("plugins")
             .join("auto_typer")
             .join("plugin.wasm")
+    }
+
+    fn sample_performance_plugin_path() -> PathBuf {
+        Path::new("extensions")
+            .join("bundled")
+            .join("plugins")
+            .join("performance_tracker")
+            .join("plugin.wat")
     }
 
     #[test]
@@ -254,6 +287,52 @@ mod tests {
         assert_eq!(
             typed.lock().expect("typed text lock poisoned").as_slice(),
             ["hello world"]
+        );
+    }
+
+    #[test]
+    fn loads_performance_tracker_plugin_and_registers_command() {
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_host_recorders(
+            real_plugin_manifests(),
+            Os::Windows,
+            typed,
+            performance_logs,
+        );
+        let app = registry
+            .applications()
+            .iter()
+            .find(|app| app.plugin_id == "performance_tracker")
+            .expect("performance tracker plugin should load");
+
+        assert_eq!(app.name, "Performance Tracker");
+        assert_eq!(app.commands.len(), 1);
+        assert_eq!(app.commands[0].id, "log_performance_snapshot");
+        assert_eq!(app.commands[0].name, "Log performance snapshot");
+    }
+
+    #[test]
+    fn executes_performance_tracker_through_host_logger() {
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_host_recorders(
+            real_plugin_manifests(),
+            Os::Windows,
+            typed,
+            Arc::clone(&performance_logs),
+        );
+
+        registry
+            .execute("performance_tracker", "log_performance_snapshot")
+            .expect("performance tracker command should execute");
+
+        assert_eq!(
+            performance_logs
+                .lock()
+                .expect("performance log lock poisoned")
+                .as_slice(),
+            ["performance snapshot"]
         );
     }
 
@@ -297,6 +376,56 @@ default_focus_state = "global"
 
         assert!(err.contains("non-zero exit code"));
         assert!(typed.lock().expect("typed text lock poisoned").is_empty());
+    }
+
+    #[test]
+    fn rejects_performance_logging_when_permission_is_missing() {
+        let root = Path::new("target")
+            .join("plugin-tests")
+            .join("no-performance-permission");
+        let plugin_dir = root.join("plugins").join("no_performance_permission");
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("should reset test plugin root");
+        }
+        fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
+        fs::copy(
+            sample_performance_plugin_path(),
+            plugin_dir.join("plugin.wat"),
+        )
+        .expect("should copy sample performance plugin");
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"id = "no_performance_permission"
+name = "No Performance Permission"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wat"
+permissions = []
+
+[app]
+default_focus_state = "global"
+"#,
+        )
+        .expect("should write test manifest");
+
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_host_recorders(
+            ExtensionDiscovery::new(&root).plugin_manifest_paths(),
+            Os::Windows,
+            typed,
+            Arc::clone(&performance_logs),
+        );
+
+        let err = registry
+            .execute("no_performance_permission", "log_performance_snapshot")
+            .expect_err("performance logging should require permission");
+
+        assert!(err.contains("non-zero exit code"));
+        assert!(performance_logs
+            .lock()
+            .expect("performance log lock poisoned")
+            .is_empty());
     }
 
     #[test]

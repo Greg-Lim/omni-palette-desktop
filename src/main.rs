@@ -22,6 +22,7 @@ use crate::core::extensions::{
     discovery::{user_extensions_root, ExtensionDiscovery},
     install::ExtensionInstallService,
 };
+use crate::core::performance::{current_process_private_bytes, current_process_thread_count};
 use crate::core::plugins::PluginRegistry;
 use crate::core::registry::registry::{MasterRegistry, UnitAction};
 use crate::domain::action::{ActionExecution, CommandPriority, ContextRoot, FocusState, Os};
@@ -713,8 +714,8 @@ fn spawn_debug_telemetry(
         };
 
         let palette_visible = ui_visibility.load(Ordering::Relaxed);
-        let memory = debug_process_memory_bytes();
-        let thread_count = debug_process_thread_count();
+        let memory = current_process_private_bytes();
+        let thread_count = current_process_thread_count();
 
         log::debug!(
             "Runtime telemetry: visible={}, apps={}, plugins={}, plugin_apps={}, ignored_processes={}, plugin_started={}, plugin_completed={}, plugin_failed={}, plugin_timed_out={}, memory_private_bytes={:?}, thread_count={:?}",
@@ -731,66 +732,6 @@ fn spawn_debug_telemetry(
             thread_count,
         );
     })
-}
-
-#[cfg(debug_assertions)]
-fn debug_process_memory_bytes() -> Option<usize> {
-    use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
-    use windows::Win32::System::Threading::GetCurrentProcess;
-
-    let mut counters = PROCESS_MEMORY_COUNTERS {
-        cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
-        ..Default::default()
-    };
-
-    unsafe {
-        K32GetProcessMemoryInfo(
-            GetCurrentProcess(),
-            &mut counters,
-            std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
-        )
-        .as_bool()
-        .then_some(counters.WorkingSetSize)
-    }
-}
-
-#[cfg(debug_assertions)]
-fn debug_process_thread_count() -> Option<u32> {
-    use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
-    };
-    use windows::Win32::System::Threading::GetCurrentProcessId;
-
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0).ok()? };
-    if snapshot == INVALID_HANDLE_VALUE {
-        return None;
-    }
-
-    let process_id = unsafe { GetCurrentProcessId() };
-    let mut entry = THREADENTRY32 {
-        dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
-        ..Default::default()
-    };
-    let mut count = 0_u32;
-
-    unsafe {
-        if Thread32First(snapshot, &mut entry).is_ok() {
-            loop {
-                if entry.th32OwnerProcessID == process_id {
-                    count += 1;
-                }
-
-                if Thread32Next(snapshot, &mut entry).is_err() {
-                    break;
-                }
-            }
-        }
-
-        let _ = CloseHandle(snapshot);
-    }
-
-    Some(count)
 }
 
 #[cfg(test)]

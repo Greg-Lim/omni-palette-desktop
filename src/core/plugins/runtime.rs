@@ -2,6 +2,7 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 
 use wasmtime::{Caller, Config, Engine, Linker, Module, Store};
 
+use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::{PluginManifest, PluginPermission},
@@ -19,6 +20,8 @@ pub(crate) struct LoadedPlugin {
     engine: Engine,
     module: Module,
     commands: Vec<PluginCommand>,
+    type_text: TypeTextFn,
+    log_performance_snapshot: LogPerformanceSnapshotFn,
 }
 
 impl LoadedPlugin {
@@ -26,6 +29,7 @@ impl LoadedPlugin {
         manifest_path: &Path,
         current_os: Os,
         type_text: TypeTextFn,
+        log_performance_snapshot: LogPerformanceSnapshotFn,
     ) -> Result<Self, String> {
         let manifest = PluginManifest::load(manifest_path)?;
         if manifest.platform != current_os {
@@ -54,8 +58,10 @@ impl LoadedPlugin {
             engine,
             module,
             commands: Vec::new(),
+            type_text,
+            log_performance_snapshot,
         };
-        plugin.commands = plugin.register_commands(type_text)?;
+        plugin.commands = plugin.register_commands()?;
         Ok(plugin)
     }
 
@@ -72,12 +78,8 @@ impl LoadedPlugin {
         }
     }
 
-    pub(crate) fn execute_sync(
-        &self,
-        command_id: &str,
-        type_text: TypeTextFn,
-    ) -> Result<(), String> {
-        let (mut store, instance) = self.instantiate(type_text, true)?;
+    pub(crate) fn execute_sync(&self, command_id: &str) -> Result<(), String> {
+        let (mut store, instance) = self.instantiate(true)?;
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| "Plugin does not export memory".to_string())?;
@@ -108,8 +110,8 @@ impl LoadedPlugin {
         }
     }
 
-    fn register_commands(&self, type_text: TypeTextFn) -> Result<Vec<PluginCommand>, String> {
-        let (mut store, instance) = self.instantiate(type_text, false)?;
+    fn register_commands(&self) -> Result<Vec<PluginCommand>, String> {
+        let (mut store, instance) = self.instantiate(false)?;
         let register = instance
             .get_typed_func::<(), i32>(&mut store, "register_commands_json")
             .map_err(|err| format!("Missing register_commands_json export: {err}"))?;
@@ -128,14 +130,14 @@ impl LoadedPlugin {
 
     fn instantiate(
         &self,
-        type_text: TypeTextFn,
         allow_host_effects: bool,
     ) -> Result<(Store<PluginStoreState>, wasmtime::Instance), String> {
         let mut store = Store::new(
             &self.engine,
             PluginStoreState {
                 permissions: self.manifest.permissions.iter().cloned().collect(),
-                type_text,
+                type_text: Arc::clone(&self.type_text),
+                log_performance_snapshot: Arc::clone(&self.log_performance_snapshot),
                 allow_host_effects,
             },
         );
@@ -179,6 +181,27 @@ impl LoadedPlugin {
                 },
             )
             .map_err(|err| format!("Could not define host_type_text: {err}"))?;
+        linker
+            .func_wrap(
+                "env",
+                "host_log_performance_snapshot",
+                |caller: Caller<'_, PluginStoreState>| -> i32 {
+                    if !caller.data().allow_host_effects
+                        || !caller
+                            .data()
+                            .permissions
+                            .contains(&PluginPermission::PerformanceMetrics)
+                    {
+                        return 1;
+                    }
+
+                    match (caller.data().log_performance_snapshot)() {
+                        Ok(()) => 0,
+                        Err(_) => 2,
+                    }
+                },
+            )
+            .map_err(|err| format!("Could not define host_log_performance_snapshot: {err}"))?;
 
         let instance = linker
             .instantiate(&mut store, &self.module)
@@ -191,6 +214,7 @@ impl LoadedPlugin {
 struct PluginStoreState {
     permissions: HashSet<PluginPermission>,
     type_text: TypeTextFn,
+    log_performance_snapshot: LogPerformanceSnapshotFn,
     allow_host_effects: bool,
 }
 

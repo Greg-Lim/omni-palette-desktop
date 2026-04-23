@@ -35,6 +35,7 @@ impl PluginManifest {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PluginPermission {
     TypeText,
+    PerformanceMetrics,
 }
 
 #[derive(Debug, Deserialize)]

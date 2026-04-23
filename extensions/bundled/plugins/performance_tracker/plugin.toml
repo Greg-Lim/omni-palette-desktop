@@ -1,0 +1,10 @@
+id = "performance_tracker"
+name = "Performance Tracker"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wat"
+permissions = ["performance_metrics"]
+
+[app]
+default_focus_state = "global"
+default_tags = ["wasm", "performance", "diagnostics"]
