@@ -57,6 +57,7 @@ impl MasterRegistry {
             extension_discovery.plugin_manifest_paths(),
             current_os,
             Arc::new(send_text),
+            Arc::new(current_date_text),
             #[cfg(debug_assertions)]
             process_performance_snapshot_logger(),
         ));
@@ -333,6 +334,22 @@ impl Application {
             application_registry,
         }
     }
+}
+
+fn current_date_text() -> Result<String, String> {
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+
+    let system_time = unsafe { GetLocalTime() };
+    let month_index = usize::from(system_time.wMonth.saturating_sub(1));
+    let month = MONTHS
+        .get(month_index)
+        .ok_or_else(|| format!("Invalid local month value: {}", system_time.wMonth))?;
+
+    Ok(format!("{} {}", system_time.wDay, month))
 }
 
 #[cfg(test)]

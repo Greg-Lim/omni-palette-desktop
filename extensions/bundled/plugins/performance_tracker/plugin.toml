@@ -3,7 +3,7 @@ name = "Performance Tracker"
 platform = "windows"
 version = "0.1.0"
 wasm = "plugin.wat"
-permissions = ["performance_metrics"]
+permissions = ["write_performance_log"]
 
 [app]
 default_focus_state = "global"

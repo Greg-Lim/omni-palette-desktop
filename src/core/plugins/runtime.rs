@@ -3,7 +3,9 @@ use std::path::Path;
 use wasmtime::{Config, Engine, Linker, Module, Store};
 
 use crate::core::plugins::{
-    capabilities::{register_capabilities, PluginHostContext, PluginStoreState, TypeTextFn},
+    capabilities::{
+        register_capabilities, PluginHostContext, PluginStoreState, ReadTimeTextFn, WriteTextFn,
+    },
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::PluginManifest,
 };
@@ -27,9 +29,10 @@ impl LoadedPlugin {
     pub(crate) fn load(
         manifest_path: &Path,
         current_os: Os,
-        type_text: TypeTextFn,
+        write_text: WriteTextFn,
+        read_time_text: ReadTimeTextFn,
         #[cfg(debug_assertions)]
-        log_performance_snapshot: LogPerformanceSnapshotFn,
+        write_performance_log: LogPerformanceSnapshotFn,
     ) -> Result<Self, String> {
         let manifest = PluginManifest::load(manifest_path)?;
         if manifest.platform != current_os {
@@ -59,9 +62,10 @@ impl LoadedPlugin {
             module,
             commands: Vec::new(),
             host_context: PluginHostContext {
-                type_text,
+                write_text,
+                read_time_text,
                 #[cfg(debug_assertions)]
-                log_performance_snapshot,
+                write_performance_log,
             },
         };
         plugin.commands = plugin.register_commands()?;

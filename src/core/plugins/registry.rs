@@ -14,7 +14,7 @@ use log::warn;
 #[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
-    capabilities::TypeTextFn,
+    capabilities::{ReadTimeTextFn, WriteTextFn},
     command::PluginApplication,
     runtime::LoadedPlugin,
 };
@@ -56,9 +56,10 @@ impl PluginRegistry {
     pub fn load(
         manifest_paths: impl IntoIterator<Item = PathBuf>,
         current_os: Os,
-        type_text: TypeTextFn,
+        write_text: WriteTextFn,
+        read_time_text: ReadTimeTextFn,
         #[cfg(debug_assertions)]
-        log_performance_snapshot: LogPerformanceSnapshotFn,
+        write_performance_log: LogPerformanceSnapshotFn,
     ) -> Self {
         let mut plugins = HashMap::new();
         let mut applications = Vec::new();
@@ -67,9 +68,10 @@ impl PluginRegistry {
             match LoadedPlugin::load(
                 &manifest_path,
                 current_os,
-                Arc::clone(&type_text),
+                Arc::clone(&write_text),
+                Arc::clone(&read_time_text),
                 #[cfg(debug_assertions)]
-                Arc::clone(&log_performance_snapshot),
+                Arc::clone(&write_performance_log),
             ) {
                 Ok(plugin) => {
                     applications.push(plugin.application());
@@ -90,7 +92,7 @@ impl PluginRegistry {
     }
 
     #[cfg(test)]
-    pub fn load_with_type_text_recorder(
+    pub fn load_with_write_text_recorder(
         manifest_paths: impl IntoIterator<Item = PathBuf>,
         current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
@@ -100,6 +102,7 @@ impl PluginRegistry {
             current_os,
             typed_text,
             Arc::new(std::sync::Mutex::new(Vec::new())),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
         )
     }
 
@@ -108,6 +111,7 @@ impl PluginRegistry {
         manifest_paths: impl IntoIterator<Item = PathBuf>,
         current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
+        read_time_requests: Arc<std::sync::Mutex<Vec<String>>>,
         #[cfg(debug_assertions)]
         performance_logs: Arc<std::sync::Mutex<Vec<String>>>,
     ) -> Self {
@@ -119,6 +123,13 @@ impl PluginRegistry {
                     .lock()
                     .expect("typed text lock poisoned")
                     .push(text.to_string());
+            }),
+            Arc::new(move || {
+                read_time_requests
+                    .lock()
+                    .expect("read time lock poisoned")
+                    .push("read_time".to_string());
+                Ok("6 Apr".to_string())
             }),
             #[cfg(debug_assertions)]
             Arc::new(move || {
@@ -241,12 +252,12 @@ mod tests {
         ExtensionDiscovery::new("./extensions/bundled").plugin_manifest_paths()
     }
 
-    fn sample_plugin_wasm_path() -> PathBuf {
+    fn sample_auto_typer_plugin_path() -> PathBuf {
         Path::new("extensions")
             .join("bundled")
             .join("plugins")
             .join("auto_typer")
-            .join("plugin.wasm")
+            .join("plugin.wat")
     }
 
     fn sample_performance_plugin_path() -> PathBuf {
@@ -260,7 +271,7 @@ mod tests {
     #[test]
     fn loads_auto_typer_plugin_and_registers_command() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_type_text_recorder(
+        let registry = PluginRegistry::load_with_write_text_recorder(
             real_plugin_manifests(),
             Os::Windows,
             typed,
@@ -272,15 +283,17 @@ mod tests {
             .expect("auto typer plugin should load");
 
         assert_eq!(app.name, "Auto Typer");
-        assert_eq!(app.commands.len(), 1);
+        assert_eq!(app.commands.len(), 2);
         assert_eq!(app.commands[0].id, "type_hello_world");
         assert_eq!(app.commands[0].name, "Type hello world");
+        assert_eq!(app.commands[1].id, "type_current_date");
+        assert_eq!(app.commands[1].name, "Type current date");
     }
 
     #[test]
-    fn executes_auto_typer_plugin_through_host_type_text() {
+    fn executes_auto_typer_plugin_through_host_write_text() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_type_text_recorder(
+        let registry = PluginRegistry::load_with_write_text_recorder(
             real_plugin_manifests(),
             Os::Windows,
             Arc::clone(&typed),
@@ -297,14 +310,42 @@ mod tests {
     }
 
     #[test]
+    fn executes_auto_typer_current_date_through_read_and_write_capabilities() {
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_host_recorders(
+            real_plugin_manifests(),
+            Os::Windows,
+            Arc::clone(&typed),
+            Arc::clone(&read_time_requests),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+
+        registry
+            .execute("auto_typer", "type_current_date")
+            .expect("auto typer current date command should execute");
+
+        assert_eq!(typed.lock().expect("typed text lock poisoned").as_slice(), ["6 Apr"]);
+        assert_eq!(
+            read_time_requests
+                .lock()
+                .expect("read time lock poisoned")
+                .as_slice(),
+            ["read_time"]
+        );
+    }
+
+    #[test]
     #[cfg(debug_assertions)]
     fn loads_performance_tracker_plugin_and_registers_command() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             typed,
+            read_time_requests,
             performance_logs,
         );
         let app = registry
@@ -323,11 +364,13 @@ mod tests {
     #[cfg(debug_assertions)]
     fn executes_performance_tracker_through_host_logger() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             typed,
+            read_time_requests,
             Arc::clone(&performance_logs),
         );
 
@@ -345,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_type_text_when_permission_is_missing() {
+    fn rejects_write_text_when_permission_is_missing() {
         let root = Path::new("target")
             .join("plugin-tests")
             .join("no-permission");
@@ -354,15 +397,15 @@ mod tests {
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(sample_plugin_wasm_path(), plugin_dir.join("plugin.wasm"))
-            .expect("should copy sample plugin wasm");
+        fs::copy(sample_auto_typer_plugin_path(), plugin_dir.join("plugin.wat"))
+            .expect("should copy sample plugin wat");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "no_permission"
 name = "No Permission"
 platform = "windows"
 version = "0.1.0"
-wasm = "plugin.wasm"
+wasm = "plugin.wat"
 permissions = []
 
 [app]
@@ -372,7 +415,7 @@ default_focus_state = "global"
         .expect("should write test manifest");
 
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_type_text_recorder(
+        let registry = PluginRegistry::load_with_write_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             Arc::clone(&typed),
@@ -380,7 +423,7 @@ default_focus_state = "global"
 
         let err = registry
             .execute("no_permission", "type_hello_world")
-            .expect_err("type_text should require permission");
+            .expect_err("write_text should require permission");
 
         assert!(err.contains("non-zero exit code"));
         assert!(typed.lock().expect("typed text lock poisoned").is_empty());
@@ -418,11 +461,13 @@ default_focus_state = "global"
         .expect("should write test manifest");
 
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             typed,
+            read_time_requests,
             Arc::clone(&performance_logs),
         );
 
@@ -447,15 +492,15 @@ default_focus_state = "global"
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(sample_plugin_wasm_path(), plugin_dir.join("plugin.wasm"))
-            .expect("should copy sample plugin wasm");
+        fs::copy(sample_auto_typer_plugin_path(), plugin_dir.join("plugin.wat"))
+            .expect("should copy sample plugin wat");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "unknown_permission"
 name = "Unknown Permission"
 platform = "windows"
 version = "0.1.0"
-wasm = "plugin.wasm"
+wasm = "plugin.wat"
 permissions = ["type_txt"]
 
 [app]
@@ -465,7 +510,7 @@ default_focus_state = "global"
         .expect("should write test manifest");
 
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_type_text_recorder(
+        let registry = PluginRegistry::load_with_write_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             typed,
@@ -484,16 +529,16 @@ default_focus_state = "global"
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(sample_plugin_wasm_path(), plugin_dir.join("plugin.wasm"))
-            .expect("should copy sample plugin wasm");
+        fs::copy(sample_auto_typer_plugin_path(), plugin_dir.join("plugin.wat"))
+            .expect("should copy sample plugin wat");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "wrong_platform"
 name = "Wrong Platform"
 platform = "macos"
 version = "0.1.0"
-wasm = "plugin.wasm"
-permissions = ["type_text"]
+wasm = "plugin.wat"
+permissions = ["write_text"]
 
 [app]
 default_focus_state = "global"
@@ -502,12 +547,61 @@ default_focus_state = "global"
         .expect("should write test manifest");
 
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_type_text_recorder(
+        let registry = PluginRegistry::load_with_write_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             typed,
         );
 
         assert!(registry.applications().is_empty());
+    }
+
+    #[test]
+    fn rejects_read_time_when_permission_is_missing() {
+        let root = Path::new("target")
+            .join("plugin-tests")
+            .join("no-read-time-permission");
+        let plugin_dir = root.join("plugins").join("no_read_time_permission");
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("should reset test plugin root");
+        }
+        fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
+        fs::copy(sample_auto_typer_plugin_path(), plugin_dir.join("plugin.wat"))
+            .expect("should copy sample plugin wat");
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"id = "no_read_time_permission"
+name = "No Read Time Permission"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wat"
+permissions = ["write_text"]
+
+[app]
+default_focus_state = "global"
+"#,
+        )
+        .expect("should write test manifest");
+
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_host_recorders(
+            ExtensionDiscovery::new(&root).plugin_manifest_paths(),
+            Os::Windows,
+            Arc::clone(&typed),
+            Arc::clone(&read_time_requests),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+
+        let err = registry
+            .execute("no_read_time_permission", "type_current_date")
+            .expect_err("read_time should require permission");
+
+        assert!(err.contains("non-zero exit code"));
+        assert!(typed.lock().expect("typed text lock poisoned").is_empty());
+        assert!(read_time_requests
+            .lock()
+            .expect("read time lock poisoned")
+            .is_empty());
     }
 }

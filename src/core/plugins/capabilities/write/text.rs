@@ -1,18 +1,18 @@
 use wasmtime::{Caller, Linker};
 
-use super::{PluginPermission, PluginStoreState};
+use crate::core::plugins::capabilities::{PluginPermission, PluginStoreState};
 
 pub(crate) fn register(linker: &mut Linker<PluginStoreState>) -> Result<(), String> {
     linker
         .func_wrap(
             "env",
-            "host_type_text",
+            "host_write_text",
             |mut caller: Caller<'_, PluginStoreState>, ptr: i32, len: i32| -> i32 {
                 if !caller.data().allow_host_effects
                     || !caller
                         .data()
                         .permissions
-                        .contains(&PluginPermission::TypeText)
+                        .contains(&PluginPermission::WriteText)
                 {
                     return 1;
                 }
@@ -33,12 +33,11 @@ pub(crate) fn register(linker: &mut Linker<PluginStoreState>) -> Result<(), Stri
                     return 4;
                 };
 
-                (caller.data().host_context.type_text)(text);
+                (caller.data().host_context.write_text)(text);
                 0
             },
         )
-        .map_err(|err| format!("Could not define host_type_text: {err}"))?;
+        .map_err(|err| format!("Could not define host_write_text: {err}"))?;
 
     Ok(())
 }
-

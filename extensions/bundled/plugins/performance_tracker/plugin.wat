@@ -1,5 +1,5 @@
 (module
-  (import "env" "host_log_performance_snapshot" (func $host_log_performance_snapshot (result i32)))
+  (import "env" "host_write_performance_log" (func $host_write_performance_log (result i32)))
 
   (memory (export "memory") 1)
 
@@ -10,5 +10,5 @@
     i32.const 1024)
 
   (func (export "execute") (param $command_id_ptr i32) (param $command_id_len i32) (result i32)
-    call $host_log_performance_snapshot)
+    call $host_write_performance_log)
 )

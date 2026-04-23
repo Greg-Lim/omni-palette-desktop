@@ -6,25 +6,27 @@ use wasmtime::Linker;
 #[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
 
-#[cfg(debug_assertions)]
-mod performance_metrics;
-mod type_text;
+mod read;
+mod write;
 
-pub(crate) type TypeTextFn = Arc<dyn Fn(&str) + Send + Sync>;
+pub(crate) type WriteTextFn = Arc<dyn Fn(&str) + Send + Sync>;
+pub(crate) type ReadTimeTextFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PluginPermission {
-    TypeText,
+    WriteText,
+    ReadTime,
     #[cfg(debug_assertions)]
-    PerformanceMetrics,
+    WritePerformanceLog,
 }
 
 #[derive(Clone)]
 pub(crate) struct PluginHostContext {
-    pub(crate) type_text: TypeTextFn,
+    pub(crate) write_text: WriteTextFn,
+    pub(crate) read_time_text: ReadTimeTextFn,
     #[cfg(debug_assertions)]
-    pub(crate) log_performance_snapshot: LogPerformanceSnapshotFn,
+    pub(crate) write_performance_log: LogPerformanceSnapshotFn,
 }
 
 pub(crate) struct PluginStoreState {
@@ -36,8 +38,7 @@ pub(crate) struct PluginStoreState {
 pub(crate) fn register_capabilities(
     linker: &mut Linker<PluginStoreState>,
 ) -> Result<(), String> {
-    type_text::register(linker)?;
-    #[cfg(debug_assertions)]
-    performance_metrics::register(linker)?;
+    read::register(linker)?;
+    write::register(linker)?;
     Ok(())
 }

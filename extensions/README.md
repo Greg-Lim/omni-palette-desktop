@@ -39,7 +39,7 @@ WASM plugins live in `extensions/bundled/plugins/<plugin_id>`.
 
 ```text
 plugin.toml
-plugin.wasm
+plugin.wat
 ```
 
 Plugin manifests are also OS-specific:
@@ -49,8 +49,8 @@ id = "auto_typer"
 name = "Auto Typer"
 platform = "windows"
 version = "0.1.0"
-wasm = "plugin.wasm"
-permissions = ["type_text"]
+wasm = "plugin.wat"
+permissions = ["write_text", "read_time"]
 ```
 
 Static shortcut extensions represent known default shortcuts. They do not
