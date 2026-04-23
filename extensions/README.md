@@ -1,8 +1,8 @@
 # Extensions
 
-Global Palette keeps bundled extensions and remote-package registry files separate.
-This repository is still the temporary registry host, but it is not using a Git
-submodule or a separate extension repository yet.
+Omni Palette keeps bundled extensions and remote-package registry files separate.
+This repository still carries a temporary local copy of the registry layout, but
+the long-term dedicated extension repository should be `omni-palette-extensions`.
 
 ## Bundled Extensions
 
@@ -93,4 +93,4 @@ verifies the catalog contents, so moving `catalog.v1.json` and
 ## Ignore Config
 
 `extensions/bundled/ignore.toml` lists applications that should receive
-`Ctrl+Shift+P` normally instead of opening Global Palette.
+`Ctrl+Shift+P` normally instead of opening Omni Palette.

@@ -296,8 +296,8 @@ mod tests {
     #[test]
     fn package_url_must_match_configured_github_repo() {
         let source = GitHubExtensionSource {
-            owner: "limgr".to_string(),
-            repo: "global-palette-extensions".to_string(),
+            owner: "Greg-Lim".to_string(),
+            repo: "omni-palette-extensions".to_string(),
             branch: "main".to_string(),
             catalog_path: "catalog.v1.json".to_string(),
             public_key: "abc".to_string(),
@@ -306,11 +306,11 @@ mod tests {
 
         assert!(package_url_allowed(
             &source,
-            "https://github.com/limgr/global-palette-extensions/releases/download/chrome-v1/chrome.gpext"
+            "https://github.com/Greg-Lim/omni-palette-extensions/releases/download/chrome-v1/chrome.gpext"
         ));
         assert!(!package_url_allowed(
             &source,
-            "https://github.com/other/global-palette-extensions/releases/download/chrome-v1/chrome.gpext"
+            "https://github.com/other/omni-palette-extensions/releases/download/chrome-v1/chrome.gpext"
         ));
     }
 }

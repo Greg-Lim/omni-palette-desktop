@@ -1,6 +1,6 @@
 # Long-Running Stability Checklist
 
-Use this checklist when investigating reports that Global Palette becomes unstable
+Use this checklist when investigating reports that Omni Palette becomes unstable
 after long uptime.
 
 ## Goal

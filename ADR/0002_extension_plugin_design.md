@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-Global Palette currently supports TOML-based extensions. This is a good fit for static app shortcut mappings, such as Chrome commands that map directly to keyboard shortcuts.
+Omni Palette currently supports TOML-based extensions. This is a good fit for static app shortcut mappings, such as Chrome commands that map directly to keyboard shortcuts.
 
 In the future, some extensions may need behavior that is difficult or impossible to express in TOML:
 
@@ -20,7 +20,7 @@ This ADR records the future direction for code-based extensions. It does not rep
 
 ## Decision
 
-Global Palette should keep TOML extensions for static shortcut definitions and add a WASM-based plugin system for code-based extensions.
+Omni Palette should keep TOML extensions for static shortcut definitions and add a WASM-based plugin system for code-based extensions.
 
 WASM is preferred over raw Python/Lua subprocess scripts or in-process Rust dynamic loading because it provides:
 
@@ -150,7 +150,7 @@ Plugins should not override search ranking or draw their own UI in v1.
 
 ## Error Handling
 
-Plugin failures should not crash Global Palette.
+Plugin failures should not crash Omni Palette.
 
 Expected behavior:
 
@@ -184,7 +184,7 @@ When implemented, this design should be validated with tests for:
 - plugin command execution calling the plugin handler;
 - undeclared permission calls being rejected;
 - malformed plugins disabling only themselves;
-- plugin crashes or timeouts not crashing Global Palette;
+- plugin crashes or timeouts not crashing Omni Palette;
 - ignored applications bypassing the palette regardless of extension type.
 
 ## References

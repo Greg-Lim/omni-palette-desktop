@@ -1750,33 +1750,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "global_palette"
-version = "0.1.0"
-dependencies = [
- "base64",
- "cfg-if",
- "ed25519-dalek",
- "eframe",
- "egui",
- "env_logger",
- "linked_hash_set",
- "log",
- "raw-window-handle",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "strum",
- "strum_macros",
- "tempfile",
- "toml",
- "ureq",
- "wasmtime",
- "windows 0.60.0",
- "zip",
-]
-
-[[package]]
 name = "glow"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2834,6 +2807,33 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "memchr",
+]
+
+[[package]]
+name = "omni_palette"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "cfg-if",
+ "ed25519-dalek",
+ "eframe",
+ "egui",
+ "env_logger",
+ "linked_hash_set",
+ "log",
+ "raw-window-handle",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strum",
+ "strum_macros",
+ "tempfile",
+ "toml",
+ "ureq",
+ "wasmtime",
+ "windows 0.60.0",
+ "zip",
 ]
 
 [[package]]

@@ -755,7 +755,7 @@ mod tests {
             platform,
             kind,
             package_url: format!(
-                "https://github.com/Greg-Lim/Omni-Palette/releases/download/{id}-v1/{id}.gpext"
+                "https://github.com/Greg-Lim/omni-palette-desktop/releases/download/{id}-v1/{id}.gpext"
             ),
             package_sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                 .to_string(),

@@ -146,7 +146,7 @@ impl ExtensionDiscovery {
 pub fn user_extensions_root() -> Option<PathBuf> {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
-        .map(|appdata| appdata.join("GlobalPalette").join("extensions"))
+        .map(|appdata| appdata.join("OmniPalette").join("extensions"))
 }
 
 fn disabled_installed_extension_ids(root: &Path) -> HashSet<String> {

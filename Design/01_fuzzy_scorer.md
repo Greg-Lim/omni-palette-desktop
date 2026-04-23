@@ -11,7 +11,7 @@ Replace the current prototype contains/sequential matcher in `src/core/search.rs
 - return match ranges that the egui UI can highlight in the result list while the user types;
 - keep the UI responsive for every keypress in the command palette.
 
-This should be an adaptation of VS Code's ideas, not a direct port. Global Palette has simpler search targets than VS Code because commands are currently labels like `Chrome: New tab`, plus optional shortcut text and future metadata.
+This should be an adaptation of VS Code's ideas, not a direct port. Omni Palette has simpler search targets than VS Code because commands are currently labels like `Chrome: New tab`, plus optional shortcut text and future metadata.
 
 ## Current State
 
@@ -111,7 +111,7 @@ Use ranges instead of individual indices in the UI so consecutive matches are dr
 
 ## VS Code Concepts To Adapt
 
-The referenced VS Code scorer uses a few important ideas that map well to Global Palette:
+The referenced VS Code scorer uses a few important ideas that map well to Omni Palette:
 
 - sequential matching: every query character must match in order;
 - dynamic scoring matrix: evaluate possible character alignments instead of taking the first sequential match;
@@ -130,7 +130,7 @@ The referenced VS Code scorer uses a few important ideas that map well to Global
   - convert individual matched positions into contiguous ranges;
   - merge overlapping ranges.
 
-Global Palette does not need file path identity scoring yet. Keep that out unless commands later gain filesystem targets.
+Omni Palette does not need file path identity scoring yet. Keep that out unless commands later gain filesystem targets.
 
 ## Search API
 

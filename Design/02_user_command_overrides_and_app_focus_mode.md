@@ -7,7 +7,7 @@ It should not be treated as implemented behavior.
 
 ## Summary
 
-Global Palette extension files should remain immutable defaults. User-specific
+Omni Palette extension files should remain immutable defaults. User-specific
 changes, such as fixing a shortcut that the target application has remapped,
 should live in AppData override/config files.
 
@@ -33,7 +33,7 @@ Paint -> P
 User changes Photoshop shortcut:
 Paint -> L
 
-Global Palette should allow:
+Omni Palette should allow:
 Edit command / Command is wrong -> set shortcut to L
 ```
 
@@ -41,7 +41,7 @@ The raw extension file should not be edited. Instead, user overrides should be
 stored beside installed extension state in AppData:
 
 ```text
-%APPDATA%\GlobalPalette\extensions\overrides\<extension_id>.toml
+%APPDATA%\OmniPalette\extensions\overrides\<extension_id>.toml
 ```
 
 Example override file:
@@ -77,7 +77,7 @@ Possible command-row actions:
 - `Reset to extension default`
 
 The edit flow should include a shortcut recorder UI where the user presses the
-desired shortcut and Global Palette saves the resolved key chord into the
+desired shortcut and Omni Palette saves the resolved key chord into the
 override file.
 
 ## Feature 2: Application Command Focus Mode
@@ -103,7 +103,7 @@ Omni Palette: Unlock command focus mode
 Persist the lock in AppData:
 
 ```text
-%APPDATA%\GlobalPalette\focus_mode.toml
+%APPDATA%\OmniPalette\focus_mode.toml
 ```
 
 Example:
@@ -157,5 +157,5 @@ enabled = true
 - Shortcut editing UI is not implemented yet.
 - Extension schema should not change for this first planning step.
 - Raw extension files should not be mutated for user preferences.
-- User preference files live under `%APPDATA%\GlobalPalette`.
+- User preference files live under `%APPDATA%\OmniPalette`.
 - Stable action keys should use `{app_id}.{action_id}`.

@@ -1,5 +1,5 @@
 # Applications listed here receive Ctrl+Shift+P directly instead of opening
-# Global Palette.
+# Omni Palette.
 #
 # You can use either a compact OS list:
 windows = ["Cursor.exe", "WindowsTerminal.exe"]

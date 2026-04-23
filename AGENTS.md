@@ -1,8 +1,8 @@
-# Global Palette — AGENTS.md
+# Omni Palette — AGENTS.md
 
 ## Project Overview
 
-**Global Palette** is a Windows application launcher / command palette (think VS Code's Ctrl+Shift+P, but system-wide). It listens for a global hotkey (Ctrl+Shift+P), shows a floating egui UI, and lets users search & execute actions defined in TOML extension files.
+**Omni Palette** is a Windows application launcher / command palette (think VS Code's Ctrl+Shift+P, but system-wide). It listens for a global hotkey (Ctrl+Shift+P), shows a floating egui UI, and lets users search & execute actions defined in TOML extension files.
 
 ## Tech Stack
 

@@ -10,7 +10,7 @@ use crate::{
     domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
 };
 
-const APP_DIR_NAME: &str = "GlobalPalette";
+const APP_DIR_NAME: &str = "OmniPalette";
 const CONFIG_FILE_NAME: &str = "config.toml";
 
 #[derive(Debug, Clone)]
@@ -121,8 +121,8 @@ impl GitHubExtensionSource {
 impl Default for GitHubExtensionSource {
     fn default() -> Self {
         Self {
-            owner: "global-palette".to_string(),
-            repo: "extensions".to_string(),
+            owner: "Greg-Lim".to_string(),
+            repo: "omni-palette-extensions".to_string(),
             branch: default_branch(),
             catalog_path: default_catalog_path(),
             public_key: String::new(),
@@ -249,8 +249,8 @@ launch_on_login = true
 start_hidden = true
 
 [extensions.github]
-owner = "limgr"
-repo = "global-palette-extensions"
+owner = "Greg-Lim"
+repo = "omni-palette-extensions"
 branch = "main"
 catalog_path = "dist/catalog.v1.json"
 public_key = "abc"
@@ -267,7 +267,7 @@ enabled = true
         assert!(config.startup.launch_on_login);
         assert_eq!(
             config.github.catalog_url(),
-            "https://raw.githubusercontent.com/limgr/global-palette-extensions/main/dist/catalog.v1.json"
+            "https://raw.githubusercontent.com/Greg-Lim/omni-palette-extensions/main/dist/catalog.v1.json"
         );
     }
 

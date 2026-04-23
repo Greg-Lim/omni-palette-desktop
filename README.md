@@ -1,8 +1,8 @@
-# Global Palette
+# Omni Palette Desktop
 
-Global Palette is a Windows command palette for launching application shortcuts from anywhere. It works like a small system-wide command launcher: press the global hotkey, search for an action, and run it without leaving the keyboard.
+Omni Palette is a Windows command palette for launching application shortcuts from anywhere. This repository contains the desktop application: press the global hotkey, search for an action, and run it without leaving the keyboard.
 
-![Global Palette usage demo](README/Command_pallete.gif)
+![Omni Palette usage demo](README/Command_pallete.gif)
 
 ## Features
 
@@ -15,7 +15,7 @@ Global Palette is a Windows command palette for launching application shortcuts 
 
 ## Extensions
 
-Commands are defined in TOML files under `extensions/`. Each extension describes one application and the actions Global Palette can run for it.
+Commands are defined in TOML files under `extensions/`. Each extension describes one application and the actions Omni Palette can run for it.
 
 Example action:
 
@@ -41,17 +41,17 @@ plugin metadata, macOS packages install macOS metadata, and Linux packages insta
 Linux metadata.
 
 Static TOML extensions describe the application's known default shortcuts. If a target
-application lets users customize its own keybindings, Global Palette does not
+application lets users customize its own keybindings, Omni Palette does not
 automatically detect those app-specific changes in static extensions. Future WASM
 plugins can add app-specific keybinding resolvers for applications that expose readable
 settings or command APIs.
 
 ## User Config
 
-At runtime, Global Palette looks for user settings in:
+At runtime, Omni Palette looks for user settings in:
 
 ```text
-%APPDATA%\GlobalPalette\config.toml
+%APPDATA%\OmniPalette\config.toml
 ```
 
 The repo-root `config.toml` remains a development fallback. The activation shortcut can
@@ -61,8 +61,8 @@ be configured as:
 activation = { mods = ["ctrl", "shift"], key = "p" }
 
 [extensions.github]
-owner = "global-palette"
-repo = "extensions"
+owner = "Greg-Lim"
+repo = "omni-palette-extensions"
 branch = "main"
 catalog_path = "catalog.v1.json"
 public_key = ""

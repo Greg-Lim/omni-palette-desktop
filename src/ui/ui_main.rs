@@ -685,7 +685,7 @@ pub fn ui_main_with_shared_state(
     };
 
     let _ = eframe::run_native(
-        "Command Palette",
+        "Omni Palette",
         options,
         Box::new(move |cc| {
             Ok(Box::new(App::new(
