@@ -289,6 +289,7 @@ fn safe_archive_path(path: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::extensions::catalog::ExtensionCatalog;
     use std::io::Write;
     use zip::{write::SimpleFileOptions, ZipWriter};
 
@@ -354,5 +355,98 @@ cmd = { mods = ["ctrl"], key = "T" }
 
         assert_eq!(installed_path, root.path().join("static/chrome_tools.toml"));
         assert!(installed_path.is_file());
+    }
+
+    #[test]
+    fn registry_package_sources_match_static_configs() {
+        for package_id in ["chrome", "file_explorer"] {
+            let package_root = Path::new("extensions")
+                .join("registry")
+                .join("packages")
+                .join(package_id)
+                .join("windows");
+            let manifest_path = package_root.join(PACKAGE_MANIFEST_NAME);
+            let static_path = package_root
+                .join("static")
+                .join(format!("{package_id}.toml"));
+
+            let manifest: ExtensionPackageManifest = toml::from_str(
+                &fs::read_to_string(&manifest_path).expect("manifest should be readable"),
+            )
+            .expect("manifest should parse");
+            manifest.validate().expect("manifest should validate");
+
+            let config: Config = toml::from_str(
+                &fs::read_to_string(&static_path).expect("static config should be readable"),
+            )
+            .expect("static config should parse");
+
+            assert_eq!(manifest.id, config.app.id);
+            assert_eq!(manifest.name, config.app.name);
+            assert_eq!(manifest.platform, config.platform);
+            assert_eq!(manifest.kind, ExtensionKind::Static);
+        }
+    }
+
+    #[test]
+    fn catalog_entries_match_registry_manifests() {
+        let catalog = ExtensionCatalog::parse(
+            &fs::read(
+                Path::new("extensions")
+                    .join("registry")
+                    .join("catalog.v1.json"),
+            )
+            .expect("catalog should be readable"),
+        )
+        .expect("catalog should parse");
+        let catalog_ids = catalog
+            .entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(catalog_ids, vec!["chrome", "file_explorer"]);
+
+        for entry in &catalog.entries {
+            let manifest_path = Path::new("extensions")
+                .join("registry")
+                .join("packages")
+                .join(&entry.id)
+                .join("windows")
+                .join(PACKAGE_MANIFEST_NAME);
+            let manifest: ExtensionPackageManifest = toml::from_str(
+                &fs::read_to_string(manifest_path).expect("manifest should be readable"),
+            )
+            .expect("manifest should parse");
+
+            assert_eq!(entry.id, manifest.id);
+            assert_eq!(entry.name, manifest.name);
+            assert_eq!(entry.version, manifest.version);
+            assert_eq!(entry.platform, manifest.platform);
+            assert_eq!(entry.kind, manifest.kind);
+        }
+    }
+
+    #[test]
+    fn generated_registry_artifacts_validate_when_present() {
+        let catalog = ExtensionCatalog::parse(
+            &fs::read(
+                Path::new("extensions")
+                    .join("registry")
+                    .join("catalog.v1.json"),
+            )
+            .expect("catalog should be readable"),
+        )
+        .expect("catalog should parse");
+
+        for entry in catalog.entries {
+            let artifact_path = Path::new("target")
+                .join("extensions")
+                .join(format!("{}-{}-windows.gpext", entry.id, entry.version));
+            if artifact_path.exists() {
+                validate_package_file(&artifact_path, &entry.package_sha256, entry.platform)
+                    .expect("generated package artifact should validate");
+            }
+        }
     }
 }

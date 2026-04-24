@@ -2,6 +2,8 @@ use std::path::Path;
 
 use wasmtime::{Config, Engine, Linker, Module, Store};
 
+#[cfg(debug_assertions)]
+use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
     capabilities::{
         register_capabilities, PluginHostContext, PluginStoreState, ReadTimeTextFn, WriteTextFn,
@@ -9,8 +11,6 @@ use crate::core::plugins::{
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::PluginManifest,
 };
-#[cfg(debug_assertions)]
-use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::domain::action::Os;
 
 const COMMAND_ID_OFFSET: usize = 4096;
@@ -31,8 +31,7 @@ impl LoadedPlugin {
         current_os: Os,
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
-        #[cfg(debug_assertions)]
-        write_performance_log: LogPerformanceSnapshotFn,
+        #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
     ) -> Result<Self, String> {
         let manifest = PluginManifest::load(manifest_path)?;
         if manifest.platform != current_os {

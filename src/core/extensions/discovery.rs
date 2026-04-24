@@ -7,7 +7,7 @@ use std::{
 
 use log::warn;
 
-use crate::core::extensions::install::load_installed_state;
+use crate::core::extensions::install::{load_installed_state, BUNDLED_SOURCE_ID};
 
 const IGNORE_FILE_NAME: &str = "ignore.toml";
 const INSTALLED_FILE_NAME: &str = "installed.toml";
@@ -52,10 +52,14 @@ impl ExtensionDiscovery {
 
     pub fn static_config_paths(&self) -> Vec<PathBuf> {
         let mut merged = BTreeMap::<OsString, PathBuf>::new();
+        let bundled_disabled_ids = disabled_bundled_extension_ids_from_user_roots(&self.roots);
 
-        for root in &self.roots {
+        for (root_index, root) in self.roots.iter().enumerate() {
             let static_paths = toml_files_in(&root.join(STATIC_DIR_NAME), false);
-            let disabled_ids = disabled_installed_extension_ids(root);
+            let mut disabled_ids = disabled_installed_extension_ids(root);
+            if root_index == 0 {
+                disabled_ids.extend(bundled_disabled_ids.iter().cloned());
+            }
             let static_file_names: HashSet<_> = static_paths
                 .iter()
                 .filter_map(|path| path.file_name().map(|file_name| file_name.to_os_string()))
@@ -155,11 +159,20 @@ fn disabled_installed_extension_ids(root: &Path) -> HashSet<String> {
             state
                 .extensions
                 .into_iter()
-                .filter(|extension| !extension.enabled)
+                .filter(|extension| extension.source_id != BUNDLED_SOURCE_ID && !extension.enabled)
                 .map(|extension| extension.id)
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn disabled_bundled_extension_ids_from_user_roots(roots: &[PathBuf]) -> HashSet<String> {
+    roots
+        .iter()
+        .skip(1)
+        .filter_map(|root| load_installed_state(root).ok())
+        .flat_map(|state| state.disabled_bundled_extension_ids())
+        .collect()
 }
 
 fn is_enabled_static_path(path: &Path, disabled_ids: &HashSet<String>) -> bool {
@@ -349,6 +362,77 @@ installed_path = "static/chrome.toml"
         assert_eq!(
             discovery.static_config_paths(),
             vec![bundled.join("static").join("chrome.toml")]
+        );
+    }
+
+    #[test]
+    fn disabled_bundled_config_in_user_state_suppresses_bundled_config() {
+        let bundled = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("disabled-bundled-via-user-state-bundled");
+        let user = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("disabled-bundled-via-user-state-user");
+        reset_dir(&bundled);
+        reset_dir(&user);
+        fs::create_dir_all(bundled.join("static")).expect("bundled static should be created");
+        fs::write(bundled.join("static").join("windows.toml"), "")
+            .expect("bundled windows should be written");
+        fs::write(
+            user.join("installed.toml"),
+            r#"
+[[extensions]]
+id = "windows"
+version = "0.1.0"
+platform = "windows"
+kind = "static"
+source_id = "bundled"
+package_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+enabled = false
+installed_path = "static/windows.toml"
+"#,
+        )
+        .expect("installed state should be written");
+
+        let discovery = ExtensionDiscovery::with_roots(vec![bundled, user]);
+
+        assert!(discovery.static_config_paths().is_empty());
+    }
+
+    #[test]
+    fn disabled_user_static_config_does_not_suppress_bundled_config_with_same_id() {
+        let bundled = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("disabled-user-same-id-bundled");
+        let user = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("disabled-user-same-id-user");
+        reset_dir(&bundled);
+        reset_dir(&user);
+        fs::create_dir_all(bundled.join("static")).expect("bundled static should be created");
+        fs::write(bundled.join("static").join("windows.toml"), "")
+            .expect("bundled windows should be written");
+        fs::write(
+            user.join("installed.toml"),
+            r#"
+[[extensions]]
+id = "windows"
+version = "0.1.0"
+platform = "windows"
+kind = "static"
+source_id = "github"
+package_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+enabled = false
+installed_path = "static/windows.toml"
+"#,
+        )
+        .expect("installed state should be written");
+
+        let discovery = ExtensionDiscovery::with_roots(vec![bundled.clone(), user]);
+
+        assert_eq!(
+            discovery.static_config_paths(),
+            vec![bundled.join("static").join("windows.toml")]
         );
     }
 }

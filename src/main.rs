@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{
@@ -9,18 +8,20 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use ed25519_dalek::{Signer, SigningKey};
 use env_logger::Builder;
 
 use crate::config::{
     ignore::{load_ignored_process_names, normalize_process_name},
-    runtime::{RuntimeConfig, RuntimePaths},
+    runtime::{RuntimeConfig, RuntimeConfigLoad, RuntimePaths},
 };
 use crate::core::extensions::{
     catalog::{CatalogEntry, ExtensionCatalog, ExtensionKind},
     discovery::{user_extensions_root, ExtensionDiscovery},
-    install::ExtensionInstallService,
+    extensions::load_config,
+    install::{
+        load_installed_state, set_bundled_extension_enabled, set_installed_extension_enabled,
+        BundledStaticExtension, ExtensionInstallService, InstalledState, BUNDLED_SOURCE_ID,
+    },
 };
 use crate::core::performance::{current_process_private_bytes, current_process_thread_count};
 use crate::core::plugins::PluginRegistry;
@@ -33,6 +34,7 @@ use crate::platform::windows::context::context::{
     focus_window, get_hwnd_from_raw, monitor_work_area_from_window,
 };
 use crate::platform::windows::sender::hotkey_sender::send_shortcut;
+use crate::ui::settings::SettingsBootstrap;
 use crate::ui::ui_main;
 use crate::ui::ui_main::{
     Command, PaletteWorkArea, SharedUiContext, SharedUiVisibility, UiEvent, UiSignal,
@@ -65,10 +67,11 @@ fn main() {
 
     let current_os = current_os();
     let runtime_paths = RuntimePaths::from_environment();
-    let runtime_config = RuntimeConfig::load(
+    let runtime_config_load = RuntimeConfig::load_with_diagnostics(
         runtime_paths.config_path.as_deref(),
         Path::new("./config.toml"),
     );
+    let runtime_config = runtime_config_load.config.clone();
     log::info!(
         "Using palette activation shortcut: {}",
         runtime_config.activation
@@ -85,14 +88,6 @@ fn main() {
         log::info!(
             "Using GitHub extension catalog: {}",
             runtime_config.github.catalog_url()
-        );
-        log::debug!(
-            "GitHub extension catalog public key configured: {}",
-            !runtime_config.github.public_key.is_empty()
-        );
-        log::debug!(
-            "Using GitHub extension catalog signature: {}",
-            runtime_config.github.signature_url()
         );
     }
 
@@ -126,6 +121,8 @@ fn main() {
         current_os,
         bundled_extensions_root,
     };
+    let settings_bootstrap =
+        settings_bootstrap(&runtime_paths, runtime_config_load.clone(), current_os);
 
     let (handle, rx) = platform::hotkey_actions::start_hotkey_listener(runtime_config.activation);
     let hotkey_passthrough = handle.passthrough_sender();
@@ -136,13 +133,21 @@ fn main() {
         runtime_state.clone(),
         hotkey_passthrough,
         runtime_config.activation,
+        runtime_config,
+        runtime_paths.config_path.clone(),
         Arc::clone(&ui_context),
     );
     #[cfg(debug_assertions)]
     let _telemetry_thread =
         spawn_debug_telemetry(runtime_state.clone(), Arc::clone(&ui_visibility));
 
-    ui_main::ui_main_with_shared_state(ui_rx, event_tx, ui_context, ui_visibility);
+    ui_main::ui_main_with_shared_state(
+        ui_rx,
+        event_tx,
+        ui_context,
+        ui_visibility,
+        settings_bootstrap,
+    );
 
     handle.stop();
 }
@@ -173,6 +178,94 @@ fn current_os() -> Os {
     }
 }
 
+fn settings_bootstrap(
+    runtime_paths: &RuntimePaths,
+    runtime_config_load: RuntimeConfigLoad,
+    current_os: Os,
+) -> SettingsBootstrap {
+    let install_root = user_extensions_root();
+    let (installed_state, installed_state_error) = match install_root.as_deref() {
+        Some(root) => match load_installed_state(root) {
+            Ok(state) => (state, None),
+            Err(err) => (InstalledState::default(), Some(err.to_string())),
+        },
+        None => (InstalledState::default(), None),
+    };
+    let bundled_static_extensions = bundled_static_extensions(
+        Path::new(BUNDLED_EXTENSIONS_ROOT),
+        current_os,
+        &installed_state,
+    );
+
+    SettingsBootstrap {
+        config: runtime_config_load.config,
+        config_path: runtime_paths.config_path.clone(),
+        config_error: runtime_config_load.user_config_error,
+        current_os,
+        install_root,
+        bundled_static_extensions,
+        installed_state,
+        installed_state_error,
+    }
+}
+
+fn bundled_static_extensions(
+    bundled_root: &Path,
+    current_os: Os,
+    installed_state: &InstalledState,
+) -> Vec<BundledStaticExtension> {
+    let static_root = bundled_root.join("static");
+    let entries = match std::fs::read_dir(&static_root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(err) => {
+            log::warn!(
+                "Could not scan bundled static extensions at {:?}: {}",
+                static_root,
+                err
+            );
+            return Vec::new();
+        }
+    };
+
+    let mut extensions = entries
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
+                return None;
+            }
+
+            let config = match load_config(&path) {
+                Ok(config) => config,
+                Err(err) => {
+                    log::warn!("Could not load bundled extension {:?}: {}", path, err);
+                    return None;
+                }
+            };
+            if config.platform != current_os {
+                return None;
+            }
+
+            let enabled = installed_state
+                .enabled_for(&config.app.id, BUNDLED_SOURCE_ID)
+                .unwrap_or(true);
+
+            Some(BundledStaticExtension {
+                id: config.app.id,
+                name: config.app.name,
+                version: format!("schema {}", config.version),
+                platform: config.platform,
+                kind: ExtensionKind::Static,
+                installed_path: path,
+                enabled,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    extensions.sort_by(|left, right| left.name.cmp(&right.name));
+    extensions
+}
+
 fn handle_cli_command(runtime_config: &RuntimeConfig, current_os: Os) -> Result<bool, String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty() {
@@ -193,14 +286,6 @@ fn handle_cli_command(runtime_config: &RuntimeConfig, current_os: Os) -> Result<
         }
         Some("install") if args.len() == 3 => {
             install_extension_from_catalog(runtime_config, current_os, &args[2])?;
-            Ok(true)
-        }
-        Some("public-key") if args.len() == 3 => {
-            print_public_key(&args[2])?;
-            Ok(true)
-        }
-        Some("sign-catalog") if args.len() == 4 => {
-            sign_catalog(Path::new(&args[2]), &args[3])?;
             Ok(true)
         }
         Some("-h" | "--help" | "help") => {
@@ -317,55 +402,6 @@ fn extension_install_root() -> Result<std::path::PathBuf, String> {
     })
 }
 
-fn sign_catalog(catalog_path: &Path, secret_key_base64: &str) -> Result<(), String> {
-    let catalog_bytes = fs::read(catalog_path)
-        .map_err(|err| format!("Could not read catalog {}: {err}", catalog_path.display()))?;
-    let signing_key = signing_key_from_base64(secret_key_base64)?;
-    let signature = signing_key.sign(&catalog_bytes);
-    let signature_base64 = STANDARD.encode(signature.to_bytes());
-    let signature_path = catalog_signature_path(catalog_path)?;
-
-    fs::write(&signature_path, signature_base64).map_err(|err| {
-        format!(
-            "Could not write signature {}: {err}",
-            signature_path.display()
-        )
-    })?;
-
-    println!("Wrote {}", signature_path.display());
-    println!(
-        "Public key: {}",
-        STANDARD.encode(signing_key.verifying_key().to_bytes())
-    );
-    Ok(())
-}
-
-fn print_public_key(secret_key_base64: &str) -> Result<(), String> {
-    let signing_key = signing_key_from_base64(secret_key_base64)?;
-    println!(
-        "{}",
-        STANDARD.encode(signing_key.verifying_key().to_bytes())
-    );
-    Ok(())
-}
-
-fn signing_key_from_base64(secret_key_base64: &str) -> Result<SigningKey, String> {
-    let bytes = STANDARD
-        .decode(secret_key_base64.trim())
-        .map_err(|err| format!("Could not decode secret key base64: {err}"))?;
-    let key_bytes: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| "Secret key must decode to exactly 32 bytes.".to_string())?;
-    Ok(SigningKey::from_bytes(&key_bytes))
-}
-
-fn catalog_signature_path(catalog_path: &Path) -> Result<std::path::PathBuf, String> {
-    let file_name = catalog_path
-        .file_name()
-        .ok_or_else(|| format!("Catalog path has no file name: {}", catalog_path.display()))?;
-    Ok(catalog_path.with_file_name(format!("{}.sig", file_name.to_string_lossy())))
-}
-
 fn print_extension_cli_usage() {
     println!("{}", extension_cli_usage());
 }
@@ -375,8 +411,6 @@ fn extension_cli_usage() -> String {
         "Usage:",
         "  cargo run -- ext catalog",
         "  cargo run -- ext install <extension_id>",
-        "  cargo run -- ext public-key <secret_key_base64>",
-        "  cargo run -- ext sign-catalog <catalog_json_path> <secret_key_base64>",
     ]
     .join("\n")
 }
@@ -395,14 +429,26 @@ fn spawn_hotkey_bridge(
     event_rx: Receiver<UiEvent>,
     runtime_state: RuntimeState,
     hotkey_passthrough: HotkeyPassthrough,
-    activation_shortcut: KeyboardShortcut,
+    mut activation_shortcut: KeyboardShortcut,
+    mut runtime_config: RuntimeConfig,
+    config_path: Option<PathBuf>,
     ui_context: SharedUiContext,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut palette_open = false;
 
         loop {
-            handle_ui_events(&event_rx, &mut palette_open);
+            handle_ui_events(
+                &event_rx,
+                &ui_tx,
+                &runtime_state,
+                &hotkey_passthrough,
+                &mut activation_shortcut,
+                &mut runtime_config,
+                config_path.as_deref(),
+                &mut palette_open,
+                &ui_context,
+            );
 
             match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(shortcut) if is_palette_hotkey(shortcut, activation_shortcut) => {
@@ -423,13 +469,140 @@ fn spawn_hotkey_bridge(
     })
 }
 
-fn handle_ui_events(event_rx: &Receiver<UiEvent>, palette_open: &mut bool) {
+fn handle_ui_events(
+    event_rx: &Receiver<UiEvent>,
+    ui_tx: &Sender<UiSignal>,
+    runtime_state: &RuntimeState,
+    hotkey_passthrough: &HotkeyPassthrough,
+    activation_shortcut: &mut KeyboardShortcut,
+    runtime_config: &mut RuntimeConfig,
+    config_path: Option<&Path>,
+    palette_open: &mut bool,
+    ui_context: &SharedUiContext,
+) {
     while let Ok(event) = event_rx.try_recv() {
         match event {
             UiEvent::Closed => *palette_open = false,
             UiEvent::ActionExecuted => {}
+            UiEvent::OpenPaletteRequested => {
+                let context_root = get_all_context();
+                show_palette(
+                    ui_tx,
+                    runtime_state,
+                    &context_root,
+                    palette_open,
+                    ui_context,
+                );
+            }
+            UiEvent::SaveRuntimeConfigRequested(config) => {
+                let result = save_runtime_config(
+                    config.clone(),
+                    runtime_config,
+                    config_path,
+                    hotkey_passthrough,
+                    activation_shortcut,
+                );
+                send_ui_signal(
+                    ui_tx,
+                    ui_context,
+                    UiSignal::RuntimeConfigSaved { config, result },
+                );
+            }
+            UiEvent::RefreshCatalogRequested(source) => {
+                spawn_catalog_refresh(ui_tx.clone(), Arc::clone(ui_context), source);
+            }
+            UiEvent::InstallExtensionRequested { source, entry } => {
+                spawn_extension_install(
+                    ui_tx.clone(),
+                    Arc::clone(ui_context),
+                    runtime_state.clone(),
+                    source,
+                    entry,
+                );
+            }
+            UiEvent::SetExtensionEnabledRequested {
+                extension_id,
+                source_id,
+                enabled,
+            } => {
+                spawn_extension_enabled_update(
+                    ui_tx.clone(),
+                    Arc::clone(ui_context),
+                    runtime_state.clone(),
+                    extension_id,
+                    source_id,
+                    enabled,
+                );
+            }
+            UiEvent::SetBundledExtensionEnabledRequested { extension, enabled } => {
+                spawn_bundled_extension_enabled_update(
+                    ui_tx.clone(),
+                    Arc::clone(ui_context),
+                    runtime_state.clone(),
+                    extension,
+                    enabled,
+                );
+            }
+            UiEvent::ReloadExtensionsRequested => {
+                let result = reload_runtime_state(
+                    &runtime_state.registry,
+                    &runtime_state.ignored_process_names,
+                    &runtime_state.bundled_extensions_root,
+                    runtime_state.current_os,
+                )
+                .map(|report| {
+                    format!(
+                        "Reloaded extensions: {} applications, {} ignored processes.",
+                        report.application_count, report.ignored_process_count
+                    )
+                });
+                send_ui_signal(
+                    ui_tx,
+                    ui_context,
+                    UiSignal::ReloadExtensionsFinished(result),
+                );
+            }
+            UiEvent::QuitRequested => {
+                send_ui_signal(ui_tx, ui_context, UiSignal::Quit);
+            }
         }
     }
+}
+
+fn save_runtime_config(
+    requested_config: RuntimeConfig,
+    runtime_config: &mut RuntimeConfig,
+    config_path: Option<&Path>,
+    hotkey_passthrough: &HotkeyPassthrough,
+    activation_shortcut: &mut KeyboardShortcut,
+) -> Result<String, String> {
+    let path = config_path.ok_or_else(|| {
+        "APPDATA is not set, so Omni Palette cannot save user settings.".to_string()
+    })?;
+    let old_config = runtime_config.clone();
+    let hotkey_changed = requested_config.activation != old_config.activation;
+
+    if hotkey_changed {
+        hotkey_passthrough.update_shortcut(requested_config.activation)?;
+        *activation_shortcut = requested_config.activation;
+    }
+
+    if let Err(err) = requested_config.save_user_config(path) {
+        if hotkey_changed {
+            match hotkey_passthrough.update_shortcut(old_config.activation) {
+                Ok(()) => *activation_shortcut = old_config.activation,
+                Err(rollback_err) => {
+                    return Err(format!(
+                        "{err}; also failed to restore the previous hotkey: {rollback_err}"
+                    ));
+                }
+            }
+        }
+        return Err(err);
+    }
+
+    *runtime_config = requested_config;
+    Ok("Settings saved.".to_string())
 }
 
 fn is_palette_hotkey(shortcut: KeyboardShortcut, activation_shortcut: KeyboardShortcut) -> bool {
@@ -524,6 +697,11 @@ fn show_palette(
     );
     drop(registry_read);
 
+    commands.push(settings_command(
+        commands.len(),
+        ui_tx.clone(),
+        Arc::clone(ui_context),
+    ));
     commands.push(reload_extensions_command(
         commands.len(),
         runtime_state.clone(),
@@ -545,6 +723,116 @@ fn request_ui_repaint(ui_context: &SharedUiContext) {
     if let Some(ctx) = ui_context.get() {
         ctx.request_repaint();
     }
+}
+
+fn send_ui_signal(ui_tx: &Sender<UiSignal>, ui_context: &SharedUiContext, signal: UiSignal) {
+    if ui_tx.send(signal).is_ok() {
+        request_ui_repaint(ui_context);
+    }
+}
+
+fn spawn_catalog_refresh(
+    ui_tx: Sender<UiSignal>,
+    ui_context: SharedUiContext,
+    source: crate::config::runtime::GitHubExtensionSource,
+) {
+    std::thread::spawn(move || {
+        let result = (|| {
+            let service = ExtensionInstallService::new(extension_install_root()?);
+            service
+                .fetch_catalog(&source)
+                .map_err(|err| err.to_string())
+        })();
+        send_ui_signal(&ui_tx, &ui_context, UiSignal::CatalogRefreshed(result));
+    });
+}
+
+fn spawn_extension_install(
+    ui_tx: Sender<UiSignal>,
+    ui_context: SharedUiContext,
+    runtime_state: RuntimeState,
+    source: crate::config::runtime::GitHubExtensionSource,
+    entry: CatalogEntry,
+) {
+    std::thread::spawn(move || {
+        let result = (|| {
+            let install_root = extension_install_root()?;
+            let service = ExtensionInstallService::new(&install_root);
+            service
+                .install_entry(&source, &entry, runtime_state.current_os)
+                .map_err(|err| err.to_string())?;
+            reload_runtime_state(
+                &runtime_state.registry,
+                &runtime_state.ignored_process_names,
+                &runtime_state.bundled_extensions_root,
+                runtime_state.current_os,
+            )?;
+            load_installed_state(&install_root).map_err(|err| err.to_string())
+        })();
+        send_ui_signal(
+            &ui_tx,
+            &ui_context,
+            UiSignal::InstalledExtensionsUpdated(result),
+        );
+    });
+}
+
+fn spawn_extension_enabled_update(
+    ui_tx: Sender<UiSignal>,
+    ui_context: SharedUiContext,
+    runtime_state: RuntimeState,
+    extension_id: String,
+    source_id: String,
+    enabled: bool,
+) {
+    std::thread::spawn(move || {
+        let result = (|| {
+            let install_root = extension_install_root()?;
+            let state =
+                set_installed_extension_enabled(&install_root, &extension_id, &source_id, enabled)
+                    .map_err(|err| err.to_string())?;
+            reload_runtime_state(
+                &runtime_state.registry,
+                &runtime_state.ignored_process_names,
+                &runtime_state.bundled_extensions_root,
+                runtime_state.current_os,
+            )?;
+            Ok(state)
+        })();
+        send_ui_signal(
+            &ui_tx,
+            &ui_context,
+            UiSignal::InstalledExtensionsUpdated(result),
+        );
+    });
+}
+
+fn spawn_bundled_extension_enabled_update(
+    ui_tx: Sender<UiSignal>,
+    ui_context: SharedUiContext,
+    runtime_state: RuntimeState,
+    extension: BundledStaticExtension,
+    enabled: bool,
+) {
+    std::thread::spawn(move || {
+        let result = (|| {
+            let install_root = extension_install_root()?;
+            let state = set_bundled_extension_enabled(&install_root, &extension, enabled)
+                .map_err(|err| err.to_string())?;
+            reload_runtime_state(
+                &runtime_state.registry,
+                &runtime_state.ignored_process_names,
+                &runtime_state.bundled_extensions_root,
+                runtime_state.current_os,
+            )?;
+            Ok(state)
+        })();
+        send_ui_signal(
+            &ui_tx,
+            &ui_context,
+            UiSignal::InstalledExtensionsUpdated(result),
+        );
+    });
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -610,6 +898,25 @@ fn reload_extensions_command(original_order: usize, runtime_state: RuntimeState)
                 ),
                 Err(err) => log::error!("Failed to reload extensions: {err}"),
             }
+        }),
+    }
+}
+
+fn settings_command(
+    original_order: usize,
+    ui_tx: Sender<UiSignal>,
+    ui_context: SharedUiContext,
+) -> Command {
+    Command {
+        label: "Omni Palette: Settings".to_string(),
+        shortcut_text: String::new(),
+        priority: CommandPriority::Medium,
+        focus_state: FocusState::Global,
+        favorite: false,
+        tags: vec!["settings".to_string(), "preferences".to_string()],
+        original_order,
+        action: Box::new(move || {
+            send_ui_signal(&ui_tx, &ui_context, UiSignal::OpenSettings);
         }),
     }
 }
@@ -773,11 +1080,11 @@ mod tests {
     #[test]
     fn finds_static_entry_for_current_platform() {
         let catalog = catalog_with_entries(vec![
-            catalog_entry("downloaded_test", Os::Mac, ExtensionKind::Static),
-            catalog_entry("downloaded_test", Os::Windows, ExtensionKind::Static),
+            catalog_entry("chrome", Os::Mac, ExtensionKind::Static),
+            catalog_entry("chrome", Os::Windows, ExtensionKind::Static),
         ]);
 
-        let entry = find_install_entry(&catalog, "downloaded_test", Os::Windows)
+        let entry = find_install_entry(&catalog, "chrome", Os::Windows)
             .expect("windows entry should be selected");
 
         assert_eq!(entry.platform, Os::Windows);
@@ -786,12 +1093,12 @@ mod tests {
     #[test]
     fn rejects_entry_without_current_platform_static_package() {
         let catalog = catalog_with_entries(vec![catalog_entry(
-            "downloaded_test",
+            "chrome",
             Os::Mac,
             ExtensionKind::Static,
         )]);
 
-        let err = find_install_entry(&catalog, "downloaded_test", Os::Windows)
+        let err = find_install_entry(&catalog, "chrome", Os::Windows)
             .expect_err("wrong platform should fail");
 
         assert!(err.contains("no static windows package"));

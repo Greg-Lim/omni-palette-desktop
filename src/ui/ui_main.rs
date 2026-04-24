@@ -1,15 +1,25 @@
+use crate::config::runtime::RuntimeConfig;
 use crate::core::command_filter::{
     filter_commands, initial_filtered_commands, FilterableCommand, FilteredCommand,
 };
+use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog};
+use crate::core::extensions::install::{BundledStaticExtension, InstalledState};
 use crate::core::search::MatchRange;
 use crate::domain::action::{CommandPriority, FocusState};
+use crate::ui::settings::{show_settings_viewport, SettingsBootstrap, SettingsState};
 use eframe::egui;
 use eframe::egui::text::LayoutJob;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+
+#[cfg(target_os = "windows")]
+use tray_icon::{
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    Icon, TrayIcon, TrayIconBuilder,
+};
 
 const PALETTE_WIDTH: f32 = 780.0;
 const MAX_VISIBLE_ROWS: usize = 12;
@@ -212,12 +222,39 @@ pub enum UiSignal {
         work_area: Option<PaletteWorkArea>,
     },
     Hide,
+    OpenSettings,
+    RuntimeConfigSaved {
+        config: RuntimeConfig,
+        result: Result<String, String>,
+    },
+    CatalogRefreshed(Result<ExtensionCatalog, String>),
+    InstalledExtensionsUpdated(Result<InstalledState, String>),
+    ReloadExtensionsFinished(Result<String, String>),
+    Quit,
 }
 
 #[derive(Debug)]
 pub enum UiEvent {
     Closed,
     ActionExecuted,
+    OpenPaletteRequested,
+    SaveRuntimeConfigRequested(RuntimeConfig),
+    RefreshCatalogRequested(crate::config::runtime::GitHubExtensionSource),
+    InstallExtensionRequested {
+        source: crate::config::runtime::GitHubExtensionSource,
+        entry: CatalogEntry,
+    },
+    SetExtensionEnabledRequested {
+        extension_id: String,
+        source_id: String,
+        enabled: bool,
+    },
+    SetBundledExtensionEnabledRequested {
+        extension: BundledStaticExtension,
+        enabled: bool,
+    },
+    ReloadExtensionsRequested,
+    QuitRequested,
 }
 
 pub type SharedUiContext = Arc<OnceLock<egui::Context>>;
@@ -226,12 +263,15 @@ pub type SharedUiVisibility = Arc<AtomicBool>;
 struct App {
     receiver: Receiver<UiSignal>,
     palette: CommandPaletteApp,
+    settings: Arc<Mutex<SettingsState>>,
     event_tx: Sender<UiEvent>,
     had_focus_since_open: bool,
     needs_text_focus: bool,
     keyboard_nav: bool,
     work_area: Option<PaletteWorkArea>,
     visibility: SharedUiVisibility,
+    #[cfg(target_os = "windows")]
+    _tray: Option<AppTray>,
 }
 
 impl App {
@@ -241,6 +281,7 @@ impl App {
         event_tx: Sender<UiEvent>,
         shared_context: SharedUiContext,
         visibility: SharedUiVisibility,
+        settings_bootstrap: SettingsBootstrap,
     ) -> Self {
         let mut visuals = egui::Visuals::dark();
         visuals.panel_fill = egui::Color32::TRANSPARENT;
@@ -274,9 +315,18 @@ impl App {
         cc.egui_ctx.set_global_style(style);
         let _ = shared_context.set(cc.egui_ctx.clone());
         visibility.store(false, Ordering::Relaxed);
+        let settings = Arc::new(Mutex::new(SettingsState::new(settings_bootstrap)));
+        #[cfg(target_os = "windows")]
+        let tray = AppTray::new(&cc.egui_ctx, event_tx.clone(), Arc::clone(&settings))
+            .map_err(|err| {
+                log::warn!("Could not create tray icon: {err}");
+                err
+            })
+            .ok();
 
         Self {
             palette: CommandPaletteApp::new(vec![]),
+            settings,
             receiver,
             event_tx,
             had_focus_since_open: false,
@@ -284,6 +334,8 @@ impl App {
             keyboard_nav: false,
             work_area: None,
             visibility,
+            #[cfg(target_os = "windows")]
+            _tray: tray,
         }
     }
 
@@ -321,6 +373,52 @@ impl App {
 
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         let _ = self.event_tx.send(UiEvent::Closed);
+    }
+
+    fn open_settings(&self, ctx: &egui::Context) {
+        if let Ok(mut settings) = self.settings.lock() {
+            settings.open();
+        }
+        ctx.request_repaint();
+    }
+
+    fn settings_open(&self) -> bool {
+        self.settings
+            .lock()
+            .map(|settings| settings.open)
+            .unwrap_or(false)
+    }
+
+    fn handle_signal(&mut self, ctx: &egui::Context, signal: UiSignal) {
+        match signal {
+            UiSignal::Show {
+                commands,
+                work_area,
+            } => self.show(ctx, commands, work_area),
+            UiSignal::Hide => self.hide(ctx),
+            UiSignal::OpenSettings => self.open_settings(ctx),
+            UiSignal::RuntimeConfigSaved { config, result } => {
+                if let Ok(mut settings) = self.settings.lock() {
+                    settings.config_saved(config, result);
+                }
+            }
+            UiSignal::CatalogRefreshed(result) => {
+                if let Ok(mut settings) = self.settings.lock() {
+                    settings.catalog_refreshed(result);
+                }
+            }
+            UiSignal::InstalledExtensionsUpdated(result) => {
+                if let Ok(mut settings) = self.settings.lock() {
+                    settings.installed_extensions_updated(result);
+                }
+            }
+            UiSignal::ReloadExtensionsFinished(result) => {
+                if let Ok(mut settings) = self.settings.lock() {
+                    settings.reload_finished(result);
+                }
+            }
+            UiSignal::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+        }
     }
 
     fn desired_window_size(&self) -> egui::Vec2 {
@@ -369,7 +467,8 @@ impl App {
             return;
         }
 
-        let move_down = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
+        let move_down =
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
         if move_down {
             self.palette.selected_index =
                 wrapped_selection_index(self.palette.selected_index, visible_count, 1);
@@ -497,13 +596,11 @@ fn wrapped_selection_index(current: usize, visible_count: usize, delta: isize) -
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(sig) = self.receiver.try_recv() {
-            match sig {
-                UiSignal::Show {
-                    commands,
-                    work_area,
-                } => self.show(ctx, commands, work_area),
-                UiSignal::Hide => self.hide(ctx),
-            }
+            self.handle_signal(ctx, sig);
+        }
+
+        if self.settings_open() {
+            show_settings_viewport(ctx, Arc::clone(&self.settings), self.event_tx.clone());
         }
 
         if !self.palette.is_open {
@@ -671,6 +768,7 @@ pub fn ui_main_with_shared_state(
     event_tx: Sender<UiEvent>,
     shared_context: SharedUiContext,
     visibility: SharedUiVisibility,
+    settings_bootstrap: SettingsBootstrap,
 ) {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -694,9 +792,86 @@ pub fn ui_main_with_shared_state(
                 event_tx,
                 Arc::clone(&shared_context),
                 Arc::clone(&visibility),
+                settings_bootstrap,
             )))
         }),
     );
+}
+
+#[cfg(target_os = "windows")]
+struct AppTray {
+    _tray: TrayIcon,
+}
+
+#[cfg(target_os = "windows")]
+impl AppTray {
+    fn new(
+        ctx: &egui::Context,
+        event_tx: Sender<UiEvent>,
+        settings_state: Arc<Mutex<SettingsState>>,
+    ) -> Result<Self, String> {
+        let menu = Menu::new();
+        let open_palette = MenuItem::new("Open Palette", true, None);
+        let settings = MenuItem::new("Settings...", true, None);
+        let reload = MenuItem::new("Reload Extensions", true, None);
+        let quit = MenuItem::new("Quit", true, None);
+        menu.append(&open_palette).map_err(|err| err.to_string())?;
+        menu.append(&settings).map_err(|err| err.to_string())?;
+        menu.append(&reload).map_err(|err| err.to_string())?;
+        menu.append(&PredefinedMenuItem::separator())
+            .map_err(|err| err.to_string())?;
+        menu.append(&quit).map_err(|err| err.to_string())?;
+
+        let ctx = ctx.clone();
+        let open_palette_id = open_palette.id().clone();
+        let settings_id = settings.id().clone();
+        let reload_id = reload.id().clone();
+        let quit_id = quit.id().clone();
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            if open_palette_id == event.id() {
+                let _ = event_tx.send(UiEvent::OpenPaletteRequested);
+            } else if settings_id == event.id() {
+                if let Ok(mut settings) = settings_state.lock() {
+                    settings.open();
+                }
+            } else if reload_id == event.id() {
+                let _ = event_tx.send(UiEvent::ReloadExtensionsRequested);
+            } else if quit_id == event.id() {
+                let _ = event_tx.send(UiEvent::QuitRequested);
+            }
+            ctx.request_repaint();
+        }));
+
+        let tray = TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip("Omni Palette")
+            .with_icon(tray_icon()?)
+            .build()
+            .map_err(|err| err.to_string())?;
+
+        Ok(Self { _tray: tray })
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn tray_icon() -> Result<Icon, String> {
+    let size = 16_u32;
+    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            let border = x == 0 || y == 0 || x == size - 1 || y == size - 1;
+            let diagonal = x == y || x + y == size - 1;
+            let (r, g, b) = if border {
+                (230, 230, 230)
+            } else if diagonal {
+                (66, 153, 225)
+            } else {
+                (28, 32, 40)
+            };
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+    }
+    Icon::from_rgba(rgba, size, size).map_err(|err| err.to_string())
 }
 
 #[cfg(test)]

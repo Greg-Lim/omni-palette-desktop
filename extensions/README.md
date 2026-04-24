@@ -1,8 +1,9 @@
 # Extensions
 
-Omni Palette keeps bundled extensions and remote-package registry files separate.
-This repository still carries a temporary local copy of the registry layout, but
-the long-term dedicated extension repository should be `omni-palette-extensions`.
+Omni Palette keeps bundled defaults and downloadable registry packages separate.
+This repository still carries a local copy of the registry layout. For now, the
+app can point at this desktop repository as the remote catalog source; the
+long-term dedicated extension repository should be `omni-palette-extensions`.
 
 ## Bundled Extensions
 
@@ -12,52 +13,36 @@ The app loads bundled runtime extensions from `extensions/bundled`.
 extensions/bundled/
   ignore.toml
   static/
+    windows.toml
   plugins/
 ```
 
-Static shortcut mappings live in `extensions/bundled/static`. Each file is
-OS-specific and uses `version = 2` with a single `platform`.
+`windows.toml` is the only bundled static shortcut pack. It provides core
+Windows system shortcuts and can be disabled from the settings extension page.
 
 ```toml
 version = 2
 platform = "windows"
 
 [app]
-id = "chrome"
-name = "Chrome"
-process_name = "chrome.exe"
-default_focus_state = "focused"
+id = "windows"
+name = "Windows"
+process_name = "explorer.exe"
+default_focus_state = "global"
 
-[actions.new_tab]
-name = "New tab"
-focus_state = "focused"
+[actions.open_file_explorer]
+name = "Open File Explorer"
 priority = "high"
-cmd = { mods = ["ctrl"], key = "T" }
+cmd = { mods = ["win"], key = "E" }
 ```
 
-WASM plugins live in `extensions/bundled/plugins/<plugin_id>`.
+WASM plugins live in `extensions/bundled/plugins/<plugin_id>`. Downloadable WASM
+plugin packages are not supported yet, so bundled plugins remain here for now.
 
 ```text
 plugin.toml
 plugin.wat
 ```
-
-Plugin manifests are also OS-specific:
-
-```toml
-id = "auto_typer"
-name = "Auto Typer"
-platform = "windows"
-version = "0.1.0"
-wasm = "plugin.wat"
-permissions = ["write_text", "read_time"]
-```
-
-Static shortcut extensions represent known default shortcuts. They do not
-automatically track user-customized keybindings inside the target application.
-App-specific dynamic shortcut discovery should be implemented later as WASM
-plugin logic when the target app stores keybindings in a readable config file or
-exposes a command API.
 
 ## Registry Source
 
@@ -66,29 +51,39 @@ Remote package catalog and source live in `extensions/registry`.
 ```text
 extensions/registry/
   catalog.v1.json
-  catalog.v1.json.sig
   packages/
-    downloaded_test/
+    chrome/
       windows/
         manifest.toml
         static/
-          downloaded_test.toml
+          chrome.toml
+    file_explorer/
+      windows/
+        manifest.toml
+        static/
+          file_explorer.toml
 ```
 
 Package source folders do not include version numbers. Git tags and GitHub
 Releases identify published versions. For example:
 
 ```text
-tag: downloaded_test-v0.1.0
-asset: downloaded_test-0.1.0-windows.gpext
+tag: chrome-v0.1.0
+asset: chrome-0.1.0-windows.gpext
 ```
 
 The generated `.gpext` file is an installable artifact and should stay out of
-Git. Build it into `target/` and upload it to the matching GitHub Release.
+Git. Build artifacts into `target/extensions/`, then upload them to the matching
+GitHub Release before catalog installs can succeed from GitHub.
 
-The catalog points to release assets, not raw source files. The signature file
-verifies the catalog contents, so moving `catalog.v1.json` and
-`catalog.v1.json.sig` together does not invalidate the signature.
+The catalog points to release assets, not raw source files. Catalog signing is
+paused in the current v1 settings flow; only `catalog.v1.json` is fetched.
+
+Static shortcut extensions represent known default shortcuts. They do not
+automatically track user-customized keybindings inside the target application.
+App-specific dynamic shortcut discovery should be implemented later as WASM
+plugin logic when the target app stores keybindings in a readable config file or
+exposes a command API.
 
 ## Ignore Config
 

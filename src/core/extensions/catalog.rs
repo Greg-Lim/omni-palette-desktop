@@ -1,7 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::action::Os;
@@ -16,12 +14,7 @@ pub struct ExtensionCatalog {
 }
 
 impl ExtensionCatalog {
-    pub fn parse_verified(
-        catalog_bytes: &[u8],
-        signature_base64: &str,
-        public_key_base64: &str,
-    ) -> Result<Self, CatalogError> {
-        verify_signature(catalog_bytes, signature_base64, public_key_base64)?;
+    pub fn parse(catalog_bytes: &[u8]) -> Result<Self, CatalogError> {
         let catalog: Self = serde_json::from_slice(catalog_bytes)?;
         catalog.validate()?;
         Ok(catalog)
@@ -100,25 +93,11 @@ pub enum ExtensionKind {
 
 #[derive(Debug)]
 pub enum CatalogError {
-    DecodeBase64(base64::DecodeError),
-    Signature(ed25519_dalek::SignatureError),
     Json(serde_json::Error),
     UnsupportedSchema(u32),
     Expired,
     SystemClockBeforeUnixEpoch,
     InvalidEntry(String),
-}
-
-impl From<base64::DecodeError> for CatalogError {
-    fn from(err: base64::DecodeError) -> Self {
-        Self::DecodeBase64(err)
-    }
-}
-
-impl From<ed25519_dalek::SignatureError> for CatalogError {
-    fn from(err: ed25519_dalek::SignatureError) -> Self {
-        Self::Signature(err)
-    }
 }
 
 impl From<serde_json::Error> for CatalogError {
@@ -130,8 +109,6 @@ impl From<serde_json::Error> for CatalogError {
 impl std::fmt::Display for CatalogError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CatalogError::DecodeBase64(err) => write!(f, "Could not decode base64: {err}"),
-            CatalogError::Signature(err) => write!(f, "Catalog signature error: {err}"),
             CatalogError::Json(err) => write!(f, "Could not parse catalog JSON: {err}"),
             CatalogError::UnsupportedSchema(version) => {
                 write!(f, "Unsupported catalog schema version: {version}")
@@ -146,26 +123,6 @@ impl std::fmt::Display for CatalogError {
 }
 
 impl std::error::Error for CatalogError {}
-
-pub fn verify_signature(
-    bytes: &[u8],
-    signature_base64: &str,
-    public_key_base64: &str,
-) -> Result<(), CatalogError> {
-    let public_key_bytes = STANDARD.decode(public_key_base64.trim())?;
-    let signature_bytes = STANDARD.decode(signature_base64.trim())?;
-    let public_key_array: [u8; 32] = public_key_bytes
-        .try_into()
-        .map_err(|_| CatalogError::InvalidEntry("public key must be 32 bytes".to_string()))?;
-    let signature_array: [u8; 64] = signature_bytes
-        .try_into()
-        .map_err(|_| CatalogError::InvalidEntry("signature must be 64 bytes".to_string()))?;
-
-    let public_key = VerifyingKey::from_bytes(&public_key_array)?;
-    let signature = Signature::from_bytes(&signature_array);
-    public_key.verify(bytes, &signature)?;
-    Ok(())
-}
 
 pub fn validate_extension_id(id: &str) -> Result<(), CatalogError> {
     let valid = !id.is_empty()
@@ -204,7 +161,6 @@ pub fn validate_sha256_hex(hash: &str) -> Result<(), CatalogError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
 
     #[test]
     fn rejects_invalid_extension_id() {
@@ -244,27 +200,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_catalog_only_with_valid_signature() {
+    fn parses_catalog_json_without_signature() {
         let catalog_json =
             br#"{"schema_version":1,"generated_at":null,"expires_at_unix":null,"entries":[]}"#;
-        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
-        let verifying_key = signing_key.verifying_key();
-        let signature = signing_key.sign(catalog_json);
-        let signature_base64 = STANDARD.encode(signature.to_bytes());
-        let public_key_base64 = STANDARD.encode(verifying_key.to_bytes());
 
-        let catalog =
-            ExtensionCatalog::parse_verified(catalog_json, &signature_base64, &public_key_base64)
-                .expect("valid signature should parse");
+        let catalog = ExtensionCatalog::parse(catalog_json).expect("valid catalog should parse");
         assert_eq!(catalog.schema_version, 1);
 
-        let err = ExtensionCatalog::parse_verified(
-            br#"{"schema_version":2,"entries":[]}"#,
-            &signature_base64,
-            &public_key_base64,
-        )
-        .expect_err("tampered catalog should fail signature verification");
+        let err = ExtensionCatalog::parse(br#"{"schema_version":2,"entries":[]}"#)
+            .expect_err("unsupported schema should fail validation");
 
-        assert!(err.to_string().contains("signature"));
+        assert!(err
+            .to_string()
+            .contains("Unsupported catalog schema version"));
     }
 }

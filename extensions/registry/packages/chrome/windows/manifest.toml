@@ -1,6 +1,7 @@
 schema_version = 1
-id = "downloaded_test"
-name = "Downloaded Test"
+id = "chrome"
+name = "Chrome"
 platform = "windows"
 version = "0.1.0"
 kind = "static"
+publisher = "Greg-Lim"

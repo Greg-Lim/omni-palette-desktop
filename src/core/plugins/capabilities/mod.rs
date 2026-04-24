@@ -35,9 +35,7 @@ pub(crate) struct PluginStoreState {
     pub(crate) allow_host_effects: bool,
 }
 
-pub(crate) fn register_capabilities(
-    linker: &mut Linker<PluginStoreState>,
-) -> Result<(), String> {
+pub(crate) fn register_capabilities(linker: &mut Linker<PluginStoreState>) -> Result<(), String> {
     read::register(linker)?;
     write::register(linker)?;
     Ok(())

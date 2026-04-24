@@ -58,8 +58,7 @@ impl PluginRegistry {
         current_os: Os,
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
-        #[cfg(debug_assertions)]
-        write_performance_log: LogPerformanceSnapshotFn,
+        #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
     ) -> Self {
         let mut plugins = HashMap::new();
         let mut applications = Vec::new();
@@ -112,8 +111,7 @@ impl PluginRegistry {
         current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
         read_time_requests: Arc<std::sync::Mutex<Vec<String>>>,
-        #[cfg(debug_assertions)]
-        performance_logs: Arc<std::sync::Mutex<Vec<String>>>,
+        #[cfg(debug_assertions)] performance_logs: Arc<std::sync::Mutex<Vec<String>>>,
     ) -> Self {
         Self::load(
             manifest_paths,
@@ -325,7 +323,10 @@ mod tests {
             .execute("auto_typer", "type_current_date")
             .expect("auto typer current date command should execute");
 
-        assert_eq!(typed.lock().expect("typed text lock poisoned").as_slice(), ["6 Apr"]);
+        assert_eq!(
+            typed.lock().expect("typed text lock poisoned").as_slice(),
+            ["6 Apr"]
+        );
         assert_eq!(
             read_time_requests
                 .lock()
@@ -397,8 +398,11 @@ mod tests {
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(sample_auto_typer_plugin_path(), plugin_dir.join("plugin.wat"))
-            .expect("should copy sample plugin wat");
+        fs::copy(
+            sample_auto_typer_plugin_path(),
+            plugin_dir.join("plugin.wat"),
+        )
+        .expect("should copy sample plugin wat");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "no_permission"
@@ -492,8 +496,11 @@ default_focus_state = "global"
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(sample_auto_typer_plugin_path(), plugin_dir.join("plugin.wat"))
-            .expect("should copy sample plugin wat");
+        fs::copy(
+            sample_auto_typer_plugin_path(),
+            plugin_dir.join("plugin.wat"),
+        )
+        .expect("should copy sample plugin wat");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "unknown_permission"
@@ -529,8 +536,11 @@ default_focus_state = "global"
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(sample_auto_typer_plugin_path(), plugin_dir.join("plugin.wat"))
-            .expect("should copy sample plugin wat");
+        fs::copy(
+            sample_auto_typer_plugin_path(),
+            plugin_dir.join("plugin.wat"),
+        )
+        .expect("should copy sample plugin wat");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "wrong_platform"
@@ -566,8 +576,11 @@ default_focus_state = "global"
             fs::remove_dir_all(&root).expect("should reset test plugin root");
         }
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
-        fs::copy(sample_auto_typer_plugin_path(), plugin_dir.join("plugin.wat"))
-            .expect("should copy sample plugin wat");
+        fs::copy(
+            sample_auto_typer_plugin_path(),
+            plugin_dir.join("plugin.wat"),
+        )
+        .expect("should copy sample plugin wat");
         fs::write(
             plugin_dir.join("plugin.toml"),
             r#"id = "no_read_time_permission"

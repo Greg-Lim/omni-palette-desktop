@@ -18,6 +18,34 @@ use crate::{
 const INSTALLED_STATE_FILE: &str = "installed.toml";
 const MAX_CATALOG_BYTES: usize = 5 * 1024 * 1024;
 const MAX_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
+pub const BUNDLED_SOURCE_ID: &str = "bundled";
+pub const GITHUB_SOURCE_ID: &str = "github";
+
+#[derive(Debug, Clone)]
+pub struct BundledStaticExtension {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub platform: Os,
+    pub kind: ExtensionKind,
+    pub installed_path: PathBuf,
+    pub enabled: bool,
+}
+
+impl BundledStaticExtension {
+    fn to_installed_extension(&self, enabled: bool) -> InstalledExtension {
+        InstalledExtension {
+            id: self.id.clone(),
+            version: self.version.clone(),
+            platform: self.platform,
+            kind: self.kind,
+            source_id: BUNDLED_SOURCE_ID.to_string(),
+            package_sha256: "0".repeat(64),
+            enabled,
+            installed_path: self.installed_path.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ExtensionInstallService {
@@ -41,15 +69,8 @@ impl ExtensionInstallService {
 
         let catalog_url = source.catalog_url();
         let catalog_bytes = fetch_bytes(&catalog_url, MAX_CATALOG_BYTES)?;
-        let signature_url = source.signature_url();
-        let signature = String::from_utf8(fetch_bytes(&signature_url, 64 * 1024)?)
-            .map_err(|err| InstallError::InvalidUtf8(err.to_string()))?;
 
-        Ok(ExtensionCatalog::parse_verified(
-            &catalog_bytes,
-            &signature,
-            &source.public_key,
-        )?)
+        Ok(ExtensionCatalog::parse(&catalog_bytes)?)
     }
 
     pub fn install_entry(
@@ -86,7 +107,7 @@ impl ExtensionInstallService {
             version: entry.version.clone(),
             platform: entry.platform,
             kind: entry.kind,
-            source_id: "github".to_string(),
+            source_id: GITHUB_SOURCE_ID.to_string(),
             package_sha256: entry.package_sha256.clone(),
             enabled: true,
             installed_path,
@@ -109,18 +130,47 @@ pub struct InstalledState {
 
 impl InstalledState {
     pub fn upsert(&mut self, extension: InstalledExtension) {
-        if let Some(existing) = self
-            .extensions
-            .iter_mut()
-            .find(|existing| existing.id == extension.id)
-        {
+        if let Some(existing) = self.extensions.iter_mut().find(|existing| {
+            existing.id == extension.id && existing.source_id == extension.source_id
+        }) {
             *existing = extension;
         } else {
             self.extensions.push(extension);
         }
 
+        self.extensions.sort_by(|left, right| {
+            left.id
+                .cmp(&right.id)
+                .then_with(|| left.source_id.cmp(&right.source_id))
+        });
+    }
+
+    pub fn set_enabled(&mut self, extension_id: &str, source_id: &str, enabled: bool) -> bool {
+        if let Some(extension) = self
+            .extensions
+            .iter_mut()
+            .find(|extension| extension.id == extension_id && extension.source_id == source_id)
+        {
+            extension.enabled = enabled;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn enabled_for(&self, extension_id: &str, source_id: &str) -> Option<bool> {
         self.extensions
-            .sort_by(|left, right| left.id.cmp(&right.id));
+            .iter()
+            .find(|extension| extension.id == extension_id && extension.source_id == source_id)
+            .map(|extension| extension.enabled)
+    }
+
+    pub fn disabled_bundled_extension_ids(&self) -> std::collections::HashSet<String> {
+        self.extensions
+            .iter()
+            .filter(|extension| extension.source_id == BUNDLED_SOURCE_ID && !extension.enabled)
+            .map(|extension| extension.id.clone())
+            .collect()
     }
 }
 
@@ -147,7 +197,6 @@ pub enum InstallError {
     PlatformMismatch { expected: Os, actual: Os },
     PackageUrlNotAllowed(String),
     DownloadTooLarge { url: String, max_bytes: usize },
-    InvalidUtf8(String),
 }
 
 impl From<io::Error> for InstallError {
@@ -172,7 +221,13 @@ impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InstallError::Io(err) => write!(f, "Extension install IO error: {err}"),
-            InstallError::Http(message) => write!(f, "Extension download error: {message}"),
+            InstallError::Http(message) => {
+                write!(
+                    f,
+                    "Extension download error: {}",
+                    explain_http_error(message)
+                )
+            }
             InstallError::Catalog(err) => write!(f, "Extension catalog error: {err}"),
             InstallError::Package(err) => write!(f, "Extension package error: {err}"),
             InstallError::DisabledSource(source_id) => {
@@ -196,12 +251,21 @@ impl std::fmt::Display for InstallError {
             InstallError::DownloadTooLarge { url, max_bytes } => {
                 write!(f, "Download from {url} exceeded {max_bytes} bytes")
             }
-            InstallError::InvalidUtf8(message) => write!(f, "Invalid UTF-8: {message}"),
         }
     }
 }
 
 impl std::error::Error for InstallError {}
+
+fn explain_http_error(message: &str) -> String {
+    if message.contains("status code 404") {
+        format!(
+            "{message}. For catalog URLs, a 404 usually means the branch or catalog path is wrong, the repository is private, or the catalog has not been pushed."
+        )
+    } else {
+        message.to_string()
+    }
+}
 
 pub fn load_installed_state(install_root: &Path) -> Result<InstalledState, InstallError> {
     let path = install_root.join(INSTALLED_STATE_FILE);
@@ -227,6 +291,33 @@ pub fn save_installed_state(
     fs::write(&staging_path, content)?;
     fs::rename(staging_path, path)?;
     Ok(())
+}
+
+pub fn set_installed_extension_enabled(
+    install_root: &Path,
+    extension_id: &str,
+    source_id: &str,
+    enabled: bool,
+) -> Result<InstalledState, InstallError> {
+    let mut state = load_installed_state(install_root)?;
+    if !state.set_enabled(extension_id, source_id, enabled) {
+        return Err(InstallError::Package(PackageError::InvalidManifest(
+            format!("Installed extension not found: {source_id}/{extension_id}"),
+        )));
+    }
+    save_installed_state(install_root, &state)?;
+    Ok(state)
+}
+
+pub fn set_bundled_extension_enabled(
+    install_root: &Path,
+    extension: &BundledStaticExtension,
+    enabled: bool,
+) -> Result<InstalledState, InstallError> {
+    let mut state = load_installed_state(install_root)?;
+    state.upsert(extension.to_installed_extension(enabled));
+    save_installed_state(install_root, &state)?;
+    Ok(state)
 }
 
 fn fetch_bytes(url: &str, max_bytes: usize) -> Result<Vec<u8>, InstallError> {
@@ -294,23 +385,83 @@ mod tests {
     }
 
     #[test]
+    fn set_enabled_updates_existing_extension() {
+        let mut state = InstalledState::default();
+        state.upsert(InstalledExtension {
+            id: "chrome_tools".to_string(),
+            version: "1.0.0".to_string(),
+            platform: Os::Windows,
+            kind: ExtensionKind::Static,
+            source_id: "official".to_string(),
+            package_sha256: "a".repeat(64),
+            enabled: true,
+            installed_path: PathBuf::from("static/chrome_tools.toml"),
+        });
+
+        assert!(state.set_enabled("chrome_tools", "official", false));
+        assert!(!state.extensions[0].enabled);
+        assert!(!state.set_enabled("missing", "official", true));
+    }
+
+    #[test]
+    fn upsert_keeps_distinct_sources_for_same_extension_id() {
+        let mut state = InstalledState::default();
+        state.upsert(InstalledExtension {
+            id: "windows".to_string(),
+            version: "0.1.0".to_string(),
+            platform: Os::Windows,
+            kind: ExtensionKind::Static,
+            source_id: BUNDLED_SOURCE_ID.to_string(),
+            package_sha256: "0".repeat(64),
+            enabled: false,
+            installed_path: PathBuf::from("static/windows.toml"),
+        });
+        state.upsert(InstalledExtension {
+            id: "windows".to_string(),
+            version: "1.0.0".to_string(),
+            platform: Os::Windows,
+            kind: ExtensionKind::Static,
+            source_id: GITHUB_SOURCE_ID.to_string(),
+            package_sha256: "1".repeat(64),
+            enabled: true,
+            installed_path: PathBuf::from("static/windows.toml"),
+        });
+
+        assert_eq!(state.extensions.len(), 2);
+        assert_eq!(state.enabled_for("windows", BUNDLED_SOURCE_ID), Some(false));
+        assert_eq!(state.enabled_for("windows", GITHUB_SOURCE_ID), Some(true));
+    }
+
+    #[test]
     fn package_url_must_match_configured_github_repo() {
         let source = GitHubExtensionSource {
             owner: "Greg-Lim".to_string(),
-            repo: "omni-palette-extensions".to_string(),
-            branch: "main".to_string(),
-            catalog_path: "catalog.v1.json".to_string(),
-            public_key: "abc".to_string(),
+            repo: "omni-palette-desktop".to_string(),
+            branch: "master".to_string(),
+            catalog_path: "extensions/registry/catalog.v1.json".to_string(),
             enabled: true,
         };
 
         assert!(package_url_allowed(
             &source,
-            "https://github.com/Greg-Lim/omni-palette-extensions/releases/download/chrome-v1/chrome.gpext"
+            "https://github.com/Greg-Lim/omni-palette-desktop/releases/download/chrome-v1/chrome.gpext"
         ));
         assert!(!package_url_allowed(
             &source,
-            "https://github.com/other/omni-palette-extensions/releases/download/chrome-v1/chrome.gpext"
+            "https://github.com/other/omni-palette-desktop/releases/download/chrome-v1/chrome.gpext"
         ));
+    }
+
+    #[test]
+    fn http_404_error_explains_likely_catalog_causes() {
+        let err = InstallError::Http(
+            "https://raw.githubusercontent.com/Greg-Lim/omni-palette-desktop/main/catalog.v1.json: status code 404"
+                .to_string(),
+        );
+        let message = err.to_string();
+
+        assert!(message.contains("branch or catalog path is wrong"));
+        assert!(message.contains("repository is private"));
+        assert!(message.contains("catalog has not been pushed"));
     }
 }

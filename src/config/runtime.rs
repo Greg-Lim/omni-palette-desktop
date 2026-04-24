@@ -1,9 +1,10 @@
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config::extension::Modifier,
@@ -36,6 +37,12 @@ impl RuntimePaths {
 }
 
 #[derive(Debug, Clone)]
+pub struct RuntimeConfigLoad {
+    pub config: RuntimeConfig,
+    pub user_config_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
     pub activation: KeyboardShortcut,
     pub startup: StartupConfig,
@@ -43,21 +50,81 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
+    #[allow(dead_code)]
     pub fn load(appdata_config_path: Option<&Path>, dev_config_path: &Path) -> Self {
+        Self::load_with_diagnostics(appdata_config_path, dev_config_path).config
+    }
+
+    pub fn load_with_diagnostics(
+        appdata_config_path: Option<&Path>,
+        dev_config_path: &Path,
+    ) -> RuntimeConfigLoad {
+        let mut user_config_error = None;
+
         if let Some(path) = appdata_config_path {
-            if let Ok(config) = RuntimeConfigFile::load(path) {
-                return config.into_runtime_config();
+            if path.exists() {
+                match RuntimeConfigFile::load(path) {
+                    Ok(config) => {
+                        return RuntimeConfigLoad {
+                            config: config.into_runtime_config(),
+                            user_config_error,
+                        };
+                    }
+                    Err(err) => user_config_error = Some(err),
+                }
             }
         }
 
         if let Ok(config) = DevConfigFile::load(dev_config_path) {
-            return RuntimeConfig {
-                activation: config.activation.into_shortcut(),
-                ..RuntimeConfig::default()
+            return RuntimeConfigLoad {
+                config: RuntimeConfig {
+                    activation: config.activation.into_shortcut(),
+                    ..RuntimeConfig::default()
+                },
+                user_config_error,
             };
         }
 
-        RuntimeConfig::default()
+        RuntimeConfigLoad {
+            config: RuntimeConfig::default(),
+            user_config_error,
+        }
+    }
+
+    pub fn save_user_config(&self, path: &Path) -> Result<(), String> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| format!("Config path has no parent: {}", path.display()))?;
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "Could not create config directory {}: {err}",
+                parent.display()
+            )
+        })?;
+
+        let file_config = RuntimeConfigFile::from(self);
+        let content = toml::to_string_pretty(&file_config)
+            .map_err(|err| format!("Could not serialize config: {err}"))?;
+        let mut temp_file = tempfile::NamedTempFile::new_in(parent).map_err(|err| {
+            format!(
+                "Could not create temporary config file in {}: {err}",
+                parent.display()
+            )
+        })?;
+        temp_file
+            .write_all(content.as_bytes())
+            .map_err(|err| format!("Could not write temporary config file: {err}"))?;
+        temp_file
+            .flush()
+            .map_err(|err| format!("Could not flush temporary config file: {err}"))?;
+        temp_file
+            .persist(path)
+            .map_err(|err| format!("Could not replace config file {}: {err}", path.display()))?;
+        Ok(())
+    }
+
+    pub fn default_activation_shortcut() -> KeyboardShortcut {
+        default_activation_shortcut()
     }
 }
 
@@ -71,7 +138,7 @@ impl Default for RuntimeConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct StartupConfig {
     #[serde(default)]
     pub launch_on_login: bool,
@@ -88,7 +155,7 @@ impl Default for StartupConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GitHubExtensionSource {
     pub owner: String,
     pub repo: String,
@@ -96,8 +163,6 @@ pub struct GitHubExtensionSource {
     pub branch: String,
     #[serde(default = "default_catalog_path")]
     pub catalog_path: String,
-    #[serde(default)]
-    pub public_key: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -112,26 +177,21 @@ impl GitHubExtensionSource {
             self.catalog_path.trim_start_matches('/')
         )
     }
-
-    pub fn signature_url(&self) -> String {
-        format!("{}.sig", self.catalog_url())
-    }
 }
 
 impl Default for GitHubExtensionSource {
     fn default() -> Self {
         Self {
             owner: "Greg-Lim".to_string(),
-            repo: "omni-palette-extensions".to_string(),
+            repo: "omni-palette-desktop".to_string(),
             branch: default_branch(),
             catalog_path: default_catalog_path(),
-            public_key: String::new(),
             enabled: false,
         }
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct RuntimeConfigFile {
     #[serde(default = "default_activation_config")]
     activation: ActivationConfig,
@@ -171,13 +231,25 @@ impl DevConfigFile {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+impl From<&RuntimeConfig> for RuntimeConfigFile {
+    fn from(config: &RuntimeConfig) -> Self {
+        Self {
+            activation: ActivationConfig::from_shortcut(config.activation),
+            startup: config.startup,
+            extensions: RuntimeExtensionsConfig {
+                github: config.github.clone(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct RuntimeExtensionsConfig {
     #[serde(default)]
     github: GitHubExtensionSource,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct ActivationConfig {
     #[serde(default)]
     mods: Vec<Modifier>,
@@ -196,6 +268,27 @@ impl ActivationConfig {
             key: self.key,
         }
     }
+
+    fn from_shortcut(shortcut: KeyboardShortcut) -> Self {
+        let mut mods = Vec::new();
+        if shortcut.modifier.control {
+            mods.push(Modifier::Ctrl);
+        }
+        if shortcut.modifier.shift {
+            mods.push(Modifier::Shift);
+        }
+        if shortcut.modifier.alt {
+            mods.push(Modifier::Alt);
+        }
+        if shortcut.modifier.win {
+            mods.push(Modifier::Win);
+        }
+
+        Self {
+            mods,
+            key: shortcut.key,
+        }
+    }
 }
 
 fn default_activation_config() -> ActivationConfig {
@@ -210,11 +303,11 @@ fn default_activation_shortcut() -> KeyboardShortcut {
 }
 
 fn default_branch() -> String {
-    "main".to_string()
+    "master".to_string()
 }
 
 fn default_catalog_path() -> String {
-    "catalog.v1.json".to_string()
+    "extensions/registry/catalog.v1.json".to_string()
 }
 
 fn default_true() -> bool {
@@ -236,6 +329,24 @@ mod tests {
     }
 
     #[test]
+    fn default_github_catalog_points_to_desktop_registry() {
+        let config = RuntimeConfig::default();
+
+        assert_eq!(config.github.owner, "Greg-Lim");
+        assert_eq!(config.github.repo, "omni-palette-desktop");
+        assert_eq!(config.github.branch, "master");
+        assert_eq!(
+            config.github.catalog_path,
+            "extensions/registry/catalog.v1.json"
+        );
+        assert_eq!(
+            config.github.catalog_url(),
+            "https://raw.githubusercontent.com/Greg-Lim/omni-palette-desktop/master/extensions/registry/catalog.v1.json"
+        );
+        assert!(!config.github.enabled);
+    }
+
+    #[test]
     fn parses_appdata_runtime_config() {
         let root = tempfile::tempdir().expect("temp dir should be created");
         let path = root.path().join("config.toml");
@@ -253,7 +364,6 @@ owner = "Greg-Lim"
 repo = "omni-palette-extensions"
 branch = "main"
 catalog_path = "dist/catalog.v1.json"
-public_key = "abc"
 enabled = true
 "#,
         )
@@ -269,6 +379,62 @@ enabled = true
             config.github.catalog_url(),
             "https://raw.githubusercontent.com/Greg-Lim/omni-palette-extensions/main/dist/catalog.v1.json"
         );
+    }
+
+    #[test]
+    fn save_user_config_round_trips_runtime_settings() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let path = root.path().join("OmniPalette").join("config.toml");
+        let config = RuntimeConfig {
+            activation: KeyboardShortcut {
+                modifier: HotkeyModifiers {
+                    control: true,
+                    shift: false,
+                    alt: true,
+                    win: false,
+                },
+                key: Key::Space,
+            },
+            startup: StartupConfig {
+                launch_on_login: false,
+                start_hidden: true,
+            },
+            github: GitHubExtensionSource {
+                owner: "Greg-Lim".to_string(),
+                repo: "omni-palette-extensions".to_string(),
+                branch: "main".to_string(),
+                catalog_path: "dist/catalog.v1.json".to_string(),
+                enabled: true,
+            },
+        };
+
+        config.save_user_config(&path).expect("config should save");
+        let loaded = RuntimeConfig::load(Some(&path), Path::new("missing-dev-config.toml"));
+
+        assert_eq!(loaded, config);
+    }
+
+    #[test]
+    fn invalid_user_config_reports_diagnostic_and_falls_back() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let path = root.path().join("config.toml");
+        fs::write(&path, "activation =").expect("invalid config should be written");
+
+        let loaded =
+            RuntimeConfig::load_with_diagnostics(Some(&path), Path::new("missing-dev-config.toml"));
+
+        assert!(loaded.user_config_error.is_some());
+        assert_eq!(loaded.config, RuntimeConfig::default());
+    }
+
+    #[test]
+    fn default_activation_shortcut_restores_ctrl_shift_p() {
+        let shortcut = RuntimeConfig::default_activation_shortcut();
+
+        assert!(shortcut.modifier.control);
+        assert!(shortcut.modifier.shift);
+        assert!(!shortcut.modifier.alt);
+        assert_eq!(shortcut.key, Key::KeyP);
     }
 
     #[test]

@@ -1,0 +1,7 @@
+schema_version = 1
+id = "file_explorer"
+name = "File Explorer"
+platform = "windows"
+version = "0.1.0"
+kind = "static"
+publisher = "Greg-Lim"

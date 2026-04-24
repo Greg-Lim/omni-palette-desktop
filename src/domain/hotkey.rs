@@ -1,6 +1,6 @@
 use std::fmt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use strum_macros::Display;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -11,7 +11,7 @@ pub struct HotkeyModifiers {
     pub win: bool,
 }
 
-#[derive(Debug, Clone, Copy, Hash, Deserialize, Display, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, Deserialize, Serialize, Display, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")] // Converts KeyA to "key_a" automatically
 pub enum Key {
     // --- 1. Alphanumeric Keys ---

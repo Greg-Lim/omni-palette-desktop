@@ -62,10 +62,9 @@ activation = { mods = ["ctrl", "shift"], key = "p" }
 
 [extensions.github]
 owner = "Greg-Lim"
-repo = "omni-palette-extensions"
-branch = "main"
-catalog_path = "catalog.v1.json"
-public_key = ""
+repo = "omni-palette-desktop"
+branch = "master"
+catalog_path = "extensions/registry/catalog.v1.json"
 enabled = false
 ```
 

@@ -36,6 +36,7 @@ const WM_FORWARD_SHORTCUT: u32 = WM_APP + 1;
 
 enum HotkeyThreadCommand {
     ForwardShortcut(KeyboardShortcut),
+    UpdateShortcut(KeyboardShortcut, Sender<std::result::Result<(), String>>),
 }
 
 #[derive(Clone)]
@@ -60,6 +61,25 @@ impl HotkeyPassthrough {
                 );
             }
         }
+    }
+
+    pub fn update_shortcut(&self, shortcut: KeyboardShortcut) -> std::result::Result<(), String> {
+        let (result_tx, result_rx) = mpsc::channel();
+        self.command_tx
+            .send(HotkeyThreadCommand::UpdateShortcut(shortcut, result_tx))
+            .map_err(|err| format!("Could not send hotkey update request: {err}"))?;
+        unsafe {
+            PostThreadMessageW(
+                self.thread_id,
+                WM_FORWARD_SHORTCUT,
+                Default::default(),
+                Default::default(),
+            )
+            .map_err(|err| format!("Could not wake hotkey thread: {err:?}"))?;
+        }
+        result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|err| format!("Timed out waiting for hotkey update: {err}"))?
     }
 }
 
@@ -130,7 +150,7 @@ fn register_palette_hotkey(shortcut: KeyboardShortcut) -> Result<()> {
 fn hotkey_thread_main(
     tx: Sender<KeyboardShortcut>,
     command_rx: Receiver<HotkeyThreadCommand>,
-    activation_shortcut: KeyboardShortcut,
+    mut activation_shortcut: KeyboardShortcut,
 ) -> Result<()> {
     unsafe {
         // Ensure this thread has a message queue before RegisterHotKey
@@ -160,14 +180,39 @@ fn hotkey_thread_main(
                 let shortcut = shortcut.unwrap();
                 let _ = tx.send(shortcut);
             } else if msg.message == WM_FORWARD_SHORTCUT {
-                while let Ok(HotkeyThreadCommand::ForwardShortcut(shortcut)) = command_rx.try_recv()
-                {
-                    let _ = UnregisterHotKey(None, PALETTE_HOTKEY_ID);
-                    send_shortcut(&shortcut);
-                    thread::sleep(Duration::from_millis(50));
+                while let Ok(command) = command_rx.try_recv() {
+                    match command {
+                        HotkeyThreadCommand::ForwardShortcut(shortcut) => {
+                            let _ = UnregisterHotKey(None, PALETTE_HOTKEY_ID);
+                            send_shortcut(&shortcut);
+                            thread::sleep(Duration::from_millis(50));
 
-                    if let Err(err) = register_palette_hotkey(activation_shortcut) {
-                        warn!("Failed to re-register palette hotkey: {err:?}");
+                            if let Err(err) = register_palette_hotkey(activation_shortcut) {
+                                warn!("Failed to re-register palette hotkey: {err:?}");
+                            }
+                        }
+                        HotkeyThreadCommand::UpdateShortcut(shortcut, result_tx) => {
+                            let old_shortcut = activation_shortcut;
+                            let _ = UnregisterHotKey(None, PALETTE_HOTKEY_ID);
+                            match register_palette_hotkey(shortcut) {
+                                Ok(()) => {
+                                    activation_shortcut = shortcut;
+                                    let _ = result_tx.send(Ok(()));
+                                }
+                                Err(err) => {
+                                    let rollback_result = register_palette_hotkey(old_shortcut);
+                                    let message = match rollback_result {
+                                        Ok(()) => {
+                                            format!("Failed to register palette hotkey: {err:?}")
+                                        }
+                                        Err(rollback_err) => format!(
+                                            "Failed to register palette hotkey: {err:?}; also failed to restore previous hotkey: {rollback_err:?}"
+                                        ),
+                                    };
+                                    let _ = result_tx.send(Err(message));
+                                }
+                            }
+                        }
                     }
                 }
             }
