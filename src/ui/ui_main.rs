@@ -244,6 +244,10 @@ pub enum UiEvent {
         source: crate::config::runtime::GitHubExtensionSource,
         entry: CatalogEntry,
     },
+    UninstallExtensionRequested {
+        extension_id: String,
+        source_id: String,
+    },
     SetExtensionEnabledRequested {
         extension_id: String,
         source_id: String,

@@ -20,7 +20,8 @@ use crate::core::extensions::{
     extensions::load_config,
     install::{
         load_installed_state, set_bundled_extension_enabled, set_installed_extension_enabled,
-        BundledStaticExtension, ExtensionInstallService, InstalledState, BUNDLED_SOURCE_ID,
+        uninstall_installed_extension, BundledStaticExtension, ExtensionInstallService,
+        InstalledState, BUNDLED_SOURCE_ID,
     },
 };
 use crate::core::performance::{current_process_private_bytes, current_process_thread_count};
@@ -520,6 +521,18 @@ fn handle_ui_events(
                     entry,
                 );
             }
+            UiEvent::UninstallExtensionRequested {
+                extension_id,
+                source_id,
+            } => {
+                spawn_extension_uninstall(
+                    ui_tx.clone(),
+                    Arc::clone(ui_context),
+                    runtime_state.clone(),
+                    extension_id,
+                    source_id,
+                );
+            }
             UiEvent::SetExtensionEnabledRequested {
                 extension_id,
                 source_id,
@@ -791,6 +804,34 @@ fn spawn_extension_enabled_update(
             let state =
                 set_installed_extension_enabled(&install_root, &extension_id, &source_id, enabled)
                     .map_err(|err| err.to_string())?;
+            reload_runtime_state(
+                &runtime_state.registry,
+                &runtime_state.ignored_process_names,
+                &runtime_state.bundled_extensions_root,
+                runtime_state.current_os,
+            )?;
+            Ok(state)
+        })();
+        send_ui_signal(
+            &ui_tx,
+            &ui_context,
+            UiSignal::InstalledExtensionsUpdated(result),
+        );
+    });
+}
+
+fn spawn_extension_uninstall(
+    ui_tx: Sender<UiSignal>,
+    ui_context: SharedUiContext,
+    runtime_state: RuntimeState,
+    extension_id: String,
+    source_id: String,
+) {
+    std::thread::spawn(move || {
+        let result = (|| {
+            let install_root = extension_install_root()?;
+            let state = uninstall_installed_extension(&install_root, &extension_id, &source_id)
+                .map_err(|err| err.to_string())?;
             reload_runtime_state(
                 &runtime_state.registry,
                 &runtime_state.ignored_process_names,

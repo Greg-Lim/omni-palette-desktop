@@ -158,6 +158,13 @@ impl InstalledState {
         }
     }
 
+    pub fn remove(&mut self, extension_id: &str, source_id: &str) -> Option<InstalledExtension> {
+        self.extensions
+            .iter()
+            .position(|extension| extension.id == extension_id && extension.source_id == source_id)
+            .map(|index| self.extensions.remove(index))
+    }
+
     pub fn enabled_for(&self, extension_id: &str, source_id: &str) -> Option<bool> {
         self.extensions
             .iter()
@@ -197,6 +204,7 @@ pub enum InstallError {
     PlatformMismatch { expected: Os, actual: Os },
     PackageUrlNotAllowed(String),
     DownloadTooLarge { url: String, max_bytes: usize },
+    UnsafeInstalledPath(PathBuf),
 }
 
 impl From<io::Error> for InstallError {
@@ -250,6 +258,13 @@ impl std::fmt::Display for InstallError {
             }
             InstallError::DownloadTooLarge { url, max_bytes } => {
                 write!(f, "Download from {url} exceeded {max_bytes} bytes")
+            }
+            InstallError::UnsafeInstalledPath(path) => {
+                write!(
+                    f,
+                    "Refusing to uninstall extension path outside the install root: {}",
+                    path.display()
+                )
             }
         }
     }
@@ -320,6 +335,68 @@ pub fn set_bundled_extension_enabled(
     Ok(state)
 }
 
+pub fn uninstall_installed_extension(
+    install_root: &Path,
+    extension_id: &str,
+    source_id: &str,
+) -> Result<InstalledState, InstallError> {
+    if source_id == BUNDLED_SOURCE_ID {
+        return Err(InstallError::Package(PackageError::InvalidManifest(
+            "Bundled extensions can be disabled, but not uninstalled.".to_string(),
+        )));
+    }
+
+    let mut state = load_installed_state(install_root)?;
+    let extension = state.remove(extension_id, source_id).ok_or_else(|| {
+        InstallError::Package(PackageError::InvalidManifest(format!(
+            "Installed extension not found: {source_id}/{extension_id}"
+        )))
+    })?;
+
+    let installed_path = resolve_installed_file_path(install_root, &extension.installed_path)?;
+    match fs::remove_file(&installed_path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(InstallError::Io(err)),
+    }
+
+    save_installed_state(install_root, &state)?;
+    Ok(state)
+}
+
+fn resolve_installed_file_path(
+    install_root: &Path,
+    installed_path: &Path,
+) -> Result<PathBuf, InstallError> {
+    let install_root = install_root.canonicalize()?;
+    let candidate = if installed_path.is_absolute() {
+        installed_path.to_path_buf()
+    } else {
+        install_root.join(installed_path)
+    };
+
+    let resolved = match candidate.canonicalize() {
+        Ok(path) => path,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            let file_name = candidate
+                .file_name()
+                .ok_or_else(|| InstallError::UnsafeInstalledPath(candidate.clone()))?;
+            let parent = candidate
+                .parent()
+                .ok_or_else(|| InstallError::UnsafeInstalledPath(candidate.clone()))?
+                .canonicalize()?;
+            parent.join(file_name)
+        }
+        Err(err) => return Err(InstallError::Io(err)),
+    };
+
+    if !resolved.starts_with(&install_root) {
+        return Err(InstallError::UnsafeInstalledPath(resolved));
+    }
+
+    Ok(resolved)
+}
+
 fn fetch_bytes(url: &str, max_bytes: usize) -> Result<Vec<u8>, InstallError> {
     let response = ureq::get(url)
         .call()
@@ -354,6 +431,23 @@ fn package_url_allowed(source: &GitHubExtensionSource, package_url: &str) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn installed_extension(
+        id: &str,
+        source_id: &str,
+        installed_path: PathBuf,
+    ) -> InstalledExtension {
+        InstalledExtension {
+            id: id.to_string(),
+            version: "1.0.0".to_string(),
+            platform: Os::Windows,
+            kind: ExtensionKind::Static,
+            source_id: source_id.to_string(),
+            package_sha256: "a".repeat(64),
+            enabled: true,
+            installed_path,
+        }
+    }
 
     #[test]
     fn upsert_replaces_existing_extension_state() {
@@ -401,6 +495,85 @@ mod tests {
         assert!(state.set_enabled("chrome_tools", "official", false));
         assert!(!state.extensions[0].enabled);
         assert!(!state.set_enabled("missing", "official", true));
+    }
+
+    #[test]
+    fn remove_deletes_only_matching_extension_source() {
+        let mut state = InstalledState::default();
+        state.upsert(installed_extension(
+            "windows",
+            BUNDLED_SOURCE_ID,
+            PathBuf::from("static/windows.toml"),
+        ));
+        state.upsert(installed_extension(
+            "windows",
+            GITHUB_SOURCE_ID,
+            PathBuf::from("static/windows.toml"),
+        ));
+
+        let removed = state
+            .remove("windows", GITHUB_SOURCE_ID)
+            .expect("downloaded extension should be removed");
+
+        assert_eq!(removed.source_id, GITHUB_SOURCE_ID);
+        assert_eq!(state.extensions.len(), 1);
+        assert_eq!(state.extensions[0].source_id, BUNDLED_SOURCE_ID);
+    }
+
+    #[test]
+    fn uninstall_removes_static_file_and_state_entry() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let static_dir = root.path().join("static");
+        fs::create_dir_all(&static_dir).expect("static dir should be created");
+        let installed_path = static_dir.join("chrome.toml");
+        fs::write(&installed_path, "version = 2").expect("extension file should be written");
+
+        let mut state = InstalledState::default();
+        state.upsert(installed_extension(
+            "chrome",
+            GITHUB_SOURCE_ID,
+            installed_path.clone(),
+        ));
+        save_installed_state(root.path(), &state).expect("state should be saved");
+
+        let state = uninstall_installed_extension(root.path(), "chrome", GITHUB_SOURCE_ID)
+            .expect("extension should uninstall");
+
+        assert!(state.extensions.is_empty());
+        assert!(!installed_path.exists());
+        assert!(load_installed_state(root.path())
+            .expect("state should reload")
+            .extensions
+            .is_empty());
+    }
+
+    #[test]
+    fn uninstall_refuses_paths_outside_install_root() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let outside = tempfile::tempdir().expect("outside temp dir should be created");
+        let outside_path = outside.path().join("chrome.toml");
+        fs::write(&outside_path, "version = 2").expect("outside file should be written");
+
+        let mut state = InstalledState::default();
+        state.upsert(installed_extension(
+            "chrome",
+            GITHUB_SOURCE_ID,
+            outside_path.clone(),
+        ));
+        save_installed_state(root.path(), &state).expect("state should be saved");
+
+        let err = uninstall_installed_extension(root.path(), "chrome", GITHUB_SOURCE_ID)
+            .expect_err("unsafe path should be rejected");
+
+        assert!(matches!(err, InstallError::UnsafeInstalledPath(_)));
+        assert!(outside_path.exists());
+        assert_eq!(
+            load_installed_state(root.path())
+                .expect("state should reload")
+                .extensions
+                .len(),
+            1
+        );
     }
 
     #[test]

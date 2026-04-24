@@ -7,7 +7,7 @@ use eframe::egui;
 use crate::config::runtime::{GitHubExtensionSource, RuntimeConfig};
 use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog, ExtensionKind};
 use crate::core::extensions::install::{
-    BundledStaticExtension, InstalledExtension, InstalledState, BUNDLED_SOURCE_ID,
+    BundledStaticExtension, InstalledExtension, InstalledState, BUNDLED_SOURCE_ID, GITHUB_SOURCE_ID,
 };
 use crate::domain::action::Os;
 use crate::domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut};
@@ -56,7 +56,14 @@ pub struct SettingsBootstrap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
     General,
-    Extensions,
+    Installed,
+    Marketplace,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingUninstall {
+    extension_id: String,
+    source_id: String,
 }
 
 #[derive(Debug)]
@@ -77,6 +84,7 @@ pub struct SettingsState {
     catalog_busy: bool,
     catalog_filter_text: String,
     extension_busy: Option<String>,
+    pending_uninstall: Option<PendingUninstall>,
     saving: bool,
     recording_hotkey: bool,
     status: Option<String>,
@@ -101,6 +109,7 @@ impl SettingsState {
             catalog_busy: false,
             catalog_filter_text: String::new(),
             extension_busy: None,
+            pending_uninstall: None,
             saving: false,
             recording_hotkey: false,
             status: None,
@@ -141,6 +150,7 @@ impl SettingsState {
 
     pub fn installed_extensions_updated(&mut self, result: Result<InstalledState, String>) {
         self.extension_busy = None;
+        self.pending_uninstall = None;
         match result {
             Ok(state) => {
                 self.installed_state = state;
@@ -257,13 +267,24 @@ impl SettingsState {
                 ui.add_space(8.0);
                 if nav_button(
                     ui,
-                    self.tab == SettingsTab::Extensions,
-                    "Extensions",
-                    "Catalog and installs",
+                    self.tab == SettingsTab::Installed,
+                    "Manage Extensions",
+                    "Enable and remove",
                 )
                 .clicked()
                 {
-                    self.tab = SettingsTab::Extensions;
+                    self.tab = SettingsTab::Installed;
+                }
+                ui.add_space(8.0);
+                if nav_button(
+                    ui,
+                    self.tab == SettingsTab::Marketplace,
+                    "Marketplace",
+                    "Browse and install",
+                )
+                .clicked()
+                {
+                    self.tab = SettingsTab::Marketplace;
                 }
             });
     }
@@ -287,7 +308,8 @@ impl SettingsState {
                         ui.set_width(ui.available_width());
                         match self.tab {
                             SettingsTab::General => self.draw_general(ui, event_tx),
-                            SettingsTab::Extensions => self.draw_extensions(ui, event_tx),
+                            SettingsTab::Installed => self.draw_installed_page(ui, event_tx),
+                            SettingsTab::Marketplace => self.draw_marketplace(ui, event_tx),
                         }
                     });
             });
@@ -400,32 +422,48 @@ impl SettingsState {
         });
     }
 
-    fn draw_extensions(&mut self, ui: &mut egui::Ui, event_tx: &Sender<UiEvent>) {
+    fn draw_installed_page(&mut self, ui: &mut egui::Ui, event_tx: &Sender<UiEvent>) {
         page_header(
             ui,
-            "Extensions",
-            "Install local command packs and opt into a GitHub catalog when you are ready.",
+            "Installed Extensions",
+            "Manage extensions that are available on this device.",
         );
         self.draw_status_summary(ui);
 
         section(
             ui,
-            "GitHub Catalog Source",
-            "Remote catalogs stay off by default. Enable one only when you trust the source.",
+            "Bundled Defaults",
+            "Built into Omni Palette. They can be disabled, but not uninstalled.",
+            |ui| self.draw_bundled_extensions(ui, event_tx),
+        );
+
+        section(
+            ui,
+            "Downloaded Extensions",
+            "Installed from your configured catalog.",
+            |ui| self.draw_downloaded_extensions(ui, event_tx),
+        );
+    }
+
+    fn draw_marketplace(&mut self, ui: &mut egui::Ui, event_tx: &Sender<UiEvent>) {
+        page_header(
+            ui,
+            "Extension Marketplace",
+            "Install extensions from a GitHub catalog you trust.",
+        );
+        self.draw_status_summary(ui);
+
+        section(
+            ui,
+            "Catalog Source",
+            "Choose the GitHub catalog Omni Palette should refresh from.",
             |ui| self.draw_extension_source(ui, event_tx),
         );
 
         section(
             ui,
-            "Bundled and Installed Extensions",
-            "Enable, disable, or reload bundled defaults and user-installed extensions.",
-            |ui| self.draw_installed_extensions(ui, event_tx),
-        );
-
-        section(
-            ui,
-            "Catalog",
-            "Refresh the catalog to browse extensions available for this Windows build.",
+            "Available Extensions",
+            "Search the refreshed catalog for extensions that support this Windows build.",
             |ui| self.draw_catalog(ui, event_tx),
         );
     }
@@ -493,7 +531,7 @@ impl SettingsState {
         }
     }
 
-    fn draw_installed_extensions(&mut self, ui: &mut egui::Ui, event_tx: &Sender<UiEvent>) {
+    fn draw_bundled_extensions(&mut self, ui: &mut egui::Ui, event_tx: &Sender<UiEvent>) {
         if let Some(error) = &self.installed_state_error {
             banner(
                 ui,
@@ -503,16 +541,8 @@ impl SettingsState {
             ui.add_space(10.0);
         }
 
-        let installed_extensions = self
-            .installed_state
-            .extensions
-            .iter()
-            .filter(|extension| extension.source_id != BUNDLED_SOURCE_ID)
-            .cloned()
-            .collect::<Vec<_>>();
-
-        if self.bundled_static_extensions.is_empty() && installed_extensions.is_empty() {
-            empty_state(ui, "No bundled or user-installed extensions yet.");
+        if self.bundled_static_extensions.is_empty() {
+            empty_state(ui, "No bundled defaults are available.");
             return;
         }
 
@@ -539,19 +569,16 @@ impl SettingsState {
                     });
                 });
 
-                let action_label = if extension.enabled {
-                    "Disable"
-                } else {
-                    "Enable"
-                };
-                let busy = self.extension_busy.as_deref() == Some(extension.id.as_str());
+                let action_label = extension_toggle_label(extension.enabled);
+                let busy_key = extension_busy_key(&extension.id, BUNDLED_SOURCE_ID);
+                let busy = self.extension_busy.as_deref() == Some(busy_key.as_str());
                 let next_enabled = !extension.enabled;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add_enabled(!busy, secondary_button_widget(action_label))
+                        .add_enabled(!busy, extension_toggle_button(action_label, next_enabled))
                         .clicked()
                     {
-                        self.extension_busy = Some(extension.id.clone());
+                        self.extension_busy = Some(busy_key);
                         let _ = event_tx.send(UiEvent::SetBundledExtensionEnabledRequested {
                             extension: extension.clone(),
                             enabled: next_enabled,
@@ -560,12 +587,32 @@ impl SettingsState {
                 });
             });
         }
+    }
+
+    fn draw_downloaded_extensions(&mut self, ui: &mut egui::Ui, event_tx: &Sender<UiEvent>) {
+        let installed_extensions = self
+            .installed_state
+            .extensions
+            .iter()
+            .filter(|extension| extension.source_id != BUNDLED_SOURCE_ID)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if installed_extensions.is_empty() {
+            empty_state(ui, "No downloaded extensions installed yet.");
+            return;
+        }
 
         for extension in installed_extensions {
+            let display_name = self.installed_extension_display_name(&extension);
+            let busy_key = extension_busy_key(&extension.id, &extension.source_id);
+            let busy = self.extension_busy.as_deref() == Some(busy_key.as_str());
+            let pending_uninstall = self.is_uninstall_pending(&extension.id, &extension.source_id);
+
             list_row(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.label(
-                        egui::RichText::new(&extension.id)
+                        egui::RichText::new(&display_name)
                             .size(15.0)
                             .strong()
                             .color(TEXT_PRIMARY),
@@ -583,27 +630,86 @@ impl SettingsState {
                     });
                 });
 
-                let action_label = if extension.enabled {
-                    "Disable"
-                } else {
-                    "Enable"
-                };
-                let busy = self.extension_busy.as_deref() == Some(extension.id.as_str());
+                let action_label = extension_toggle_label(extension.enabled);
+                let next_enabled = !extension.enabled;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_enabled(!busy, secondary_button_widget(action_label))
-                        .clicked()
-                    {
-                        self.extension_busy = Some(extension.id.clone());
-                        let _ = event_tx.send(UiEvent::SetExtensionEnabledRequested {
-                            extension_id: extension.id.clone(),
-                            source_id: extension.source_id.clone(),
-                            enabled: !extension.enabled,
-                        });
+                    if pending_uninstall {
+                        self.draw_uninstall_confirmation(
+                            ui,
+                            event_tx,
+                            &extension,
+                            &display_name,
+                            busy,
+                        );
+                    } else {
+                        if ui.add_enabled(!busy, danger_button("Uninstall")).clicked() {
+                            self.pending_uninstall = Some(PendingUninstall {
+                                extension_id: extension.id.clone(),
+                                source_id: extension.source_id.clone(),
+                            });
+                        }
+
+                        if ui
+                            .add_enabled(!busy, extension_toggle_button(action_label, next_enabled))
+                            .clicked()
+                        {
+                            self.extension_busy = Some(busy_key);
+                            let _ = event_tx.send(UiEvent::SetExtensionEnabledRequested {
+                                extension_id: extension.id.clone(),
+                                source_id: extension.source_id.clone(),
+                                enabled: next_enabled,
+                            });
+                        }
                     }
                 });
             });
         }
+    }
+
+    fn draw_uninstall_confirmation(
+        &mut self,
+        ui: &mut egui::Ui,
+        event_tx: &Sender<UiEvent>,
+        extension: &InstalledExtension,
+        display_name: &str,
+        busy: bool,
+    ) {
+        if ui.add_enabled(!busy, danger_button("Remove")).clicked() {
+            self.extension_busy = Some(extension_busy_key(&extension.id, &extension.source_id));
+            self.status = Some(format!("Uninstalling {display_name}..."));
+            let _ = event_tx.send(UiEvent::UninstallExtensionRequested {
+                extension_id: extension.id.clone(),
+                source_id: extension.source_id.clone(),
+            });
+        }
+
+        if ui
+            .add_enabled(!busy, secondary_button_widget("Cancel"))
+            .clicked()
+        {
+            self.pending_uninstall = None;
+        }
+
+        ui.label(egui::RichText::new("Remove from this device?").color(WARNING));
+    }
+
+    fn installed_extension_display_name(&self, extension: &InstalledExtension) -> String {
+        self.catalog
+            .as_ref()
+            .and_then(|catalog| {
+                catalog
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id == extension.id)
+                    .map(|entry| entry.name.clone())
+            })
+            .unwrap_or_else(|| extension.id.clone())
+    }
+
+    fn is_uninstall_pending(&self, extension_id: &str, source_id: &str) -> bool {
+        self.pending_uninstall.as_ref().is_some_and(|pending| {
+            pending.extension_id == extension_id && pending.source_id == source_id
+        })
     }
 
     fn draw_catalog(&mut self, ui: &mut egui::Ui, event_tx: &Sender<UiEvent>) {
@@ -696,14 +802,51 @@ impl SettingsState {
                     return;
                 }
 
-                let busy = self.extension_busy.as_deref() == Some(entry.id.as_str());
+                let busy_key = extension_busy_key(&entry.id, GITHUB_SOURCE_ID);
+                let busy = self.extension_busy.as_deref() == Some(busy_key.as_str());
                 let label = match installed_version {
                     Some(version) if version == entry.version => "Reinstall",
                     Some(_) => "Update",
                     None => "Install",
                 };
-                if ui.add_enabled(!busy, primary_button(label)).clicked() {
-                    self.extension_busy = Some(entry.id.clone());
+
+                if installed_version.is_some() {
+                    if self.is_uninstall_pending(&entry.id, GITHUB_SOURCE_ID) {
+                        if ui.add_enabled(!busy, danger_button("Remove")).clicked() {
+                            self.extension_busy = Some(busy_key.clone());
+                            self.status = Some(format!("Uninstalling {}...", entry.name));
+                            let _ = event_tx.send(UiEvent::UninstallExtensionRequested {
+                                extension_id: entry.id.clone(),
+                                source_id: GITHUB_SOURCE_ID.to_string(),
+                            });
+                        }
+
+                        if ui
+                            .add_enabled(!busy, secondary_button_widget("Cancel"))
+                            .clicked()
+                        {
+                            self.pending_uninstall = None;
+                        }
+
+                        ui.label(egui::RichText::new("Remove from this device?").color(WARNING));
+                        return;
+                    }
+
+                    if ui.add_enabled(!busy, danger_button("Uninstall")).clicked() {
+                        self.pending_uninstall = Some(PendingUninstall {
+                            extension_id: entry.id.clone(),
+                            source_id: GITHUB_SOURCE_ID.to_string(),
+                        });
+                    }
+                }
+
+                let action_button = if label == "Reinstall" {
+                    secondary_button_widget(label)
+                } else {
+                    primary_button(label)
+                };
+                if ui.add_enabled(!busy, action_button).clicked() {
+                    self.extension_busy = Some(busy_key);
                     self.status = Some(format!("Installing {}...", entry.name));
                     let _ = event_tx.send(UiEvent::InstallExtensionRequested {
                         source: self.draft.github.clone(),
@@ -916,12 +1059,73 @@ fn primary_button(label: &str) -> egui::Button<'_> {
     egui::Button::new(
         egui::RichText::new(label)
             .strong()
-            .color(egui::Color32::WHITE),
+            .color(egui::Color32::from_rgb(202, 225, 248)),
     )
-    .fill(ACCENT_DARK)
-    .stroke(egui::Stroke::new(1.0, ACCENT))
+    .fill(egui::Color32::from_rgb(28, 49, 70))
+    .stroke(egui::Stroke::new(
+        1.0,
+        egui::Color32::from_rgb(78, 135, 190),
+    ))
     .corner_radius(egui::CornerRadius::same(7))
     .min_size(egui::vec2(104.0, 32.0))
+}
+
+fn success_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        egui::RichText::new(label)
+            .strong()
+            .color(egui::Color32::from_rgb(164, 224, 190)),
+    )
+    .fill(egui::Color32::from_rgb(29, 58, 45))
+    .stroke(egui::Stroke::new(
+        1.0,
+        egui::Color32::from_rgb(75, 148, 108),
+    ))
+    .corner_radius(egui::CornerRadius::same(7))
+    .min_size(egui::vec2(88.0, 32.0))
+}
+
+fn warning_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        egui::RichText::new(label)
+            .strong()
+            .color(egui::Color32::from_rgb(232, 183, 112)),
+    )
+    .fill(egui::Color32::from_rgb(58, 47, 32))
+    .stroke(egui::Stroke::new(
+        1.0,
+        egui::Color32::from_rgb(184, 132, 64),
+    ))
+    .corner_radius(egui::CornerRadius::same(7))
+    .min_size(egui::vec2(88.0, 32.0))
+}
+
+fn danger_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        egui::RichText::new(label)
+            .strong()
+            .color(egui::Color32::from_rgb(232, 145, 152)),
+    )
+    .fill(egui::Color32::from_rgb(59, 36, 41))
+    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(182, 86, 95)))
+    .corner_radius(egui::CornerRadius::same(7))
+    .min_size(egui::vec2(88.0, 32.0))
+}
+
+fn extension_toggle_button(label: &str, next_enabled: bool) -> egui::Button<'_> {
+    if next_enabled {
+        success_button(label)
+    } else {
+        warning_button(label)
+    }
+}
+
+fn extension_toggle_label(enabled: bool) -> &'static str {
+    if enabled {
+        "Disable"
+    } else {
+        "Enable"
+    }
 }
 
 fn secondary_button_widget(label: &str) -> egui::Button<'_> {
@@ -1121,8 +1325,13 @@ fn catalog_entry_matches_query(entry: &CatalogEntry, query: &str) -> bool {
 fn installed_versions_by_id(extensions: &[InstalledExtension]) -> HashMap<String, String> {
     extensions
         .iter()
+        .filter(|extension| extension.source_id == GITHUB_SOURCE_ID)
         .map(|extension| (extension.id.clone(), extension.version.clone()))
         .collect()
+}
+
+fn extension_busy_key(extension_id: &str, source_id: &str) -> String {
+    format!("{source_id}/{extension_id}")
 }
 
 fn capture_shortcut(ctx: &egui::Context) -> Option<KeyboardShortcut> {
@@ -1234,10 +1443,14 @@ fn map_egui_key(key: egui::Key) -> Option<Key> {
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_catalog_entries, validate_catalog_source};
+    use super::{filter_catalog_entries, installed_versions_by_id, validate_catalog_source};
     use crate::config::runtime::GitHubExtensionSource;
     use crate::core::extensions::catalog::{CatalogEntry, ExtensionKind};
+    use crate::core::extensions::install::{
+        InstalledExtension, BUNDLED_SOURCE_ID, GITHUB_SOURCE_ID,
+    };
     use crate::domain::action::Os;
+    use std::path::PathBuf;
 
     fn valid_source() -> GitHubExtensionSource {
         GitHubExtensionSource {
@@ -1353,5 +1566,36 @@ mod tests {
         let filtered = filter_catalog_entries(entries.iter().collect(), "missing");
 
         assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn installed_versions_by_id_ignores_bundled_entries() {
+        let extensions = vec![
+            InstalledExtension {
+                id: "windows".to_string(),
+                version: "0.1.0".to_string(),
+                platform: Os::Windows,
+                kind: ExtensionKind::Static,
+                source_id: BUNDLED_SOURCE_ID.to_string(),
+                package_sha256: "0".repeat(64),
+                enabled: true,
+                installed_path: PathBuf::from("static/windows.toml"),
+            },
+            InstalledExtension {
+                id: "chrome".to_string(),
+                version: "0.1.0".to_string(),
+                platform: Os::Windows,
+                kind: ExtensionKind::Static,
+                source_id: GITHUB_SOURCE_ID.to_string(),
+                package_sha256: "1".repeat(64),
+                enabled: true,
+                installed_path: PathBuf::from("static/chrome.toml"),
+            },
+        ];
+
+        let versions = installed_versions_by_id(&extensions);
+
+        assert!(!versions.contains_key("windows"));
+        assert_eq!(versions.get("chrome").map(String::as_str), Some("0.1.0"));
     }
 }
