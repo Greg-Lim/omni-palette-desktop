@@ -359,7 +359,7 @@ cmd = { mods = ["ctrl"], key = "T" }
 
     #[test]
     fn registry_package_sources_match_static_configs() {
-        for package_id in ["chrome", "file_explorer"] {
+        for package_id in ["chrome", "file_explorer", "powerpoint"] {
             let package_root = Path::new("extensions")
                 .join("registry")
                 .join("packages")
@@ -405,7 +405,7 @@ cmd = { mods = ["ctrl"], key = "T" }
             .map(|entry| entry.id.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(catalog_ids, vec!["chrome", "file_explorer"]);
+        assert_eq!(catalog_ids, vec!["chrome", "file_explorer", "powerpoint"]);
 
         for entry in &catalog.entries {
             let manifest_path = Path::new("extensions")

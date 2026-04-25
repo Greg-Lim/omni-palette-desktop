@@ -17,8 +17,10 @@ extensions/bundled/
   plugins/
 ```
 
-`windows.toml` is the only bundled static shortcut pack. It provides core
-Windows system shortcuts and can be disabled from the settings extension page.
+`windows.toml` is the bundled static shortcut pack. It provides core Windows
+system shortcuts and can be disabled from the settings extension page. App
+shortcut packs such as PowerPoint are registry packages rather than bundled
+defaults.
 
 ```toml
 version = 2
@@ -33,7 +35,7 @@ default_focus_state = "global"
 [actions.open_file_explorer]
 name = "Open File Explorer"
 priority = "high"
-cmd = { mods = ["win"], key = "E" }
+cmd = { mods = ["win"], key = "KeyE" }
 ```
 
 WASM plugins live in `extensions/bundled/plugins/<plugin_id>`. Downloadable WASM
@@ -62,6 +64,11 @@ extensions/registry/
         manifest.toml
         static/
           file_explorer.toml
+    powerpoint/
+      windows/
+        manifest.toml
+        static/
+          powerpoint.toml
 ```
 
 Package source folders do not include version numbers. Git tags and GitHub

@@ -16,37 +16,37 @@ default_tags = ["windows", "system", "os"]
 [actions.open_file_explorer]
 name = "Open File Explorer"
 action_priority = "high"
-cmd = { mods = ["win"], key = "E" }
+cmd = { mods = ["win"], key = "KeyE" }
 
 [actions.open_settings]
 name = "Open Settings"
 action_priority = "high"
-cmd = { mods = ["win"], key = "I" }
+cmd = { mods = ["win"], key = "KeyI" }
 
 [actions.lock_pc]
 name = "Lock PC"
 action_priority = "high"
-cmd = { mods = ["win"], key = "L" }
+cmd = { mods = ["win"], key = "KeyL" }
 
 [actions.open_run]
 name = "Open Run"
 action_priority = "high"
-cmd = { mods = ["win"], key = "R" }
+cmd = { mods = ["win"], key = "KeyR" }
 
 [actions.open_search]
 name = "Open Search"
 action_priority = "high"
-cmd = { mods = ["win"], key = "S" }
+cmd = { mods = ["win"], key = "KeyS" }
 
 [actions.open_quick_link_menu]
 name = "Open Quick Link menu"
 action_priority = "medium"
-cmd = { mods = ["win"], key = "X" }
+cmd = { mods = ["win"], key = "KeyX" }
 
 [actions.show_hide_desktop]
 name = "Show/hide desktop"
 action_priority = "medium"
-cmd = { mods = ["win"], key = "D" }
+cmd = { mods = ["win"], key = "KeyD" }
 
 [actions.open_task_view]
 name = "Open Task View"
@@ -56,22 +56,22 @@ cmd = { mods = ["win"], key = "Tab" }
 [actions.open_clipboard_history]
 name = "Open Clipboard History"
 action_priority = "high"
-cmd = { mods = ["win"], key = "V" }
+cmd = { mods = ["win"], key = "KeyV" }
 
 [actions.open_action_center]
 name = "Open Action Center"
 action_priority = "low"
-cmd = { mods = ["win"], key = "A" }
+cmd = { mods = ["win"], key = "KeyA" }
 
 [actions.open_project_settings]
 name = "Open Project Settings"
 action_priority = "suppressed"
-cmd = { mods = ["win"], key = "P" }
+cmd = { mods = ["win"], key = "KeyP" }
 
 [actions.screen_snip]
 name = "Screen snip"
 action_priority = "high"
-cmd = { mods = ["win", "shift"], key = "S" }
+cmd = { mods = ["win", "shift"], key = "KeyS" }
 
 [actions.save_screenshot]
 name = "Save screenshot"
@@ -81,7 +81,7 @@ cmd = { mods = ["win"], key = "PrintScreen" }
 [actions.open_accessibility]
 name = "Open Accessibility"
 action_priority = "suppressed"
-cmd = { mods = ["win"], key = "U" }
+cmd = { mods = ["win"], key = "KeyU" }
 
 [actions.snap_window_left]
 name = "Snap window left"
@@ -111,32 +111,32 @@ cmd = { mods = ["win"], key = "Period" }
 [actions.open_voice_typing]
 name = "Open Voice Typing"
 action_priority = "low"
-cmd = { mods = ["win"], key = "H" }
+cmd = { mods = ["win"], key = "KeyH" }
 
 [actions.open_widgets]
 name = "Open Widgets"
 action_priority = "low"
-cmd = { mods = ["win"], key = "W" }
+cmd = { mods = ["win"], key = "KeyW" }
 
 [actions.open_cast]
 name = "Open Cast"
 action_priority = "suppressed"
-cmd = { mods = ["win"], key = "K" }
+cmd = { mods = ["win"], key = "KeyK" }
 
 [actions.open_game_bar]
 name = "Open Game Bar"
 action_priority = "suppressed"
-cmd = { mods = ["win"], key = "G" }
+cmd = { mods = ["win"], key = "KeyG" }
 
 [actions.minimize_all_windows]
 name = "Minimize all windows"
 action_priority = "low"
-cmd = { mods = ["win"], key = "M" }
+cmd = { mods = ["win"], key = "KeyM" }
 
 [actions.restore_minimized_windows]
 name = "Restore minimized windows"
 action_priority = "low"
-cmd = { mods = ["win", "shift"], key = "M" }
+cmd = { mods = ["win", "shift"], key = "KeyM" }
 
 [actions.move_window_left_monitor]
 name = "Move window to left monitor"
@@ -166,7 +166,7 @@ cmd = { mods = ["win", "shift"], key = "UpArrow" }
 [actions.create_virtual_desktop]
 name = "Create virtual desktop"
 action_priority = "low"
-cmd = { mods = ["win", "ctrl"], key = "D" }
+cmd = { mods = ["win", "ctrl"], key = "KeyD" }
 
 [actions.next_virtual_desktop]
 name = "Next virtual desktop"
@@ -186,12 +186,12 @@ cmd = { mods = ["win", "ctrl"], key = "F4" }
 [actions.open_quick_assist]
 name = "Open Quick Assist"
 action_priority = "suppressed"
-cmd = { mods = ["win", "ctrl"], key = "Q" }
+cmd = { mods = ["win", "ctrl"], key = "KeyQ" }
 
 [actions.open_sound_output]
 name = "Open Sound Output"
 action_priority = "low"
-cmd = { mods = ["win", "ctrl"], key = "V" }
+cmd = { mods = ["win", "ctrl"], key = "KeyV" }
 
 [actions.open_system_about]
 name = "Open System About"
@@ -201,17 +201,17 @@ cmd = { mods = ["win"], key = "Pause" }
 [actions.record_screen_region]
 name = "Record screen region"
 action_priority = "high"
-cmd = { mods = ["win", "shift"], key = "R" }
+cmd = { mods = ["win", "shift"], key = "KeyR" }
 
 [actions.toggle_hdr]
 name = "Toggle HDR"
 action_priority = "suppressed"
-cmd = { mods = ["win", "alt"], key = "B" }
+cmd = { mods = ["win", "alt"], key = "KeyB" }
 
 [actions.toggle_color_filters]
 name = "Toggle color filters"
 action_priority = "suppressed"
-cmd = { mods = ["win", "ctrl"], key = "C" }
+cmd = { mods = ["win", "ctrl"], key = "KeyC" }
 
 [actions.open_narrator]
 name = "Open Narrator"
@@ -236,12 +236,12 @@ cmd = { mods = ["win"], key = "Escape" }
 [actions.open_feedback_hub]
 name = "Open Feedback Hub"
 action_priority = "suppressed"
-cmd = { mods = ["win"], key = "F" }
+cmd = { mods = ["win"], key = "KeyF" }
 
 [actions.open_recall]
 name = "Open Recall"
 action_priority = "suppressed"
-cmd = { mods = ["win"], key = "J" }
+cmd = { mods = ["win"], key = "KeyJ" }
 
 [actions.open_ime_reconversion]
 name = "Open IME reconversion"
@@ -261,7 +261,7 @@ cmd = { mods = ["win", "shift"], key = "Space" }
 [actions.cycle_notifications]
 name = "Cycle notifications"
 action_priority = "suppressed"
-cmd = { mods = ["win", "shift"], key = "V" }
+cmd = { mods = ["win", "shift"], key = "KeyV" }
 
 [actions.uwp_full_screen]
 name = "UWP full screen"
@@ -271,9 +271,9 @@ cmd = { mods = ["win", "shift"], key = "Enter" }
 [actions.mixed_reality_input]
 name = "Mixed Reality input"
 action_priority = "suppressed"
-cmd = { mods = ["win"], key = "Y" }
+cmd = { mods = ["win"], key = "KeyY" }
 
 [actions.open_snap_layouts]
 name = "Open Snap Layouts"
 action_priority = "suppressed"
-cmd = { mods = ["win"], key = "Z" }
+cmd = { mods = ["win"], key = "KeyZ" }

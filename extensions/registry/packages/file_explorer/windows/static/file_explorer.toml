@@ -24,13 +24,13 @@ default_tags = ["windows", "explorer", "files"]
 name = "New tab"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["ctrl"], key = "T" }
+cmd = { mods = ["ctrl"], key = "KeyT" }
 
 [actions.close_tab]
 name = "Close tab"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "W" }
+cmd = { mods = ["ctrl"], key = "KeyW" }
 
 [actions.next_tab]
 name = "Next tab"
@@ -48,13 +48,13 @@ cmd = { mods = ["ctrl", "shift"], key = "Tab" }
 name = "New window"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["ctrl"], key = "N" }
+cmd = { mods = ["ctrl"], key = "KeyN" }
 
 [actions.new_folder]
 name = "New folder"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["ctrl", "shift"], key = "N" }
+cmd = { mods = ["ctrl", "shift"], key = "KeyN" }
 
 [actions.rename_item]
 name = "Rename item"
@@ -72,13 +72,13 @@ cmd = { mods = [], key = "F5" }
 name = "Search files"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["ctrl"], key = "E" }
+cmd = { mods = ["ctrl"], key = "KeyE" }
 
 [actions.focus_address_bar]
 name = "Focus address bar"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["alt"], key = "D" }
+cmd = { mods = ["alt"], key = "KeyD" }
 
 [actions.show_properties]
 name = "Show properties"
@@ -108,19 +108,19 @@ cmd = { mods = ["alt"], key = "UpArrow" }
 name = "Show or hide preview pane"
 focus_state = "focused"
 action_priority = "medium"
-cmd = { mods = ["alt"], key = "P" }
+cmd = { mods = ["alt"], key = "KeyP" }
 
 [actions.toggle_details_pane]
 name = "Show or hide details pane"
 focus_state = "focused"
 action_priority = "medium"
-cmd = { mods = ["alt", "shift"], key = "P" }
+cmd = { mods = ["alt", "shift"], key = "KeyP" }
 
 [actions.expand_all_folders]
 name = "Expand all folders in navigation pane"
 focus_state = "focused"
 action_priority = "suppressed"
-cmd = { mods = ["ctrl", "shift"], key = "E" }
+cmd = { mods = ["ctrl", "shift"], key = "KeyE" }
 
 [actions.delete_selected_item]
 name = "Delete selected item"

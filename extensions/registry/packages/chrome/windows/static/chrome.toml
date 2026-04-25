@@ -23,19 +23,19 @@ default_focus_state = "focused"  # For app that only want to run commands that a
 name = "New tab"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["ctrl"], key = "T" }
+cmd = { mods = ["ctrl"], key = "KeyT" }
 
 [actions.close_tab]
 name = "Close tab"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["ctrl"], key = "W" }
+cmd = { mods = ["ctrl"], key = "KeyW" }
 
 [actions.reopen_tab]
 name = "Reopen closed tab"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["ctrl", "shift"], key = "T" }
+cmd = { mods = ["ctrl", "shift"], key = "KeyT" }
 
 # --- Tab & Window shortcuts ---
 
@@ -43,13 +43,13 @@ cmd = { mods = ["ctrl", "shift"], key = "T" }
 name = "New window"
 focus_state = "focused"
 action_priority = "medium"
-cmd = { mods = ["ctrl"], key = "N" }
+cmd = { mods = ["ctrl"], key = "KeyN" }
 
 [actions.new_incognito_window]
 name = "New Incognito window"
 focus_state = "focused"
 action_priority = "medium"
-cmd = { mods = ["ctrl", "shift"], key = "N" }
+cmd = { mods = ["ctrl", "shift"], key = "KeyN" }
 
 [actions.next_tab]
 name = "Next tab"
@@ -67,55 +67,55 @@ cmd = { mods = ["ctrl", "shift"], key = "Tab" }
 name = "Switch to tab 1"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "1" }
+cmd = { mods = ["ctrl"], key = "Key1" }
 
 [actions.tab_2]
 name = "Switch to tab 2"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "2" }
+cmd = { mods = ["ctrl"], key = "Key2" }
 
 [actions.tab_3]
 name = "Switch to tab 3"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "3" }
+cmd = { mods = ["ctrl"], key = "Key3" }
 
 [actions.tab_4]
 name = "Switch to tab 4"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "4" }
+cmd = { mods = ["ctrl"], key = "Key4" }
 
 [actions.tab_5]
 name = "Switch to tab 5"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "5" }
+cmd = { mods = ["ctrl"], key = "Key5" }
 
 [actions.tab_6]
 name = "Switch to tab 6"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "6" }
+cmd = { mods = ["ctrl"], key = "Key6" }
 
 [actions.tab_7]
 name = "Switch to tab 7"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "7" }
+cmd = { mods = ["ctrl"], key = "Key7" }
 
 [actions.tab_8]
 name = "Switch to tab 8"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "8" }
+cmd = { mods = ["ctrl"], key = "Key8" }
 
 [actions.last_tab]
 name = "Switch to last tab"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "9" }
+cmd = { mods = ["ctrl"], key = "Key9" }
 
 [actions.back]
 name = "Go back"
@@ -141,43 +141,43 @@ cmd = { mods = ["alt"], key = "F4" }
 name = "Show/hide bookmarks bar"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl", "shift"], key = "B" }
+cmd = { mods = ["ctrl", "shift"], key = "KeyB" }
 
 [actions.bookmark_manager]
 name = "Open Bookmark Manager"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl", "shift"], key = "O" }
+cmd = { mods = ["ctrl", "shift"], key = "KeyO" }
 
 [actions.history]
 name = "Open History"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "H" }
+cmd = { mods = ["ctrl"], key = "KeyH" }
 
 [actions.downloads]
 name = "Open Downloads"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "J" }
+cmd = { mods = ["ctrl"], key = "KeyJ" }
 
 [actions.find]
 name = "Find on page"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["ctrl"], key = "F" }
+cmd = { mods = ["ctrl"], key = "KeyF" }
 
 [actions.find_next]
 name = "Next find match"
 focus_state = "focused"
 action_priority = "medium"
-cmd = { mods = ["ctrl"], key = "G" }
+cmd = { mods = ["ctrl"], key = "KeyG" }
 
 [actions.find_prev]
 name = "Previous find match"
 focus_state = "focused"
 action_priority = "medium"
-cmd = { mods = ["ctrl", "shift"], key = "G" }
+cmd = { mods = ["ctrl", "shift"], key = "KeyG" }
 
 [actions.dev_tools]
 name = "Open Developer Tools"
@@ -189,37 +189,37 @@ cmd = { mods = [], key = "F12" }
 name = "Bookmark current page"
 focus_state = "focused"
 action_priority = "medium"
-cmd = { mods = ["ctrl"], key = "D" }
+cmd = { mods = ["ctrl"], key = "KeyD" }
 
 [actions.bookmark_all_tabs]
 name = "Bookmark all open tabs"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl", "shift"], key = "D" }
+cmd = { mods = ["ctrl", "shift"], key = "KeyD" }
 
 [actions.focus_address_bar]
 name = "Focus address bar"
 focus_state = "focused"
 action_priority = "high"
-cmd = { mods = ["ctrl"], key = "L" }
+cmd = { mods = ["ctrl"], key = "KeyL" }
 
 [actions.print]
 name = "Print page"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "P" }
+cmd = { mods = ["ctrl"], key = "KeyP" }
 
 [actions.save_page]
 name = "Save page"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "S" }
+cmd = { mods = ["ctrl"], key = "KeyS" }
 
 [actions.view_source]
 name = "View page source"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "U" }
+cmd = { mods = ["ctrl"], key = "KeyU" }
 
 [actions.clear_browsing_data]
 name = "Clear Browsing Data"
@@ -251,7 +251,7 @@ cmd = { mods = [], key = "F5" }
 name = "Reload (ignore cache)"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl", "shift"], key = "R" }
+cmd = { mods = ["ctrl", "shift"], key = "KeyR" }
 
 [actions.stop_loading]
 name = "Stop page loading"
@@ -275,7 +275,7 @@ cmd = { mods = ["ctrl"], key = "Minus" }
 name = "Reset zoom"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "0" }
+cmd = { mods = ["ctrl"], key = "Key0" }
 
 [actions.scroll_down]
 name = "Scroll down"
@@ -299,4 +299,4 @@ cmd = { mods = [], key = "End" }
 name = "Open file"
 focus_state = "focused"
 action_priority = "low"
-cmd = { mods = ["ctrl"], key = "O" }
+cmd = { mods = ["ctrl"], key = "KeyO" }
