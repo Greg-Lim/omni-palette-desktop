@@ -710,11 +710,6 @@ fn show_palette(
     );
     drop(registry_read);
 
-    commands.push(settings_command(
-        commands.len(),
-        ui_tx.clone(),
-        Arc::clone(ui_context),
-    ));
     commands.push(reload_extensions_command(
         commands.len(),
         runtime_state.clone(),
@@ -939,25 +934,6 @@ fn reload_extensions_command(original_order: usize, runtime_state: RuntimeState)
                 ),
                 Err(err) => log::error!("Failed to reload extensions: {err}"),
             }
-        }),
-    }
-}
-
-fn settings_command(
-    original_order: usize,
-    ui_tx: Sender<UiSignal>,
-    ui_context: SharedUiContext,
-) -> Command {
-    Command {
-        label: "Omni Palette: Settings".to_string(),
-        shortcut_text: String::new(),
-        priority: CommandPriority::Medium,
-        focus_state: FocusState::Global,
-        favorite: false,
-        tags: vec!["settings".to_string(), "preferences".to_string()],
-        original_order,
-        action: Box::new(move || {
-            send_ui_signal(&ui_tx, &ui_context, UiSignal::OpenSettings);
         }),
     }
 }

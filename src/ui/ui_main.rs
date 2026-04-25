@@ -24,8 +24,10 @@ use tray_icon::{
 const PALETTE_WIDTH: f32 = 780.0;
 const MAX_VISIBLE_ROWS: usize = 12;
 const ROW_HEIGHT: f32 = 38.0;
-const MIN_LIST_ROWS: usize = 12;
-const LIST_HEIGHT: f32 = MIN_LIST_ROWS as f32 * ROW_HEIGHT;
+const SETTINGS_DIVIDER_HEIGHT: f32 = 13.0;
+const PINNED_SETTINGS_ROW_HEIGHT: f32 = 30.0;
+const ESTIMATED_VISIBLE_ROW_HEIGHT: f32 = 31.0;
+const PINNED_SETTINGS_LABEL: &str = "Omni Palette: Settings";
 
 const BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
 const CARD_BG: egui::Color32 = egui::Color32::from_rgb(37, 37, 38);
@@ -222,7 +224,6 @@ pub enum UiSignal {
         work_area: Option<PaletteWorkArea>,
     },
     Hide,
-    OpenSettings,
     RuntimeConfigSaved {
         config: RuntimeConfig,
         result: Result<String, String>,
@@ -400,7 +401,6 @@ impl App {
                 work_area,
             } => self.show(ctx, commands, work_area),
             UiSignal::Hide => self.hide(ctx),
-            UiSignal::OpenSettings => self.open_settings(ctx),
             UiSignal::RuntimeConfigSaved { config, result } => {
                 if let Ok(mut settings) = self.settings.lock() {
                     settings.config_saved(config, result);
@@ -426,7 +426,10 @@ impl App {
     }
 
     fn desired_window_size(&self) -> egui::Vec2 {
-        egui::vec2(PALETTE_WIDTH, 16.0 + 60.0 + 8.0 + LIST_HEIGHT + 16.0)
+        egui::vec2(
+            PALETTE_WIDTH,
+            16.0 + 60.0 + 8.0 + self.current_list_height() + 16.0,
+        )
     }
 
     fn sync_viewport(&self, ctx: &egui::Context) {
@@ -454,6 +457,14 @@ impl App {
     }
 
     fn execute_selected(&mut self, ctx: &egui::Context) {
+        let command_count = self.visible_command_count();
+        if self.palette.selected_index == command_count {
+            self.hide(ctx);
+            self.open_settings(ctx);
+            let _ = self.event_tx.send(UiEvent::ActionExecuted);
+            return;
+        }
+
         if let Some(orig_idx) = self
             .palette
             .filtered_commands
@@ -464,6 +475,20 @@ impl App {
             (self.palette.all_commands[orig_idx].action)();
             let _ = self.event_tx.send(UiEvent::ActionExecuted);
         }
+    }
+
+    fn visible_command_count(&self) -> usize {
+        self.palette
+            .filtered_commands
+            .len()
+            .min(MAX_VISIBLE_ROWS.saturating_sub(1))
+    }
+
+    fn current_list_height(&self) -> f32 {
+        let visible_rows = self.visible_command_count().max(1) as f32;
+        (visible_rows * ESTIMATED_VISIBLE_ROW_HEIGHT)
+            + SETTINGS_DIVIDER_HEIGHT
+            + PINNED_SETTINGS_ROW_HEIGHT
     }
 
     fn handle_list_navigation_keys(&mut self, ctx: &egui::Context, visible_count: usize) {
@@ -585,6 +610,82 @@ impl App {
 
         None
     }
+
+    fn draw_settings_divider(ui: &mut egui::Ui) {
+        let width = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(width, SETTINGS_DIVIDER_HEIGHT),
+            egui::Sense::hover(),
+        );
+        let y = rect.center().y;
+        ui.painter().line_segment(
+            [
+                egui::pos2(rect.left() + 8.0, y),
+                egui::pos2(rect.right() - 8.0, y),
+            ],
+            egui::Stroke::new(1.0, BORDER),
+        );
+    }
+
+    fn draw_pinned_settings_row(&mut self, ui: &mut egui::Ui, idx: usize) -> bool {
+        let is_selected = idx == self.palette.selected_index;
+        let desired_size = egui::vec2(ui.available_width(), PINNED_SETTINGS_ROW_HEIGHT);
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+
+        if response.hovered() {
+            self.palette.selected_index = idx;
+        }
+
+        let fill = if is_selected {
+            ROW_SELECTED
+        } else if response.hovered() {
+            ROW_HOVER
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+
+        let stroke = if is_selected {
+            egui::Stroke::new(1.0, ROW_SELECTED_BORDER)
+        } else {
+            egui::Stroke::NONE
+        };
+
+        ui.painter().rect(
+            rect,
+            egui::CornerRadius::same(6),
+            fill,
+            stroke,
+            egui::StrokeKind::Outside,
+        );
+
+        let inner = rect.shrink2(egui::vec2(12.0, 4.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label(egui::RichText::new(PINNED_SETTINGS_LABEL).size(15.5).color(
+                    if is_selected {
+                        TEXT_SELECTED
+                    } else {
+                        TEXT_PRIMARY
+                    },
+                ));
+            });
+        });
+
+        let click_response =
+            ui.interact(rect, ui.id().with("pinned_settings"), egui::Sense::click());
+
+        if is_selected && self.keyboard_nav {
+            click_response.scroll_to_me(Some(egui::Align::Center));
+            self.keyboard_nav = false;
+        }
+
+        if click_response.clicked() {
+            self.palette.selected_index = idx;
+            return true;
+        }
+
+        false
+    }
 }
 
 fn wrapped_selection_index(current: usize, visible_count: usize, delta: isize) -> usize {
@@ -629,7 +730,8 @@ impl eframe::App for App {
             return;
         }
 
-        let visible_count = self.palette.filtered_commands.len().min(MAX_VISIBLE_ROWS);
+        let visible_command_count = self.visible_command_count();
+        let visible_count = visible_command_count + 1;
         self.handle_list_navigation_keys(ctx, visible_count);
 
         if visible_count > 0 {
@@ -709,36 +811,34 @@ impl eframe::App for App {
 
                         ui.add_space(8.0);
 
-                        ui.set_min_height(LIST_HEIGHT);
-
-                        if self.palette.filtered_commands.is_empty() {
-                            egui::Frame::new()
-                                .fill(BG)
-                                .corner_radius(egui::CornerRadius::same(6))
-                                .inner_margin(egui::Margin::same(12))
-                                .show(ui, |ui| {
-                                    ui.set_min_height(LIST_HEIGHT - 24.0);
-                                    ui.label(
-                                        egui::RichText::new("No matching commands")
-                                            .size(14.5)
-                                            .color(TEXT_MUTED),
-                                    );
-                                });
-                            return;
-                        }
+                        let list_height = self.current_list_height();
 
                         egui::ScrollArea::vertical()
-                            .max_height(LIST_HEIGHT)
-                            .min_scrolled_height(LIST_HEIGHT)
-                            .auto_shrink([false; 2])
+                            .max_height(list_height)
+                            .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 let mut clicked_action: Option<usize> = None;
+
+                                if self.palette.filtered_commands.is_empty() {
+                                    egui::Frame::new()
+                                        .fill(BG)
+                                        .corner_radius(egui::CornerRadius::same(6))
+                                        .inner_margin(egui::Margin::same(12))
+                                        .show(ui, |ui| {
+                                            ui.set_min_height(ROW_HEIGHT);
+                                            ui.label(
+                                                egui::RichText::new("No matching commands")
+                                                    .size(14.5)
+                                                    .color(TEXT_MUTED),
+                                            );
+                                        });
+                                }
 
                                 let rows: Vec<(usize, FilteredCommand)> = self
                                     .palette
                                     .filtered_commands
                                     .iter()
-                                    .take(MAX_VISIBLE_ROWS)
+                                    .take(visible_command_count)
                                     .cloned()
                                     .enumerate()
                                     .collect();
@@ -748,6 +848,14 @@ impl eframe::App for App {
                                     {
                                         clicked_action = Some(clicked_idx);
                                     }
+                                }
+
+                                Self::draw_settings_divider(ui);
+                                if self.draw_pinned_settings_row(ui, visible_command_count) {
+                                    self.hide(ui.ctx());
+                                    self.open_settings(ui.ctx());
+                                    let _ = self.event_tx.send(UiEvent::ActionExecuted);
+                                    return;
                                 }
 
                                 if let Some(orig_idx) = clicked_action {
