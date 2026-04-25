@@ -23,6 +23,7 @@ const CATALOG_ROW_HEIGHT: f32 = 76.0;
 const CATALOG_MIN_VISIBLE_ROWS: f32 = 3.0;
 const CATALOG_MIN_HEIGHT: f32 = CATALOG_ROW_HEIGHT * CATALOG_MIN_VISIBLE_ROWS;
 const CATALOG_MAX_HEIGHT: f32 = 300.0;
+const ACTION_BUTTON_SPACING: f32 = 12.0;
 
 const SETTINGS_BG: egui::Color32 = egui::Color32::from_rgb(17, 20, 25);
 const SIDEBAR_BG: egui::Color32 = egui::Color32::from_rgb(22, 26, 33);
@@ -345,17 +346,19 @@ impl SettingsState {
             "The global shortcut should feel memorable, quick, and hard to press by accident.",
             |ui| {
                 setting_row(ui, "Shortcut", |ui| {
-                    shortcut_pill(ui, &self.draft.activation.to_string());
-                    if secondary_button(ui, "Record").clicked() {
-                        self.recording_hotkey = true;
-                        self.status = Some("Press the new activation shortcut.".to_string());
-                    }
-                    if secondary_button(ui, "Reset").clicked() {
-                        self.draft.activation = RuntimeConfig::default_activation_shortcut();
-                        self.recording_hotkey = false;
-                        self.status =
-                            Some("Activation hotkey reset to the code default.".to_string());
-                    }
+                    action_button_row(ui, |ui| {
+                        shortcut_pill(ui, &self.draft.activation.to_string());
+                        if secondary_button(ui, "Record").clicked() {
+                            self.recording_hotkey = true;
+                            self.status = Some("Press the new activation shortcut.".to_string());
+                        }
+                        if secondary_button(ui, "Reset").clicked() {
+                            self.draft.activation = RuntimeConfig::default_activation_shortcut();
+                            self.recording_hotkey = false;
+                            self.status =
+                                Some("Activation hotkey reset to the code default.".to_string());
+                        }
+                    });
                 });
 
                 if self.recording_hotkey {
@@ -487,7 +490,7 @@ impl SettingsState {
         edit_row(ui, "Branch", &mut self.draft.github.branch);
         edit_row(ui, "Catalog path", &mut self.draft.github.catalog_path);
         ui.add_space(14.0);
-        ui.horizontal(|ui| {
+        action_button_row(ui, |ui| {
             let can_save = self.config_path.is_some() && self.is_dirty() && !self.saving;
             if ui
                 .add_enabled(can_save, primary_button("Save Source"))
@@ -550,22 +553,10 @@ impl SettingsState {
         for extension in bundled_extensions {
             list_row(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(&extension.name)
-                            .size(15.0)
-                            .strong()
-                            .color(TEXT_PRIMARY),
-                    );
+                    extension_title_with_version(ui, &extension.name, &extension.version);
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
-                        badge(ui, &extension.id, TEXT_SECONDARY);
                         badge(ui, "Bundled", TEXT_MUTED);
-                        let status = if extension.enabled {
-                            ("Enabled", SUCCESS)
-                        } else {
-                            ("Disabled", WARNING)
-                        };
-                        badge(ui, status.0, status.1);
                     });
                 });
 
@@ -573,7 +564,7 @@ impl SettingsState {
                 let busy_key = extension_busy_key(&extension.id, BUNDLED_SOURCE_ID);
                 let busy = self.extension_busy.as_deref() == Some(busy_key.as_str());
                 let next_enabled = !extension.enabled;
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right_aligned_actions(ui, |ui| {
                     if ui
                         .add_enabled(!busy, extension_toggle_button(action_label, next_enabled))
                         .clicked()
@@ -611,28 +602,16 @@ impl SettingsState {
 
             list_row(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(&display_name)
-                            .size(15.0)
-                            .strong()
-                            .color(TEXT_PRIMARY),
-                    );
+                    extension_title_with_version(ui, &display_name, &extension.version);
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
-                        badge(ui, &extension.version, TEXT_SECONDARY);
-                        badge(ui, &format!("{:?}", extension.kind), TEXT_MUTED);
-                        let status = if extension.enabled {
-                            ("Enabled", SUCCESS)
-                        } else {
-                            ("Disabled", WARNING)
-                        };
-                        badge(ui, status.0, status.1);
+                        badge(ui, "Downloaded", TEXT_MUTED);
                     });
                 });
 
                 let action_label = extension_toggle_label(extension.enabled);
                 let next_enabled = !extension.enabled;
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right_aligned_actions(ui, |ui| {
                     if pending_uninstall {
                         self.draw_uninstall_confirmation(
                             ui,
@@ -776,27 +755,29 @@ impl SettingsState {
     ) {
         list_row(ui, |ui| {
             ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new(&entry.name)
-                        .size(15.0)
-                        .strong()
-                        .color(TEXT_PRIMARY),
-                );
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    badge(ui, &entry.id, TEXT_SECONDARY);
-                    badge(ui, &entry.version, TEXT_MUTED);
-                    if let Some(version) = installed_version {
-                        badge(ui, &format!("Installed {version}"), SUCCESS);
-                    }
-                });
+                extension_title_with_version(ui, &entry.name, &entry.version);
+                if let Some(version) = installed_version {
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        if version == entry.version {
+                            badge(ui, "Installed", SUCCESS);
+                        } else {
+                            badge(ui, "Update available", WARNING);
+                        }
+                    });
+                }
                 if let Some(description) = &entry.description {
-                    ui.add_space(4.0);
+                    let spacing = if installed_version.is_some() {
+                        4.0
+                    } else {
+                        2.0
+                    };
+                    ui.add_space(spacing);
                     ui.label(egui::RichText::new(description).color(TEXT_MUTED));
                 }
             });
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            right_aligned_actions(ui, |ui| {
                 if entry.kind != ExtensionKind::Static {
                     badge(ui, "Unavailable", WARNING);
                     return;
@@ -996,7 +977,7 @@ fn save_bar(ui: &mut egui::Ui, dirty: bool, saving: bool, add_actions: impl FnOn
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 badge(ui, text, color);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right_aligned_actions(ui, |ui| {
                     add_actions(ui);
                 });
             });
@@ -1140,6 +1121,20 @@ fn secondary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(secondary_button_widget(label))
 }
 
+fn action_button_row(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.x = ACTION_BUTTON_SPACING;
+        ui.horizontal(|ui| add_contents(ui));
+    });
+}
+
+fn right_aligned_actions(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = ACTION_BUTTON_SPACING;
+        add_contents(ui);
+    });
+}
+
 fn shortcut_pill(ui: &mut egui::Ui, text: &str) {
     egui::Frame::new()
         .fill(INPUT_BG)
@@ -1158,6 +1153,23 @@ fn shortcut_pill(ui: &mut egui::Ui, text: &str) {
                     .color(TEXT_PRIMARY),
             );
         });
+}
+
+fn extension_title_with_version(ui: &mut egui::Ui, name: &str, version: &str) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.label(
+            egui::RichText::new(name)
+                .size(15.0)
+                .strong()
+                .color(TEXT_PRIMARY),
+        );
+        ui.label(
+            egui::RichText::new(format!("v{version}"))
+                .size(12.0)
+                .color(TEXT_MUTED),
+        );
+    });
 }
 
 fn path_chip(ui: &mut egui::Ui, text: &str) {
