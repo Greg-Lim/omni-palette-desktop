@@ -1,4 +1,7 @@
-use crate::domain::hotkey::KeyboardShortcut;
+use crate::domain::{
+    action::{KeySequenceStep, SequenceKey},
+    hotkey::KeyboardShortcut,
+};
 use crate::platform::windows::mapper::hotkey_mapper::map_key;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
@@ -59,6 +62,56 @@ pub fn send_shortcut(shortcut: &KeyboardShortcut) {
         inputs.push(make_key_event(VK_SHIFT, true));
     }
     if shortcut.modifier.control {
+        inputs.push(make_key_event(VK_CONTROL, true));
+    }
+
+    unsafe {
+        let _result = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+pub fn send_shortcut_sequence(sequence: &[KeySequenceStep]) {
+    for step in sequence {
+        send_sequence_step(step);
+        std::thread::sleep(std::time::Duration::from_millis(35));
+    }
+}
+
+fn send_sequence_step(step: &KeySequenceStep) {
+    let mut inputs: Vec<INPUT> = Vec::new();
+
+    if step.modifier.control {
+        inputs.push(make_key_event(VK_CONTROL, false));
+    }
+    if step.modifier.shift {
+        inputs.push(make_key_event(VK_SHIFT, false));
+    }
+    if step.modifier.alt {
+        inputs.push(make_key_event(VK_MENU, false));
+    }
+    if step.modifier.win {
+        inputs.push(make_key_event(VK_LWIN, false));
+    }
+
+    let vk = match step.key {
+        SequenceKey::Key(key) => map_key(key),
+        SequenceKey::Ctrl => VK_CONTROL,
+        SequenceKey::Shift => VK_SHIFT,
+        SequenceKey::Alt => VK_MENU,
+    };
+    inputs.push(make_key_event(vk, false));
+    inputs.push(make_key_event(vk, true));
+
+    if step.modifier.win {
+        inputs.push(make_key_event(VK_LWIN, true));
+    }
+    if step.modifier.alt {
+        inputs.push(make_key_event(VK_MENU, true));
+    }
+    if step.modifier.shift {
+        inputs.push(make_key_event(VK_SHIFT, true));
+    }
+    if step.modifier.control {
         inputs.push(make_key_event(VK_CONTROL, true));
     }
 

@@ -34,7 +34,7 @@ use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
 use crate::platform::windows::context::context::{
     focus_window, get_hwnd_from_raw, monitor_work_area_from_window,
 };
-use crate::platform::windows::sender::hotkey_sender::send_shortcut;
+use crate::platform::windows::sender::hotkey_sender::{send_shortcut, send_shortcut_sequence};
 use crate::ui::settings::SettingsBootstrap;
 use crate::ui::ui_main;
 use crate::ui::ui_main::{
@@ -1010,6 +1010,12 @@ fn command_from_unit_action(
                     focus_window(HWND(val as *mut _));
                 }
                 send_shortcut(shortcut);
+            }
+            ActionExecution::ShortcutSequence(sequence) => {
+                if let Some(val) = shortcut_focus_target {
+                    focus_window(HWND(val as *mut _));
+                }
+                send_shortcut_sequence(sequence);
             }
             ActionExecution::PluginCommand {
                 plugin_id,

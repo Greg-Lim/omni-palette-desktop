@@ -10,15 +10,19 @@ use raw_window_handle::RawWindowHandle;
 use crate::core::performance::process_performance_snapshot_logger;
 
 use crate::{
-    config::extension::{Config, Modifier},
+    config::extension::{
+        ActionWhenConfig, CommandBinding, Config, KeyChord, KeySequenceStepConfig, Modifier,
+        SequenceKeyConfig,
+    },
     core::{
         extensions::{discovery::ExtensionDiscovery, extensions::load_config},
         plugins::{PluginApplication, PluginRegistry},
     },
     domain::{
         action::{
-            Action, ActionExecution, ActionId, ActionMetadata, ActionName, AppName, AppProcessName,
-            ApplicationID, ContextRoot, FocusState, Os,
+            normalize_context_tag, sequence_shortcut_text, Action, ActionContextCondition,
+            ActionExecution, ActionId, ActionMetadata, ActionName, AppName, AppProcessName,
+            ApplicationID, ContextRoot, FocusState, KeySequenceStep, Os, SequenceKey,
         },
         hotkey::{HotkeyModifiers, KeyboardShortcut},
     },
@@ -157,7 +161,7 @@ impl MasterRegistry {
             for action in app
                 .application_registry
                 .values()
-                .filter(|a| a.focus_state == FocusState::Background)
+                .filter(|a| a.focus_state == FocusState::Background && a.when.any.is_empty())
             {
                 all_actions.push(UnitAction {
                     app_name: app.application_name.clone(),
@@ -189,11 +193,9 @@ impl MasterRegistry {
                 break 'add_focused_actions;
             };
 
-            for action in app
-                .application_registry
-                .values()
-                .filter(|a| a.focus_state == FocusState::Focused)
-            {
+            for action in app.application_registry.values().filter(|a| {
+                a.focus_state == FocusState::Focused && a.when.matches(&context.active_interaction)
+            }) {
                 all_actions.push(UnitAction {
                     app_name: app.application_name.clone(),
                     action_name: action.name.clone(),
@@ -207,11 +209,9 @@ impl MasterRegistry {
         }
 
         for app in self.application_registry.values() {
-            for action in app
-                .application_registry
-                .values()
-                .filter(|a| a.focus_state == FocusState::Global)
-            {
+            for action in app.application_registry.values().filter(|a| {
+                a.focus_state == FocusState::Global && a.when.matches(&context.active_interaction)
+            }) {
                 all_actions.push(UnitAction {
                     app_name: app.application_name.clone(),
                     action_name: action.name.clone(),
@@ -257,7 +257,7 @@ impl Application {
         let default_tags = app_config.app.default_tags.clone().unwrap_or_default();
 
         for (count, (_app_id, config_action)) in (0_u32..).zip(app_config.actions.iter()) {
-            let binding = &config_action.cmd;
+            let when = action_condition_from_config(config_action.when.as_ref())?;
 
             let mut tags = default_tags.clone();
             if let Some(action_tags) = &config_action.tags {
@@ -266,26 +266,19 @@ impl Application {
             tags.sort();
             tags.dedup();
 
-            let shortcut = KeyboardShortcut {
-                modifier: HotkeyModifiers {
-                    control: binding.mods.contains(&Modifier::Ctrl),
-                    shift: binding.mods.contains(&Modifier::Shift),
-                    alt: binding.mods.contains(&Modifier::Alt),
-                    win: binding.mods.contains(&Modifier::Win),
-                },
-                key: binding.key,
-            };
+            let (execution, shortcut_text) = action_execution_from_binding(&config_action.cmd)?;
 
             let app_action: Action = Action {
                 name: config_action.name.clone(),
-                shortcut_text: shortcut.to_string(),
-                execution: ActionExecution::Shortcut(shortcut),
+                shortcut_text,
+                execution,
                 focus_state: config_action.focus_state.unwrap_or(
                     app_config
                         .app
                         .default_focus_state
                         .unwrap_or(FocusState::Focused),
                 ),
+                when,
                 metadata: ActionMetadata {
                     priority: config_action.priority.unwrap_or_default(),
                     favorite: config_action.favorite.unwrap_or(false),
@@ -318,6 +311,7 @@ impl Application {
                             command_id: command.id.clone(),
                         },
                         focus_state: command.focus_state,
+                        when: ActionContextCondition::default(),
                         metadata: ActionMetadata {
                             priority: command.priority,
                             favorite: command.favorite,
@@ -333,6 +327,105 @@ impl Application {
             application_process_name: plugin.process_name.clone(),
             application_registry,
         }
+    }
+}
+
+fn action_condition_from_config(
+    when: Option<&ActionWhenConfig>,
+) -> Result<ActionContextCondition, String> {
+    let Some(when) = when else {
+        return Ok(ActionContextCondition::default());
+    };
+    if when.any.is_empty() {
+        return Err("Action context condition 'when.any' must not be empty".to_string());
+    }
+
+    let mut any = Vec::with_capacity(when.any.len());
+    for raw_tag in &when.any {
+        let Some(tag) = normalize_context_tag(raw_tag) else {
+            return Err(format!("Invalid action context tag: '{raw_tag}'"));
+        };
+        any.push(tag);
+    }
+    any.sort();
+    any.dedup();
+
+    Ok(ActionContextCondition { any })
+}
+
+const MAX_SHORTCUT_SEQUENCE_STEPS: usize = 5;
+
+fn action_execution_from_binding(
+    binding: &CommandBinding,
+) -> Result<(ActionExecution, String), String> {
+    match binding {
+        CommandBinding::Shortcut(chord) => {
+            let shortcut = shortcut_from_chord(chord);
+            Ok((ActionExecution::Shortcut(shortcut), shortcut.to_string()))
+        }
+        CommandBinding::Sequence(sequence) => {
+            let steps = sequence_steps_from_config(&sequence.sequence)?;
+            let shortcut_text = sequence_shortcut_text(&steps);
+            Ok((ActionExecution::ShortcutSequence(steps), shortcut_text))
+        }
+    }
+}
+
+fn shortcut_from_chord(chord: &KeyChord) -> KeyboardShortcut {
+    KeyboardShortcut {
+        modifier: modifiers_from_config(&chord.mods),
+        key: chord.key,
+    }
+}
+
+fn sequence_steps_from_config(
+    sequence: &[KeySequenceStepConfig],
+) -> Result<Vec<KeySequenceStep>, String> {
+    if sequence.is_empty() {
+        return Err("Shortcut sequence must contain at least one step".to_string());
+    }
+    if sequence.len() > MAX_SHORTCUT_SEQUENCE_STEPS {
+        return Err(format!(
+            "Shortcut sequence must contain at most {MAX_SHORTCUT_SEQUENCE_STEPS} steps"
+        ));
+    }
+
+    sequence
+        .iter()
+        .map(sequence_step_from_config)
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn sequence_step_from_config(step: &KeySequenceStepConfig) -> Result<KeySequenceStep, String> {
+    let modifier = modifiers_from_config(&step.mods);
+    if modifier.win {
+        return Err("Shortcut sequences cannot use the Win modifier".to_string());
+    }
+
+    let key = match step.key {
+        SequenceKeyConfig::Ctrl => SequenceKey::Ctrl,
+        SequenceKeyConfig::Shift => SequenceKey::Shift,
+        SequenceKeyConfig::Alt => SequenceKey::Alt,
+        SequenceKeyConfig::Win => {
+            return Err("Shortcut sequences cannot use the Win key".to_string());
+        }
+        SequenceKeyConfig::Key(key) => {
+            if key == crate::domain::hotkey::Key::Enter {
+                return Err("Shortcut sequences cannot use Enter".to_string());
+            }
+            SequenceKey::Key(key)
+        }
+    };
+
+    Ok(KeySequenceStep { modifier, key })
+}
+
+fn modifiers_from_config(mods: &[Modifier]) -> HotkeyModifiers {
+    HotkeyModifiers {
+        control: mods.contains(&Modifier::Ctrl),
+        shift: mods.contains(&Modifier::Shift),
+        alt: mods.contains(&Modifier::Alt),
+        win: mods.contains(&Modifier::Win),
     }
 }
 
@@ -355,6 +448,7 @@ fn current_date_text() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::action::InteractionContext;
     use std::fs;
 
     #[test]
@@ -384,5 +478,192 @@ mod tests {
         let registry = MasterRegistry::build(&discovery, Os::Windows);
 
         assert!(registry.application_registry.is_empty());
+    }
+
+    fn registry_from_config(content: &str) -> MasterRegistry {
+        let config: Config = toml::from_str(content).expect("config should parse");
+        let app = Application::new(&config, &Os::Windows).expect("app should build");
+        let mut registry = MasterRegistry::default();
+        registry.application_registry.insert(0, app);
+        registry
+    }
+
+    fn empty_context() -> ContextRoot {
+        ContextRoot {
+            fg_context: vec![],
+            bg_context: vec![],
+            active_interaction: InteractionContext::default(),
+        }
+    }
+
+    #[test]
+    fn context_condition_filters_global_actions() {
+        let registry = registry_from_config(
+            r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "powerpoint"
+name = "PowerPoint"
+process_name = "POWERPNT.EXE"
+
+[actions]
+
+[actions.bold]
+name = "Bold text"
+focus_state = "global"
+cmd = { mods = ["ctrl"], key = "KeyB" }
+
+[actions.bold.when]
+any = ["ppt.selection.text", "ui.text_input"]
+"#,
+        );
+
+        assert!(registry.get_actions(&empty_context()).is_empty());
+
+        let context = ContextRoot {
+            active_interaction: InteractionContext::from_tags(["ppt.selection.text".to_string()]),
+            ..empty_context()
+        };
+        let actions = registry.get_actions(&context);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action_name, "Bold text");
+    }
+
+    #[test]
+    fn context_condition_rejects_empty_any_list() {
+        let config: Config = toml::from_str(
+            r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "powerpoint"
+name = "PowerPoint"
+process_name = "POWERPNT.EXE"
+
+[actions]
+
+[actions.bold]
+name = "Bold text"
+focus_state = "global"
+cmd = { mods = ["ctrl"], key = "KeyB" }
+
+[actions.bold.when]
+any = []
+"#,
+        )
+        .expect("config should parse");
+
+        let err = Application::new(&config, &Os::Windows)
+            .expect_err("empty context conditions should be rejected");
+
+        assert!(err.contains("when.any"));
+    }
+
+    #[test]
+    fn sequence_command_builds_sequence_execution_and_display_text() {
+        let config: Config = toml::from_str(
+            r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "powerpoint"
+name = "PowerPoint"
+process_name = "POWERPNT.EXE"
+
+[actions]
+
+[actions.select_draw_pen]
+name = "Select drawing pen"
+focus_state = "global"
+cmd = { sequence = [
+    { mods = ["alt"], key = "KeyJ" },
+    { key = "KeyI" },
+] }
+"#,
+        )
+        .expect("config should parse");
+
+        let app = Application::new(&config, &Os::Windows).expect("app should build");
+        let action = app
+            .application_registry
+            .values()
+            .next()
+            .expect("action should exist");
+
+        assert_eq!(action.shortcut_text, "Alt+J, I");
+        match &action.execution {
+            ActionExecution::ShortcutSequence(sequence) => assert_eq!(sequence.len(), 2),
+            ActionExecution::Shortcut(_) | ActionExecution::PluginCommand { .. } => {
+                panic!("action should be a shortcut sequence")
+            }
+        }
+    }
+
+    #[test]
+    fn sequence_command_rejects_empty_sequence() {
+        let err = app_build_error_for_command(r#"cmd = { sequence = [] }"#);
+
+        assert!(err.contains("at least one step"));
+    }
+
+    #[test]
+    fn sequence_command_rejects_more_than_five_steps() {
+        let err = app_build_error_for_command(
+            r#"cmd = { sequence = [
+    { mods = ["alt"], key = "KeyJ" },
+    { key = "KeyI" },
+    { key = "KeyP" },
+    { key = "KeyN" },
+    { key = "KeyB" },
+    { key = "KeyC" },
+] }"#,
+        );
+
+        assert!(err.contains("at most 5 steps"));
+    }
+
+    #[test]
+    fn sequence_command_rejects_win_modifier_and_key() {
+        let modifier_err = app_build_error_for_command(
+            r#"cmd = { sequence = [{ mods = ["win"], key = "KeyR" }] }"#,
+        );
+        let key_err = app_build_error_for_command(r#"cmd = { sequence = [{ key = "Win" }] }"#);
+
+        assert!(modifier_err.contains("Win modifier"));
+        assert!(key_err.contains("Win key"));
+    }
+
+    #[test]
+    fn sequence_command_rejects_enter() {
+        let err = app_build_error_for_command(r#"cmd = { sequence = [{ key = "Enter" }] }"#);
+
+        assert!(err.contains("Enter"));
+    }
+
+    fn app_build_error_for_command(command_line: &str) -> String {
+        let content = format!(
+            r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "powerpoint"
+name = "PowerPoint"
+process_name = "POWERPNT.EXE"
+
+[actions]
+
+[actions.test]
+name = "Test"
+{command_line}
+"#
+        );
+        let config: Config = toml::from_str(&content).expect("config should parse");
+        Application::new(&config, &Os::Windows).expect_err("app build should fail")
     }
 }

@@ -12,6 +12,11 @@ pub fn get_all_context() -> ContextRoot {
             log::debug!("Detected Windows OS, using Windows context retrieval");
             // Destructure the tuple returned by your Windows function
             let (fg, bg) = platwins::context::context::get_all_windows();
+            let active_interaction = fg
+                .first()
+                .and_then(|handle| platwins::context::context::get_hwnd_from_raw(*handle))
+                .map(platwins::context::interaction::detect_active_interaction)
+                .unwrap_or_default();
             log::debug!(
                 "Retrieved context from Windows: fg has {} items, bg has {} items",
                 fg.len(),
@@ -22,6 +27,7 @@ pub fn get_all_context() -> ContextRoot {
             panic!("Not valid os")
             let fg = vec![];
             let bg = vec![];
+            let active_interaction = crate::domain::action::InteractionContext::default();
         }
     }
 
@@ -30,6 +36,7 @@ pub fn get_all_context() -> ContextRoot {
     ContextRoot {
         fg_context: fg,
         bg_context: bg,
+        active_interaction,
     }
 }
 

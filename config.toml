@@ -1,7 +1,4 @@
 
 
 
-activation = { mods = ["ctrl", "shift"], key = "p" }
-
-
-extensions = ['extensions\chrome.toml']
+activation = { mods = ["ctrl", "shift"], key = "KeyP" }

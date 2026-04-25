@@ -31,13 +31,127 @@ process_name = "chrome.exe"
 [actions.new_tab]
 name = "New tab"
 focus_state = "focused"
-cmd = { mods = ["ctrl"], key = "t" }
+cmd = { mods = ["ctrl"], key = "KeyT" }
 "#;
 
     let cfg: Config = toml::from_str(content).expect("should deserialize");
     assert_eq!(cfg.app.id, "chrome");
     assert!(cfg.actions.contains_key("new_tab"));
     // println!("{cfg:?}")
+}
+
+#[test]
+fn deserializes_context_condition() {
+    let content = r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "powerpoint"
+name = "PowerPoint"
+process_name = "POWERPNT.EXE"
+
+[actions]
+
+[actions.bold]
+name = "Bold text"
+cmd = { mods = ["ctrl"], key = "KeyB" }
+
+[actions.bold.when]
+any = ["ppt.selection.text", "ui.text_input"]
+"#;
+
+    let cfg: Config = toml::from_str(content).expect("should deserialize");
+    let action = cfg.actions.get("bold").expect("action should exist");
+    let when = action.when.as_ref().expect("condition should exist");
+    assert_eq!(when.any, vec!["ppt.selection.text", "ui.text_input"]);
+}
+
+#[test]
+fn deserializes_sequence_command() {
+    let content = r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "powerpoint"
+name = "PowerPoint"
+process_name = "POWERPNT.EXE"
+
+[actions]
+
+[actions.select_draw_pen]
+name = "Select drawing pen"
+cmd = { sequence = [
+    { mods = ["alt"], key = "KeyJ" },
+    { key = "KeyI" },
+] }
+"#;
+
+    let cfg: Config = toml::from_str(content).expect("should deserialize");
+    let action = cfg
+        .actions
+        .get("select_draw_pen")
+        .expect("action should exist");
+    match &action.cmd {
+        crate::config::extension::CommandBinding::Sequence(sequence) => {
+            assert_eq!(sequence.sequence.len(), 2);
+            assert_eq!(
+                sequence.sequence[0].mods,
+                vec![crate::config::extension::Modifier::Alt]
+            );
+        }
+        crate::config::extension::CommandBinding::Shortcut(_) => {
+            panic!("sequence command should not parse as shortcut")
+        }
+    }
+}
+
+#[test]
+fn sequence_keys_use_strict_hotkey_key_names() {
+    let content = r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "powerpoint"
+name = "PowerPoint"
+process_name = "POWERPNT.EXE"
+
+[actions]
+
+[actions.open_dialog]
+name = "Open dialog"
+cmd = { sequence = [
+    { mods = ["alt"], key = "KeyN" },
+    { key = "Key2" },
+    { key = "Escape" },
+] }
+"#;
+
+    let cfg: Config = toml::from_str(content).expect("should deserialize");
+    let action = cfg.actions.get("open_dialog").expect("action should exist");
+    match &action.cmd {
+        crate::config::extension::CommandBinding::Sequence(sequence) => {
+            assert_eq!(
+                sequence.sequence[0].key,
+                crate::config::extension::SequenceKeyConfig::Key(crate::domain::hotkey::Key::KeyN)
+            );
+            assert_eq!(
+                sequence.sequence[1].key,
+                crate::config::extension::SequenceKeyConfig::Key(crate::domain::hotkey::Key::Key2)
+            );
+            assert_eq!(
+                sequence.sequence[2].key,
+                crate::config::extension::SequenceKeyConfig::Key(
+                    crate::domain::hotkey::Key::Escape
+                )
+            );
+        }
+        crate::config::extension::CommandBinding::Shortcut(_) => {
+            panic!("sequence command should not parse as shortcut")
+        }
+    }
 }
 
 #[test]
@@ -74,7 +188,7 @@ windows = "chrome.exe"
 
 [actions.new_tab]
 name = "New tab"
-cmd.windows = { mods = ["ctrl"], key = "t" }
+cmd.windows = { mods = ["ctrl"], key = "KeyT" }
 "#;
 
     let err = toml::from_str::<Config>(content).expect_err("old schema should not deserialize");
