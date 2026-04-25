@@ -218,6 +218,12 @@ fn highlighted_label_job(label: &str, ranges: &[MatchRange], is_selected: bool) 
 }
 
 #[derive(Debug)]
+pub struct InstalledExtensionsUpdate {
+    pub state: InstalledState,
+    pub message: String,
+}
+
+#[derive(Debug)]
 pub enum UiSignal {
     Show {
         commands: Vec<Command>,
@@ -229,7 +235,7 @@ pub enum UiSignal {
         result: Result<String, String>,
     },
     CatalogRefreshed(Result<ExtensionCatalog, String>),
-    InstalledExtensionsUpdated(Result<InstalledState, String>),
+    InstalledExtensionsUpdated(Result<InstalledExtensionsUpdate, String>),
     ReloadExtensionsFinished(Result<String, String>),
     Quit,
 }
@@ -244,14 +250,17 @@ pub enum UiEvent {
     InstallExtensionRequested {
         source: crate::config::runtime::GitHubExtensionSource,
         entry: CatalogEntry,
+        installed_version: Option<String>,
     },
     UninstallExtensionRequested {
         extension_id: String,
         source_id: String,
+        display_name: String,
     },
     SetExtensionEnabledRequested {
         extension_id: String,
         source_id: String,
+        display_name: String,
         enabled: bool,
     },
     SetBundledExtensionEnabledRequested {
@@ -592,11 +601,13 @@ impl App {
             );
         });
 
-        let click_response = ui.interact(
-            rect,
-            ui.id().with(("command_row", orig_idx)),
-            egui::Sense::click(),
-        );
+        let click_response = ui
+            .interact(
+                rect,
+                ui.id().with(("command_row", orig_idx)),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
 
         if is_selected && self.keyboard_nav {
             click_response.scroll_to_me(Some(egui::Align::Center));
@@ -671,8 +682,9 @@ impl App {
             });
         });
 
-        let click_response =
-            ui.interact(rect, ui.id().with("pinned_settings"), egui::Sense::click());
+        let click_response = ui
+            .interact(rect, ui.id().with("pinned_settings"), egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
 
         if is_selected && self.keyboard_nav {
             click_response.scroll_to_me(Some(egui::Align::Center));
@@ -875,7 +887,7 @@ impl eframe::App for App {
     }
 }
 
-pub fn ui_main_with_shared_state(
+pub fn run_with_shared_state(
     receiver: Receiver<UiSignal>,
     event_tx: Sender<UiEvent>,
     shared_context: SharedUiContext,

@@ -35,11 +35,12 @@ use crate::platform::windows::context::context::{
     focus_window, get_hwnd_from_raw, monitor_work_area_from_window,
 };
 use crate::platform::windows::sender::hotkey_sender::{send_shortcut, send_shortcut_sequence};
-use crate::ui::settings::SettingsBootstrap;
-use crate::ui::ui_main;
-use crate::ui::ui_main::{
-    Command, PaletteWorkArea, SharedUiContext, SharedUiVisibility, UiEvent, UiSignal,
+use crate::ui::app as ui_app;
+use crate::ui::app::{
+    Command, InstalledExtensionsUpdate, PaletteWorkArea, SharedUiContext, SharedUiVisibility,
+    UiEvent, UiSignal,
 };
+use crate::ui::settings::SettingsBootstrap;
 use std::env::consts::OS;
 use std::io::Write;
 use windows::Win32::Foundation::HWND;
@@ -142,7 +143,7 @@ fn main() {
     let _telemetry_thread =
         spawn_debug_telemetry(runtime_state.clone(), Arc::clone(&ui_visibility));
 
-    ui_main::ui_main_with_shared_state(
+    ui_app::run_with_shared_state(
         ui_rx,
         event_tx,
         ui_context,
@@ -512,18 +513,24 @@ fn handle_ui_events(
             UiEvent::RefreshCatalogRequested(source) => {
                 spawn_catalog_refresh(ui_tx.clone(), Arc::clone(ui_context), source);
             }
-            UiEvent::InstallExtensionRequested { source, entry } => {
+            UiEvent::InstallExtensionRequested {
+                source,
+                entry,
+                installed_version,
+            } => {
                 spawn_extension_install(
                     ui_tx.clone(),
                     Arc::clone(ui_context),
                     runtime_state.clone(),
                     source,
                     entry,
+                    installed_version,
                 );
             }
             UiEvent::UninstallExtensionRequested {
                 extension_id,
                 source_id,
+                display_name,
             } => {
                 spawn_extension_uninstall(
                     ui_tx.clone(),
@@ -531,11 +538,13 @@ fn handle_ui_events(
                     runtime_state.clone(),
                     extension_id,
                     source_id,
+                    display_name,
                 );
             }
             UiEvent::SetExtensionEnabledRequested {
                 extension_id,
                 source_id,
+                display_name,
                 enabled,
             } => {
                 spawn_extension_enabled_update(
@@ -544,6 +553,7 @@ fn handle_ui_events(
                     runtime_state.clone(),
                     extension_id,
                     source_id,
+                    display_name,
                     enabled,
                 );
             }
@@ -565,7 +575,7 @@ fn handle_ui_events(
                 )
                 .map(|report| {
                     format!(
-                        "Reloaded extensions: {} applications, {} ignored processes.",
+                        "Reloaded extensions: {} applications, {} ignored processes",
                         report.application_count, report.ignored_process_count
                     )
                 });
@@ -615,7 +625,7 @@ fn save_runtime_config(
     }
 
     *runtime_config = requested_config;
-    Ok("Settings saved.".to_string())
+    Ok("Settings saved".to_string())
 }
 
 fn is_palette_hotkey(shortcut: KeyboardShortcut, activation_shortcut: KeyboardShortcut) -> bool {
@@ -761,12 +771,13 @@ fn spawn_extension_install(
     runtime_state: RuntimeState,
     source: crate::config::runtime::GitHubExtensionSource,
     entry: CatalogEntry,
+    installed_version: Option<String>,
 ) {
     std::thread::spawn(move || {
         let result = (|| {
             let install_root = extension_install_root()?;
             let service = ExtensionInstallService::new(&install_root);
-            service
+            let installed_extension = service
                 .install_entry(&source, &entry, runtime_state.current_os)
                 .map_err(|err| err.to_string())?;
             reload_runtime_state(
@@ -775,7 +786,15 @@ fn spawn_extension_install(
                 &runtime_state.bundled_extensions_root,
                 runtime_state.current_os,
             )?;
-            load_installed_state(&install_root).map_err(|err| err.to_string())
+            let state = load_installed_state(&install_root).map_err(|err| err.to_string())?;
+            Ok(InstalledExtensionsUpdate {
+                state,
+                message: extension_install_message(
+                    &entry.name,
+                    installed_version.as_deref(),
+                    &installed_extension.version,
+                ),
+            })
         })();
         send_ui_signal(
             &ui_tx,
@@ -791,6 +810,7 @@ fn spawn_extension_enabled_update(
     runtime_state: RuntimeState,
     extension_id: String,
     source_id: String,
+    display_name: String,
     enabled: bool,
 ) {
     std::thread::spawn(move || {
@@ -805,7 +825,10 @@ fn spawn_extension_enabled_update(
                 &runtime_state.bundled_extensions_root,
                 runtime_state.current_os,
             )?;
-            Ok(state)
+            Ok(InstalledExtensionsUpdate {
+                state,
+                message: extension_enabled_message(&display_name, enabled),
+            })
         })();
         send_ui_signal(
             &ui_tx,
@@ -821,6 +844,7 @@ fn spawn_extension_uninstall(
     runtime_state: RuntimeState,
     extension_id: String,
     source_id: String,
+    display_name: String,
 ) {
     std::thread::spawn(move || {
         let result = (|| {
@@ -833,7 +857,10 @@ fn spawn_extension_uninstall(
                 &runtime_state.bundled_extensions_root,
                 runtime_state.current_os,
             )?;
-            Ok(state)
+            Ok(InstalledExtensionsUpdate {
+                state,
+                message: format!("Uninstalled {display_name}"),
+            })
         })();
         send_ui_signal(
             &ui_tx,
@@ -861,7 +888,10 @@ fn spawn_bundled_extension_enabled_update(
                 &runtime_state.bundled_extensions_root,
                 runtime_state.current_os,
             )?;
-            Ok(state)
+            Ok(InstalledExtensionsUpdate {
+                state,
+                message: extension_enabled_message(&extension.name, enabled),
+            })
         })();
         send_ui_signal(
             &ui_tx,
@@ -869,6 +899,27 @@ fn spawn_bundled_extension_enabled_update(
             UiSignal::InstalledExtensionsUpdated(result),
         );
     });
+}
+
+fn extension_enabled_message(display_name: &str, enabled: bool) -> String {
+    let action = if enabled { "Enabled" } else { "Disabled" };
+    format!("{action} {display_name}")
+}
+
+fn extension_install_message(
+    display_name: &str,
+    previous_version: Option<&str>,
+    installed_version: &str,
+) -> String {
+    match previous_version {
+        Some(previous_version) if previous_version == installed_version => {
+            format!("Reinstalled {display_name} v{installed_version}")
+        }
+        Some(previous_version) => {
+            format!("Updated {display_name} from v{previous_version} to v{installed_version}")
+        }
+        None => format!("Installed {display_name} v{installed_version}"),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1125,6 +1176,35 @@ mod tests {
             .expect_err("wrong platform should fail");
 
         assert!(err.contains("no static windows package"));
+    }
+
+    #[test]
+    fn extension_enabled_message_names_enabled_extension() {
+        assert_eq!(extension_enabled_message("Chrome", true), "Enabled Chrome");
+    }
+
+    #[test]
+    fn extension_enabled_message_names_disabled_extension() {
+        assert_eq!(
+            extension_enabled_message("Windows", false),
+            "Disabled Windows"
+        );
+    }
+
+    #[test]
+    fn extension_install_message_distinguishes_install_reinstall_and_update() {
+        assert_eq!(
+            extension_install_message("File Explorer", None, "0.1.0"),
+            "Installed File Explorer v0.1.0"
+        );
+        assert_eq!(
+            extension_install_message("Chrome", Some("0.1.0"), "0.1.0"),
+            "Reinstalled Chrome v0.1.0"
+        );
+        assert_eq!(
+            extension_install_message("Chrome", Some("0.1.0"), "0.2.0"),
+            "Updated Chrome from v0.1.0 to v0.2.0"
+        );
     }
 
     #[test]

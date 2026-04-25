@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 
@@ -11,11 +12,11 @@ use crate::core::extensions::install::{
 };
 use crate::domain::action::Os;
 use crate::domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut};
-use crate::ui::ui_main::UiEvent;
+use crate::ui::app::{InstalledExtensionsUpdate, UiEvent};
 
 const SETTINGS_VIEWPORT_ID: &str = "omni_palette_settings";
-const SETTINGS_WIDTH: f32 = 860.0;
-const SETTINGS_HEIGHT: f32 = 620.0;
+const SETTINGS_WIDTH: f32 = 1180.0;
+const SETTINGS_HEIGHT: f32 = 840.0;
 const SIDEBAR_WIDTH: f32 = 220.0;
 const ROW_LABEL_WIDTH: f32 = 148.0;
 const TEXT_INPUT_WIDTH: f32 = 480.0;
@@ -24,6 +25,7 @@ const CATALOG_MIN_VISIBLE_ROWS: f32 = 3.0;
 const CATALOG_MIN_HEIGHT: f32 = CATALOG_ROW_HEIGHT * CATALOG_MIN_VISIBLE_ROWS;
 const CATALOG_MAX_HEIGHT: f32 = 300.0;
 const ACTION_BUTTON_SPACING: f32 = 12.0;
+const STATUS_TOAST_DURATION: Duration = Duration::from_secs(3);
 
 const SETTINGS_BG: egui::Color32 = egui::Color32::from_rgb(17, 20, 25);
 const SIDEBAR_BG: egui::Color32 = egui::Color32::from_rgb(22, 26, 33);
@@ -67,6 +69,12 @@ struct PendingUninstall {
     source_id: String,
 }
 
+#[derive(Debug, Clone)]
+struct SettingsToast {
+    message: String,
+    created_at: Instant,
+}
+
 #[derive(Debug)]
 pub struct SettingsState {
     pub open: bool,
@@ -88,7 +96,7 @@ pub struct SettingsState {
     pending_uninstall: Option<PendingUninstall>,
     saving: bool,
     recording_hotkey: bool,
-    status: Option<String>,
+    status: Option<SettingsToast>,
 }
 
 impl SettingsState {
@@ -121,6 +129,13 @@ impl SettingsState {
         self.open = true;
     }
 
+    fn set_status(&mut self, message: impl Into<String>) {
+        self.status = Some(SettingsToast {
+            message: message.into(),
+            created_at: Instant::now(),
+        });
+    }
+
     pub fn config_saved(&mut self, config: RuntimeConfig, result: Result<String, String>) {
         self.saving = false;
         match result {
@@ -128,9 +143,9 @@ impl SettingsState {
                 self.saved = config.clone();
                 self.draft = config;
                 self.config_error = None;
-                self.status = Some(message);
+                self.set_status(message);
             }
-            Err(err) => self.status = Some(err),
+            Err(err) => self.set_status(err),
         }
     }
 
@@ -138,33 +153,44 @@ impl SettingsState {
         self.catalog_busy = false;
         match result {
             Ok(catalog) => {
+                let supported_count = catalog
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.platform == self.current_os)
+                    .count();
                 self.catalog = Some(catalog);
                 self.catalog_error = None;
-                self.status = Some("Catalog refreshed.".to_string());
+                self.set_status(format!(
+                    "Catalog refreshed: {supported_count} {} extensions available",
+                    os_label(self.current_os)
+                ));
             }
             Err(err) => {
                 self.catalog_error = Some(err.clone());
-                self.status = Some(err);
+                self.set_status(err);
             }
         }
     }
 
-    pub fn installed_extensions_updated(&mut self, result: Result<InstalledState, String>) {
+    pub fn installed_extensions_updated(
+        &mut self,
+        result: Result<InstalledExtensionsUpdate, String>,
+    ) {
         self.extension_busy = None;
         self.pending_uninstall = None;
         match result {
-            Ok(state) => {
-                self.installed_state = state;
+            Ok(update) => {
+                self.installed_state = update.state;
                 self.sync_bundled_extension_enabled();
                 self.installed_state_error = None;
-                self.status = Some("Extension settings updated.".to_string());
+                self.set_status(update.message);
             }
-            Err(err) => self.status = Some(err),
+            Err(err) => self.set_status(err),
         }
     }
 
     pub fn reload_finished(&mut self, result: Result<String, String>) {
-        self.status = Some(match result {
+        self.set_status(match result {
             Ok(message) => message,
             Err(err) => err,
         });
@@ -193,7 +219,7 @@ impl SettingsState {
             if let Some(shortcut) = capture_shortcut(ui.ctx()) {
                 self.draft.activation = shortcut;
                 self.recording_hotkey = false;
-                self.status = Some(format!("Recorded {}.", shortcut));
+                self.set_status(format!("Recorded {}", shortcut));
             }
         }
 
@@ -228,6 +254,7 @@ impl SettingsState {
                     );
                 });
         });
+        self.draw_status_toast(ui.ctx());
     }
 
     fn draw_sidebar(&mut self, ui: &mut egui::Ui) {
@@ -317,11 +344,6 @@ impl SettingsState {
     }
 
     fn draw_status_summary(&self, ui: &mut egui::Ui) {
-        if let Some(status) = &self.status {
-            banner(ui, status, BannerTone::Info);
-            ui.add_space(12.0);
-        }
-
         if self.is_dirty() {
             banner(
                 ui,
@@ -330,6 +352,25 @@ impl SettingsState {
             );
             ui.add_space(12.0);
         }
+    }
+
+    fn draw_status_toast(&mut self, ctx: &egui::Context) {
+        let Some(status) = &self.status else {
+            return;
+        };
+
+        if status.created_at.elapsed() >= STATUS_TOAST_DURATION {
+            self.status = None;
+            return;
+        }
+
+        ctx.request_repaint_after(Duration::from_millis(100));
+        let message = status.message.clone();
+
+        egui::Area::new(egui::Id::new("settings_status_toast"))
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -24.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| toast(ui, &message));
     }
 
     fn draw_general(&mut self, ui: &mut egui::Ui, event_tx: &Sender<UiEvent>) {
@@ -350,13 +391,12 @@ impl SettingsState {
                         shortcut_pill(ui, &self.draft.activation.to_string());
                         if secondary_button(ui, "Record").clicked() {
                             self.recording_hotkey = true;
-                            self.status = Some("Press the new activation shortcut.".to_string());
+                            self.set_status("Press the new activation shortcut");
                         }
                         if secondary_button(ui, "Reset").clicked() {
                             self.draft.activation = RuntimeConfig::default_activation_shortcut();
                             self.recording_hotkey = false;
-                            self.status =
-                                Some("Activation hotkey reset to the code default.".to_string());
+                            self.set_status("Activation hotkey reset to the code default");
                         }
                     });
                 });
@@ -407,7 +447,7 @@ impl SettingsState {
                 .clicked()
             {
                 self.saving = true;
-                self.status = Some("Saving settings...".to_string());
+                self.set_status("Saving settings");
                 let _ = event_tx.send(UiEvent::SaveRuntimeConfigRequested(self.draft.clone()));
             }
 
@@ -420,7 +460,7 @@ impl SettingsState {
             {
                 self.draft = self.saved.clone();
                 self.recording_hotkey = false;
-                self.status = Some("Discarded unsaved changes.".to_string());
+                self.set_status("Discarded unsaved changes");
             }
         });
     }
@@ -497,7 +537,7 @@ impl SettingsState {
                 .clicked()
             {
                 self.saving = true;
-                self.status = Some("Saving settings...".to_string());
+                self.set_status("Saving settings");
                 let _ = event_tx.send(UiEvent::SaveRuntimeConfigRequested(self.draft.clone()));
             }
 
@@ -511,19 +551,19 @@ impl SettingsState {
                 match validate_catalog_source(&self.draft.github) {
                     Ok(()) => {
                         self.catalog_busy = true;
-                        self.status = Some("Refreshing extension catalog...".to_string());
+                        self.set_status("Refreshing extension catalog");
                         let _ = event_tx
                             .send(UiEvent::RefreshCatalogRequested(self.draft.github.clone()));
                     }
                     Err(err) => {
                         self.catalog_error = Some(err.clone());
-                        self.status = Some(err);
+                        self.set_status(err);
                     }
                 }
             }
 
             if secondary_button(ui, "Reload Extensions").clicked() {
-                self.status = Some("Reloading extensions...".to_string());
+                self.set_status("Reloading extensions");
                 let _ = event_tx.send(UiEvent::ReloadExtensionsRequested);
             }
         });
@@ -636,6 +676,7 @@ impl SettingsState {
                             let _ = event_tx.send(UiEvent::SetExtensionEnabledRequested {
                                 extension_id: extension.id.clone(),
                                 source_id: extension.source_id.clone(),
+                                display_name: display_name.clone(),
                                 enabled: next_enabled,
                             });
                         }
@@ -655,10 +696,11 @@ impl SettingsState {
     ) {
         if ui.add_enabled(!busy, danger_button("Remove")).clicked() {
             self.extension_busy = Some(extension_busy_key(&extension.id, &extension.source_id));
-            self.status = Some(format!("Uninstalling {display_name}..."));
+            self.set_status(format!("Uninstalling {display_name}"));
             let _ = event_tx.send(UiEvent::UninstallExtensionRequested {
                 extension_id: extension.id.clone(),
                 source_id: extension.source_id.clone(),
+                display_name: display_name.to_string(),
             });
         }
 
@@ -795,10 +837,11 @@ impl SettingsState {
                     if self.is_uninstall_pending(&entry.id, GITHUB_SOURCE_ID) {
                         if ui.add_enabled(!busy, danger_button("Remove")).clicked() {
                             self.extension_busy = Some(busy_key.clone());
-                            self.status = Some(format!("Uninstalling {}...", entry.name));
+                            self.set_status(format!("Uninstalling {}", entry.name));
                             let _ = event_tx.send(UiEvent::UninstallExtensionRequested {
                                 extension_id: entry.id.clone(),
                                 source_id: GITHUB_SOURCE_ID.to_string(),
+                                display_name: entry.name.clone(),
                             });
                         }
 
@@ -828,10 +871,11 @@ impl SettingsState {
                 };
                 if ui.add_enabled(!busy, action_button).clicked() {
                     self.extension_busy = Some(busy_key);
-                    self.status = Some(format!("Installing {}...", entry.name));
+                    self.set_status(format!("Installing {}", entry.name));
                     let _ = event_tx.send(UiEvent::InstallExtensionRequested {
                         source: self.draft.github.clone(),
                         entry: entry.clone(),
+                        installed_version: installed_version.map(|version| version.to_string()),
                     });
                 }
             });
@@ -1217,6 +1261,37 @@ fn banner(ui: &mut egui::Ui, message: &str, tone: BannerTone) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(egui::RichText::new(message).color(text_color));
+        });
+}
+
+fn os_label(os: Os) -> &'static str {
+    match os {
+        Os::Windows => "Windows",
+        Os::Mac => "macOS",
+        Os::Linux => "Linux",
+    }
+}
+
+fn toast(ui: &mut egui::Ui, message: &str) {
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgb(25, 45, 64))
+        .stroke(egui::Stroke::new(1.0, ACCENT_DARK))
+        .corner_radius(egui::CornerRadius::same(10))
+        .shadow(egui::Shadow {
+            offset: [0, 10],
+            blur: 24,
+            spread: 0,
+            color: egui::Color32::from_black_alpha(90),
+        })
+        .inner_margin(egui::Margin {
+            left: 14,
+            right: 14,
+            top: 10,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            ui.set_max_width(360.0);
+            ui.label(egui::RichText::new(message).color(TEXT_SECONDARY));
         });
 }
 
