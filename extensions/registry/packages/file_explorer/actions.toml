@@ -1,0 +1,137 @@
+schema_version = 1
+
+[app]
+default_focus_state = "focused"
+default_tags = ["windows", "explorer", "files"]
+
+[actions]
+
+[actions.new_tab]
+name = "New tab"
+focus_state = "focused"
+priority = "high"
+
+[actions.close_tab]
+name = "Close tab"
+focus_state = "focused"
+priority = "low"
+
+[actions.next_tab]
+name = "Next tab"
+focus_state = "focused"
+priority = "medium"
+
+[actions.previous_tab]
+name = "Previous tab"
+focus_state = "focused"
+priority = "medium"
+
+[actions.new_window]
+name = "New window"
+focus_state = "focused"
+priority = "high"
+
+[actions.new_folder]
+name = "New folder"
+focus_state = "focused"
+priority = "high"
+
+[actions.rename_item]
+name = "Rename item"
+focus_state = "focused"
+priority = "high"
+
+[actions.refresh]
+name = "Refresh"
+focus_state = "focused"
+priority = "high"
+
+[actions.search]
+name = "Search files"
+focus_state = "focused"
+priority = "high"
+
+[actions.focus_address_bar]
+name = "Focus address bar"
+focus_state = "focused"
+priority = "high"
+
+[actions.show_properties]
+name = "Show properties"
+focus_state = "focused"
+priority = "medium"
+
+[actions.go_back]
+name = "Go back"
+focus_state = "focused"
+priority = "high"
+
+[actions.go_forward]
+name = "Go forward"
+focus_state = "focused"
+priority = "high"
+
+[actions.go_up_level]
+name = "Go up one level"
+focus_state = "focused"
+priority = "high"
+
+[actions.toggle_preview_pane]
+name = "Show or hide preview pane"
+focus_state = "focused"
+priority = "medium"
+
+[actions.toggle_details_pane]
+name = "Show or hide details pane"
+focus_state = "focused"
+priority = "medium"
+
+[actions.expand_all_folders]
+name = "Expand all folders in navigation pane"
+focus_state = "focused"
+priority = "suppressed"
+
+[actions.delete_selected_item]
+name = "Delete selected item"
+focus_state = "focused"
+priority = "low"
+
+[actions.delete_selected_item_permanently]
+name = "Delete selected item permanently"
+focus_state = "focused"
+priority = "suppressed"
+
+[actions.scroll_to_top]
+name = "Scroll to top"
+focus_state = "focused"
+priority = "low"
+
+[actions.scroll_to_bottom]
+name = "Scroll to bottom"
+focus_state = "focused"
+priority = "low"
+
+[actions.cycle_window_elements]
+name = "Cycle window elements"
+focus_state = "focused"
+priority = "low"
+
+[actions.toggle_fullscreen]
+name = "Toggle fullscreen"
+focus_state = "focused"
+priority = "medium"
+
+[actions.collapse_selection]
+name = "Collapse selection"
+focus_state = "focused"
+priority = "low"
+
+[actions.expand_selection]
+name = "Expand selection"
+focus_state = "focused"
+priority = "low"
+
+[actions.show_context_menu]
+name = "Show context menu"
+focus_state = "focused"
+priority = "low"

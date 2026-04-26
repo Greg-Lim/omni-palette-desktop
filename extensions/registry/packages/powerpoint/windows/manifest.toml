@@ -1,7 +1,0 @@
-schema_version = 1
-id = "powerpoint"
-name = "PowerPoint"
-platform = "windows"
-version = "0.1.0"
-kind = "static"
-publisher = "Greg-Lim"

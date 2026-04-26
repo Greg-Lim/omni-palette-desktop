@@ -12,15 +12,12 @@ The app loads bundled runtime extensions from `extensions/bundled`.
 ```text
 extensions/bundled/
   ignore.toml
-  static/
-    windows.toml
   plugins/
 ```
 
-`windows.toml` is the bundled static shortcut pack. It provides core Windows
-system shortcuts and can be disabled from the settings extension page. App
-shortcut packs such as PowerPoint are registry packages rather than bundled
-defaults.
+There are currently no bundled static shortcut packs. Bundled static extension
+support remains available for future built-in defaults, and the settings page
+will show an empty bundled section when none are present.
 
 ```toml
 version = 2
@@ -37,6 +34,9 @@ name = "Open File Explorer"
 priority = "high"
 cmd = { mods = ["win"], key = "KeyE" }
 ```
+
+The Windows shortcut pack is distributed as a registry package rather than a
+bundled default.
 
 WASM plugins live in `extensions/bundled/plugins/<plugin_id>`. Downloadable WASM
 plugin packages are not supported yet, so bundled plugins remain here for now.
@@ -55,21 +55,49 @@ extensions/registry/
   catalog.v1.json
   packages/
     chrome/
+      manifest.toml
+      actions.toml
       windows/
-        manifest.toml
         static/
           chrome.toml
     file_explorer/
+      manifest.toml
+      actions.toml
       windows/
-        manifest.toml
         static/
           file_explorer.toml
     powerpoint/
+      manifest.toml
+      actions.toml
       windows/
-        manifest.toml
         static/
           powerpoint.toml
+    windows/
+      manifest.toml
+      actions.toml
+      windows/
+        static/
+          windows.toml
 ```
+
+`catalog.v1.json` is generated publish output. Do not hand-edit it when adding
+or updating packages. Edit package `manifest.toml`, `actions.toml`, and the
+platform implementation files; the GitHub Actions publish workflow packages the
+changed extension, uploads the `.gpext` release asset, and commits catalog URL,
+hash, and size changes.
+
+Each static package has three source files:
+
+```text
+manifest.toml        # package identity, marketplace metadata, permissions
+actions.toml         # global action names, priority, tags, focus, conditions
+windows/static/*.toml # Windows process name plus command bindings or pass
+```
+
+Platform implementation files use `version = 3` and should not contain action
+names, priority, tags, favorites, or `when` conditions. Those live in
+`actions.toml`. A platform action may use `implementation = "pass"` to
+explicitly acknowledge an action that has no implementation on that platform.
 
 Package source folders do not include version numbers. Git tags and GitHub
 Releases identify published versions. For example:

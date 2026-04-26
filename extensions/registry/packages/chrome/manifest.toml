@@ -1,0 +1,10 @@
+schema_version = 1
+id = "chrome"
+name = "Chrome"
+version = "0.1.1"
+kind = "static"
+publisher = "Greg-Lim"
+description = "Chrome keyboard shortcut command pack."
+repository = "https://github.com/Greg-Lim/omni-palette-desktop"
+keywords = ["browser", "chrome", "tabs", "web"]
+permissions = []

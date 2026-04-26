@@ -1,177 +1,83 @@
-#
-# File Explorer-focused commands.
-#
-# Rule of thumb:
-# - Put OS-wide Windows shortcuts in `windows.toml` (example: Win+E opens Explorer).
-# - Put shortcuts here only when they require File Explorer to already be focused.
-# - When Windows offers multiple shortcuts for the same logical command, keep one
-#   canonical shortcut here until the schema supports shortcut aliases.
-#
-
-version = 2
+version = 3
 platform = "windows"
-
-[app]
-id = "file_explorer"
-name = "File Explorer"
 process_name = "Explorer.EXE"
-default_focus_state = "focused"
-default_tags = ["windows", "explorer", "files"]
 
 [actions]
 
 [actions.new_tab]
-name = "New tab"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl"], key = "KeyT" }
 
 [actions.close_tab]
-name = "Close tab"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "KeyW" }
 
 [actions.next_tab]
-name = "Next tab"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["ctrl"], key = "Tab" }
 
 [actions.previous_tab]
-name = "Previous tab"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["ctrl", "shift"], key = "Tab" }
 
 [actions.new_window]
-name = "New window"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl"], key = "KeyN" }
 
 [actions.new_folder]
-name = "New folder"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl", "shift"], key = "KeyN" }
 
 [actions.rename_item]
-name = "Rename item"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = [], key = "F2" }
 
 [actions.refresh]
-name = "Refresh"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = [], key = "F5" }
 
 [actions.search]
-name = "Search files"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl"], key = "KeyE" }
 
 [actions.focus_address_bar]
-name = "Focus address bar"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["alt"], key = "KeyD" }
 
 [actions.show_properties]
-name = "Show properties"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["alt"], key = "Enter" }
 
 [actions.go_back]
-name = "Go back"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["alt"], key = "LeftArrow" }
 
 [actions.go_forward]
-name = "Go forward"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["alt"], key = "RightArrow" }
 
 [actions.go_up_level]
-name = "Go up one level"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["alt"], key = "UpArrow" }
 
 [actions.toggle_preview_pane]
-name = "Show or hide preview pane"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["alt"], key = "KeyP" }
 
 [actions.toggle_details_pane]
-name = "Show or hide details pane"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["alt", "shift"], key = "KeyP" }
 
 [actions.expand_all_folders]
-name = "Expand all folders in navigation pane"
-focus_state = "focused"
-action_priority = "suppressed"
 cmd = { mods = ["ctrl", "shift"], key = "KeyE" }
 
 [actions.delete_selected_item]
-name = "Delete selected item"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "Delete" }
 
 [actions.delete_selected_item_permanently]
-name = "Delete selected item permanently"
-focus_state = "focused"
-action_priority = "suppressed"
 cmd = { mods = ["shift"], key = "Delete" }
 
 [actions.scroll_to_top]
-name = "Scroll to top"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "Home" }
 
 [actions.scroll_to_bottom]
-name = "Scroll to bottom"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "End" }
 
 [actions.cycle_window_elements]
-name = "Cycle window elements"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "F6" }
 
 [actions.toggle_fullscreen]
-name = "Toggle fullscreen"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = [], key = "F11" }
 
 [actions.collapse_selection]
-name = "Collapse selection"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "LeftArrow" }
 
 [actions.expand_selection]
-name = "Expand selection"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "RightArrow" }
 
 [actions.show_context_menu]
-name = "Show context menu"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["shift"], key = "F10" }

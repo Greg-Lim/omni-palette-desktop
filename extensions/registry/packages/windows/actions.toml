@@ -1,0 +1,219 @@
+schema_version = 1
+
+[app]
+default_focus_state = "global"
+default_tags = ["windows", "system", "os"]
+
+[actions]
+
+[actions.open_file_explorer]
+name = "Open File Explorer"
+priority = "high"
+
+[actions.open_settings]
+name = "Open Settings"
+priority = "high"
+
+[actions.lock_pc]
+name = "Lock PC"
+priority = "high"
+
+[actions.open_run]
+name = "Open Run"
+priority = "high"
+
+[actions.open_search]
+name = "Open Search"
+priority = "high"
+
+[actions.open_quick_link_menu]
+name = "Open Quick Link menu"
+priority = "medium"
+
+[actions.show_hide_desktop]
+name = "Show/hide desktop"
+priority = "medium"
+
+[actions.open_task_view]
+name = "Open Task View"
+priority = "medium"
+
+[actions.open_clipboard_history]
+name = "Open Clipboard History"
+priority = "high"
+
+[actions.open_action_center]
+name = "Open Action Center"
+priority = "low"
+
+[actions.open_project_settings]
+name = "Open Project Settings"
+priority = "suppressed"
+
+[actions.screen_snip]
+name = "Screen snip"
+priority = "high"
+
+[actions.save_screenshot]
+name = "Save screenshot"
+priority = "medium"
+
+[actions.open_accessibility]
+name = "Open Accessibility"
+priority = "suppressed"
+
+[actions.snap_window_left]
+name = "Snap window left"
+priority = "medium"
+
+[actions.snap_window_right]
+name = "Snap window right"
+priority = "medium"
+
+[actions.maximize_window]
+name = "Maximize window"
+priority = "low"
+
+[actions.minimize_window]
+name = "Minimize window"
+priority = "low"
+
+[actions.open_emoji_panel]
+name = "Open Emoji Panel"
+priority = "high"
+
+[actions.open_voice_typing]
+name = "Open Voice Typing"
+priority = "low"
+
+[actions.open_widgets]
+name = "Open Widgets"
+priority = "low"
+
+[actions.open_cast]
+name = "Open Cast"
+priority = "suppressed"
+
+[actions.open_game_bar]
+name = "Open Game Bar"
+priority = "suppressed"
+
+[actions.minimize_all_windows]
+name = "Minimize all windows"
+priority = "low"
+
+[actions.restore_minimized_windows]
+name = "Restore minimized windows"
+priority = "low"
+
+[actions.move_window_left_monitor]
+name = "Move window to left monitor"
+priority = "low"
+
+[actions.move_window_right_monitor]
+name = "Move window to right monitor"
+priority = "low"
+
+[actions.snap_window_top]
+name = "Snap window top"
+priority = "medium"
+
+[actions.snap_window_bottom]
+name = "Snap window bottom"
+priority = "medium"
+
+[actions.stretch_window_vertical]
+name = "Stretch window vertically"
+priority = "low"
+
+[actions.create_virtual_desktop]
+name = "Create virtual desktop"
+priority = "low"
+
+[actions.next_virtual_desktop]
+name = "Next virtual desktop"
+priority = "low"
+
+[actions.previous_virtual_desktop]
+name = "Previous virtual desktop"
+priority = "low"
+
+[actions.close_virtual_desktop]
+name = "Close virtual desktop"
+priority = "suppressed"
+
+[actions.open_quick_assist]
+name = "Open Quick Assist"
+priority = "suppressed"
+
+[actions.open_sound_output]
+name = "Open Sound Output"
+priority = "low"
+
+[actions.open_system_about]
+name = "Open System About"
+priority = "suppressed"
+
+[actions.record_screen_region]
+name = "Record screen region"
+priority = "high"
+
+[actions.toggle_hdr]
+name = "Toggle HDR"
+priority = "suppressed"
+
+[actions.toggle_color_filters]
+name = "Toggle color filters"
+priority = "suppressed"
+
+[actions.open_narrator]
+name = "Open Narrator"
+priority = "suppressed"
+
+[actions.magnifier_zoom_in]
+name = "Magnifier zoom in"
+priority = "suppressed"
+
+[actions.magnifier_zoom_out]
+name = "Magnifier zoom out"
+priority = "suppressed"
+
+[actions.close_magnifier]
+name = "Close Magnifier"
+priority = "suppressed"
+
+[actions.open_feedback_hub]
+name = "Open Feedback Hub"
+priority = "suppressed"
+
+[actions.open_recall]
+name = "Open Recall"
+priority = "suppressed"
+
+[actions.open_ime_reconversion]
+name = "Open IME reconversion"
+priority = "suppressed"
+
+[actions.switch_input_language]
+name = "Switch input language"
+priority = "suppressed"
+
+[actions.previous_input_language]
+name = "Previous input language"
+priority = "suppressed"
+
+[actions.cycle_notifications]
+name = "Cycle notifications"
+priority = "suppressed"
+
+[actions.uwp_full_screen]
+name = "UWP full screen"
+priority = "suppressed"
+
+[actions.mixed_reality_input]
+name = "Mixed Reality input"
+priority = "suppressed"
+
+[actions.open_snap_layouts]
+name = "Open Snap Layouts"
+priority = "suppressed"

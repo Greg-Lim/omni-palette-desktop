@@ -17,6 +17,76 @@ pub struct Config {
     pub actions: HashMap<String, ActionConfig>,
 }
 
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+#[serde(deny_unknown_fields)]
+pub struct PackageManifestConfig {
+    pub schema_version: u32,
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub kind: String,
+    pub publisher: Option<String>,
+    pub description: Option<String>,
+    pub license: Option<String>,
+    pub homepage: Option<String>,
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    pub min_app_version: Option<String>,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionsMetadataConfig {
+    pub schema_version: u32,
+    pub app: Option<ActionAppDefaultsConfig>,
+    pub actions: HashMap<String, ActionMetadataConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ActionAppDefaultsConfig {
+    pub default_focus_state: Option<FocusState>,
+    pub default_tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ActionMetadataConfig {
+    pub name: String,
+    pub focus_state: Option<FocusState>,
+    pub when: Option<ActionWhenConfig>,
+    #[serde(alias = "action_priority")]
+    pub priority: Option<CommandPriority>,
+    pub tags: Option<Vec<String>>,
+    pub favorite: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlatformImplementationConfig {
+    pub version: u32,
+    pub platform: Os,
+    pub process_name: String,
+    pub actions: HashMap<String, ActionImplementationConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ActionImplementationConfig {
+    pub cmd: Option<CommandBinding>,
+    pub implementation: Option<SkippedImplementation>,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SkippedImplementation {
+    Pass,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {

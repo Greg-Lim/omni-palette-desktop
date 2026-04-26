@@ -1,302 +1,143 @@
-# Only cover chrome base shortcuts
-# I plan to make 1 more generalize for chrome extensions
-# n more for every unique webpage that implements shortcuts
-
-# The architecture of this file is based on ADR/0002_extension_config_design.md
-
-version = 2
+version = 3
 platform = "windows"
-
-# --- Application (this entire file represents exactly ONE app id) ---
-[app]
-id = "chrome"                    # Application ID (unique)
-name = "Chrome"                  # Application Name (OS-agnostic)
 process_name = "chrome.exe"
-default_focus_state = "focused"  # For app that only want to run commands that are in focused
 
-# --- Actions ---
-# action_id -> action_name
-# action_id + application_id -> action_cmd
 [actions]
 
 [actions.new_tab]
-name = "New tab"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl"], key = "KeyT" }
 
 [actions.close_tab]
-name = "Close tab"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl"], key = "KeyW" }
 
 [actions.reopen_tab]
-name = "Reopen closed tab"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl", "shift"], key = "KeyT" }
 
-# --- Tab & Window shortcuts ---
-
 [actions.new_window]
-name = "New window"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["ctrl"], key = "KeyN" }
 
 [actions.new_incognito_window]
-name = "New Incognito window"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["ctrl", "shift"], key = "KeyN" }
 
 [actions.next_tab]
-name = "Next tab"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl"], key = "Tab" }
 
 [actions.prev_tab]
-name = "Previous tab"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl", "shift"], key = "Tab" }
 
 [actions.tab_1]
-name = "Switch to tab 1"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key1" }
 
 [actions.tab_2]
-name = "Switch to tab 2"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key2" }
 
 [actions.tab_3]
-name = "Switch to tab 3"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key3" }
 
 [actions.tab_4]
-name = "Switch to tab 4"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key4" }
 
 [actions.tab_5]
-name = "Switch to tab 5"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key5" }
 
 [actions.tab_6]
-name = "Switch to tab 6"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key6" }
 
 [actions.tab_7]
-name = "Switch to tab 7"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key7" }
 
 [actions.tab_8]
-name = "Switch to tab 8"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key8" }
 
 [actions.last_tab]
-name = "Switch to last tab"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key9" }
 
 [actions.back]
-name = "Go back"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["alt"], key = "LeftArrow" }
 
 [actions.forward]
-name = "Go forward"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["alt"], key = "RightArrow" }
 
 [actions.close_window]
-name = "Close window"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["alt"], key = "F4" }
 
-# --- Feature shortcuts ---
-
 [actions.toggle_bookmarks_bar]
-name = "Show/hide bookmarks bar"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl", "shift"], key = "KeyB" }
 
 [actions.bookmark_manager]
-name = "Open Bookmark Manager"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl", "shift"], key = "KeyO" }
 
 [actions.history]
-name = "Open History"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "KeyH" }
 
 [actions.downloads]
-name = "Open Downloads"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "KeyJ" }
 
 [actions.find]
-name = "Find on page"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl"], key = "KeyF" }
 
 [actions.find_next]
-name = "Next find match"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["ctrl"], key = "KeyG" }
 
 [actions.find_prev]
-name = "Previous find match"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["ctrl", "shift"], key = "KeyG" }
 
 [actions.dev_tools]
-name = "Open Developer Tools"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = [], key = "F12" }
 
 [actions.bookmark_page]
-name = "Bookmark current page"
-focus_state = "focused"
-action_priority = "medium"
 cmd = { mods = ["ctrl"], key = "KeyD" }
 
 [actions.bookmark_all_tabs]
-name = "Bookmark all open tabs"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl", "shift"], key = "KeyD" }
 
 [actions.focus_address_bar]
-name = "Focus address bar"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = ["ctrl"], key = "KeyL" }
 
 [actions.print]
-name = "Print page"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "KeyP" }
 
 [actions.save_page]
-name = "Save page"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "KeyS" }
 
 [actions.view_source]
-name = "View page source"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "KeyU" }
 
 [actions.clear_browsing_data]
-name = "Clear Browsing Data"
-focus_state = "focused"
-action_priority = "suppressed"
 cmd = { mods = ["ctrl", "shift"], key = "Delete" }
 
 [actions.fullscreen]
-name = "Toggle fullscreen"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "F11" }
 
 [actions.task_manager]
-name = "Chrome Task Manager"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["shift"], key = "Escape" }
 
-# --- Webpage shortcuts ---
-
 [actions.reload]
-name = "Reload page"
-focus_state = "focused"
-action_priority = "high"
 cmd = { mods = [], key = "F5" }
 
 [actions.hard_reload]
-name = "Reload (ignore cache)"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl", "shift"], key = "KeyR" }
 
 [actions.stop_loading]
-name = "Stop page loading"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "Escape" }
 
 [actions.zoom_in]
-name = "Zoom in"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Equal" }
 
 [actions.zoom_out]
-name = "Zoom out"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Minus" }
 
 [actions.zoom_reset]
-name = "Reset zoom"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "Key0" }
 
 [actions.scroll_down]
-name = "Scroll down"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "Space" }
 
 [actions.go_to_top]
-name = "Go to top of page"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "Home" }
 
 [actions.go_to_bottom]
-name = "Go to bottom of page"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = [], key = "End" }
 
 [actions.open_file]
-name = "Open file"
-focus_state = "focused"
-action_priority = "low"
 cmd = { mods = ["ctrl"], key = "KeyO" }

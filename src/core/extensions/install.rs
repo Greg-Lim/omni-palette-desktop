@@ -359,6 +359,10 @@ pub fn uninstall_installed_extension(
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
         Err(err) => return Err(InstallError::Io(err)),
     }
+    let metadata_path = install_root.join("metadata").join(extension_id);
+    if metadata_path.exists() {
+        fs::remove_dir_all(metadata_path)?;
+    }
 
     save_installed_state(install_root, &state)?;
     Ok(state)
@@ -524,9 +528,13 @@ mod tests {
     fn uninstall_removes_static_file_and_state_entry() {
         let root = tempfile::tempdir().expect("temp dir should be created");
         let static_dir = root.path().join("static");
+        let metadata_dir = root.path().join("metadata").join("chrome");
         fs::create_dir_all(&static_dir).expect("static dir should be created");
+        fs::create_dir_all(&metadata_dir).expect("metadata dir should be created");
         let installed_path = static_dir.join("chrome.toml");
         fs::write(&installed_path, "version = 2").expect("extension file should be written");
+        fs::write(metadata_dir.join("manifest.toml"), "").expect("manifest should be written");
+        fs::write(metadata_dir.join("actions.toml"), "").expect("actions should be written");
 
         let mut state = InstalledState::default();
         state.upsert(installed_extension(
@@ -541,6 +549,7 @@ mod tests {
 
         assert!(state.extensions.is_empty());
         assert!(!installed_path.exists());
+        assert!(!metadata_dir.exists());
         assert!(load_installed_state(root.path())
             .expect("state should reload")
             .extensions

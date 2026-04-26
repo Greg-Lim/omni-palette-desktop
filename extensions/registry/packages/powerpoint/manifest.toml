@@ -1,0 +1,10 @@
+schema_version = 1
+id = "powerpoint"
+name = "PowerPoint"
+version = "0.1.0"
+kind = "static"
+publisher = "Greg-Lim"
+description = "PowerPoint keyboard shortcut command pack."
+repository = "https://github.com/Greg-Lim/omni-palette-desktop"
+keywords = ["powerpoint", "presentation", "slides", "office"]
+permissions = []

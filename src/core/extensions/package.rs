@@ -10,24 +10,33 @@ use tempfile::TempDir;
 use zip::ZipArchive;
 
 use crate::{
-    config::extension::Config,
+    config::extension::{
+        ActionsMetadataConfig, PackageManifestConfig, PlatformImplementationConfig,
+    },
     core::extensions::catalog::{validate_extension_id, validate_sha256_hex, ExtensionKind},
     domain::action::Os,
 };
 
 const PACKAGE_MANIFEST_NAME: &str = "manifest.toml";
+const PACKAGE_ACTIONS_NAME: &str = "actions.toml";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ExtensionPackageManifest {
     pub schema_version: u32,
     pub id: String,
     pub name: String,
-    pub platform: Os,
     pub version: String,
     pub kind: ExtensionKind,
     pub publisher: Option<String>,
+    pub description: Option<String>,
     pub license: Option<String>,
+    pub homepage: Option<String>,
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub keywords: Vec<String>,
     pub min_app_version: Option<String>,
+    #[serde(default)]
+    pub permissions: Vec<String>,
 }
 
 impl ExtensionPackageManifest {
@@ -59,6 +68,7 @@ impl ExtensionPackageManifest {
 #[derive(Debug)]
 pub struct ValidatedPackage {
     pub manifest: ExtensionPackageManifest,
+    pub platform: Os,
     temp_dir: TempDir,
 }
 
@@ -71,10 +81,10 @@ impl ValidatedPackage {
         if self.manifest.kind != ExtensionKind::Static {
             return Err(PackageError::UnsupportedKind(self.manifest.kind));
         }
-        if self.manifest.platform != current_os {
+        if self.platform != current_os {
             return Err(PackageError::PlatformMismatch {
                 expected: current_os,
-                actual: self.manifest.platform,
+                actual: self.platform,
             });
         }
 
@@ -84,17 +94,11 @@ impl ValidatedPackage {
             .join("static")
             .join(format!("{}.toml", self.manifest.id));
         let static_content = fs::read_to_string(&source_static_path)?;
-        let config: Config = toml::from_str(&static_content)?;
-        if config.platform != self.manifest.platform {
+        let platform_config: PlatformImplementationConfig = toml::from_str(&static_content)?;
+        if platform_config.platform != self.platform {
             return Err(PackageError::InvalidManifest(format!(
                 "package platform {:?} does not match static extension platform {:?}",
-                self.manifest.platform, config.platform
-            )));
-        }
-        if config.app.id != self.manifest.id {
-            return Err(PackageError::InvalidManifest(format!(
-                "package id {} does not match static extension app id {}",
-                self.manifest.id, config.app.id
+                self.platform, platform_config.platform
             )));
         }
 
@@ -104,6 +108,18 @@ impl ValidatedPackage {
         let staging_path = destination_dir.join(format!("{}.toml.installing", self.manifest.id));
         fs::write(&staging_path, static_content)?;
         fs::rename(&staging_path, &destination_path)?;
+
+        let metadata_dir = install_root.join("metadata").join(&self.manifest.id);
+        fs::create_dir_all(&metadata_dir)?;
+        fs::copy(
+            self.temp_dir.path().join(PACKAGE_MANIFEST_NAME),
+            metadata_dir.join(PACKAGE_MANIFEST_NAME),
+        )?;
+        fs::copy(
+            self.temp_dir.path().join(PACKAGE_ACTIONS_NAME),
+            metadata_dir.join(PACKAGE_ACTIONS_NAME),
+        )?;
+
         Ok(destination_path)
     }
 }
@@ -229,13 +245,6 @@ pub fn extract_and_validate(
     let manifest_content = fs::read_to_string(manifest_path)?;
     let manifest: ExtensionPackageManifest = toml::from_str(&manifest_content)?;
     manifest.validate()?;
-    if manifest.platform != current_os {
-        return Err(PackageError::PlatformMismatch {
-            expected: current_os,
-            actual: manifest.platform,
-        });
-    }
-
     if manifest.kind == ExtensionKind::Static {
         let static_path = temp_dir
             .path()
@@ -247,9 +256,20 @@ pub fn extract_and_validate(
                 manifest.id
             )));
         }
+        let actions_path = temp_dir.path().join(PACKAGE_ACTIONS_NAME);
+        if !actions_path.is_file() {
+            return Err(PackageError::InvalidManifest(
+                "static package is missing actions.toml".to_string(),
+            ));
+        }
+        validate_split_package_files(&manifest, &actions_path, &static_path, current_os)?;
     }
 
-    Ok(ValidatedPackage { manifest, temp_dir })
+    Ok(ValidatedPackage {
+        manifest,
+        platform: current_os,
+        temp_dir,
+    })
 }
 
 pub fn sha256_file(path: &Path) -> Result<String, PackageError> {
@@ -286,6 +306,54 @@ fn safe_archive_path(path: &str) -> Option<PathBuf> {
     (!safe.as_os_str().is_empty()).then_some(safe)
 }
 
+pub fn validate_split_package_files(
+    manifest: &ExtensionPackageManifest,
+    actions_path: &Path,
+    static_path: &Path,
+    current_os: Os,
+) -> Result<(), PackageError> {
+    let manifest_config = PackageManifestConfig {
+        schema_version: manifest.schema_version,
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        version: manifest.version.clone(),
+        kind: match manifest.kind {
+            ExtensionKind::Static => "static".to_string(),
+            ExtensionKind::WasmPlugin => "wasm_plugin".to_string(),
+        },
+        publisher: manifest.publisher.clone(),
+        description: manifest.description.clone(),
+        license: manifest.license.clone(),
+        homepage: manifest.homepage.clone(),
+        repository: manifest.repository.clone(),
+        keywords: manifest.keywords.clone(),
+        min_app_version: manifest.min_app_version.clone(),
+        permissions: manifest.permissions.clone(),
+    };
+    let actions_metadata: ActionsMetadataConfig = toml::from_str(
+        &fs::read_to_string(actions_path)
+            .map_err(|err| PackageError::InvalidManifest(err.to_string()))?,
+    )?;
+    let platform_config: PlatformImplementationConfig = toml::from_str(
+        &fs::read_to_string(static_path)
+            .map_err(|err| PackageError::InvalidManifest(err.to_string()))?,
+    )?;
+    if platform_config.platform != current_os {
+        return Err(PackageError::PlatformMismatch {
+            expected: current_os,
+            actual: platform_config.platform,
+        });
+    }
+
+    crate::core::extensions::extensions::resolved_config_from_split(
+        manifest_config,
+        actions_metadata,
+        platform_config,
+    )
+    .map_err(PackageError::InvalidManifest)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,26 +384,37 @@ mod tests {
             br#"schema_version = 1
 id = "chrome_tools"
 name = "Chrome Tools"
-platform = "windows"
 version = "1.0.0"
 kind = "static"
+description = "Chrome tools."
+repository = "https://github.com/Greg-Lim/omni-palette-desktop"
+keywords = ["chrome"]
 "#,
         )
         .expect("manifest should be written");
-        zip.start_file("static/chrome_tools.toml", options)
-            .expect("static file should start");
+        zip.start_file("actions.toml", options)
+            .expect("actions should start");
         zip.write_all(
-            br#"version = 2
-platform = "windows"
+            br#"schema_version = 1
 
 [app]
-id = "chrome_tools"
-name = "Chrome Tools"
-process_name = "chrome.exe"
 default_focus_state = "global"
+
+[actions]
 
 [actions.new_tab]
 name = "New tab"
+"#,
+        )
+        .expect("actions should be written");
+        zip.start_file("static/chrome_tools.toml", options)
+            .expect("static file should start");
+        zip.write_all(
+            br#"version = 3
+platform = "windows"
+process_name = "chrome.exe"
+
+[actions.new_tab]
 cmd = { mods = ["ctrl"], key = "T" }
 "#,
         )
@@ -355,18 +434,27 @@ cmd = { mods = ["ctrl"], key = "T" }
 
         assert_eq!(installed_path, root.path().join("static/chrome_tools.toml"));
         assert!(installed_path.is_file());
+        assert!(root
+            .path()
+            .join("metadata/chrome_tools/manifest.toml")
+            .is_file());
+        assert!(root
+            .path()
+            .join("metadata/chrome_tools/actions.toml")
+            .is_file());
     }
 
     #[test]
     fn registry_package_sources_match_static_configs() {
-        for package_id in ["chrome", "file_explorer", "powerpoint"] {
-            let package_root = Path::new("extensions")
+        for package_id in ["chrome", "file_explorer", "powerpoint", "windows"] {
+            let extension_root = Path::new("extensions")
                 .join("registry")
                 .join("packages")
-                .join(package_id)
-                .join("windows");
-            let manifest_path = package_root.join(PACKAGE_MANIFEST_NAME);
-            let static_path = package_root
+                .join(package_id);
+            let manifest_path = extension_root.join(PACKAGE_MANIFEST_NAME);
+            let actions_path = extension_root.join(PACKAGE_ACTIONS_NAME);
+            let static_path = extension_root
+                .join("windows")
                 .join("static")
                 .join(format!("{package_id}.toml"));
 
@@ -376,14 +464,14 @@ cmd = { mods = ["ctrl"], key = "T" }
             .expect("manifest should parse");
             manifest.validate().expect("manifest should validate");
 
-            let config: Config = toml::from_str(
-                &fs::read_to_string(&static_path).expect("static config should be readable"),
-            )
-            .expect("static config should parse");
+            validate_split_package_files(&manifest, &actions_path, &static_path, Os::Windows)
+                .expect("split package source should validate");
+            let config = crate::core::extensions::extensions::load_config(&static_path)
+                .expect("split config should resolve");
 
             assert_eq!(manifest.id, config.app.id);
             assert_eq!(manifest.name, config.app.name);
-            assert_eq!(manifest.platform, config.platform);
+            assert_eq!(config.platform, Os::Windows);
             assert_eq!(manifest.kind, ExtensionKind::Static);
         }
     }
@@ -412,7 +500,6 @@ cmd = { mods = ["ctrl"], key = "T" }
                 .join("registry")
                 .join("packages")
                 .join(&entry.id)
-                .join("windows")
                 .join(PACKAGE_MANIFEST_NAME);
             let manifest: ExtensionPackageManifest = toml::from_str(
                 &fs::read_to_string(manifest_path).expect("manifest should be readable"),
@@ -422,7 +509,6 @@ cmd = { mods = ["ctrl"], key = "T" }
             assert_eq!(entry.id, manifest.id);
             assert_eq!(entry.name, manifest.name);
             assert_eq!(entry.version, manifest.version);
-            assert_eq!(entry.platform, manifest.platform);
             assert_eq!(entry.kind, manifest.kind);
         }
     }

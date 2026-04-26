@@ -1,131 +1,77 @@
-version = 2
+version = 3
 platform = "windows"
-
-[app]
-id = "powerpoint"
-name = "PowerPoint"
 process_name = "POWERPNT.EXE"
-default_focus_state = "focused"
-default_tags = ["powerpoint", "presentation", "slides", "office"]
 
 [actions]
 
 [actions.new_slide]
-name = "New slide"
-priority = "high"
 cmd = { mods = ["ctrl"], key = "KeyM" }
 
 [actions.new_presentation]
-name = "New presentation"
-priority = "low"
-tags = ["file"]
 cmd = { mods = ["ctrl"], key = "KeyN" }
 
 [actions.open_presentation]
-name = "Open presentation"
-priority = "medium"
-tags = ["file"]
 cmd = { mods = ["ctrl"], key = "KeyO" }
 
 [actions.save_presentation]
-name = "Save presentation"
-priority = "high"
-tags = ["file"]
 cmd = { mods = ["ctrl"], key = "KeyS" }
 
 [actions.save_presentation_as]
-name = "Save presentation as"
-priority = "medium"
-tags = ["file"]
 cmd = { mods = ["ctrl", "shift"], key = "KeyS" }
 
 [actions.print_presentation]
-name = "Print presentation"
-priority = "low"
-tags = ["file"]
 cmd = { mods = ["ctrl"], key = "KeyP" }
 
 [actions.start_slideshow]
-name = "Start slideshow from beginning"
-priority = "high"
 cmd = { mods = [], key = "F5" }
 
 [actions.start_slideshow_from_current]
-name = "Start slideshow from current slide"
-priority = "high"
 cmd = { mods = ["shift"], key = "F5" }
 
 [actions.open_draw_tab]
-name = "Open Draw tab"
-priority = "medium"
-tags = ["draw", "ink", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyJ" },
     { key = "KeyI" },
 ] }
 
 [actions.open_help_tab]
-name = "Open Help tab"
-priority = "suppressed"
-tags = ["help", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyY" },
     { key = "Key2" },
 ] }
 
 [actions.change_font_size_from_ribbon]
-name = "Change font size from ribbon"
-priority = "medium"
-tags = ["format", "font", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyH" },
     { key = "KeyF" },
     { key = "KeyS" },
 ] }
 
-[actions.change_font_size_from_ribbon.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.open_zoom_dialog]
-name = "Open Zoom dialog"
-priority = "low"
-tags = ["view", "zoom", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyW" },
     { key = "KeyQ" },
 ] }
 
 [actions.print_full_page_slides]
-name = "Print full page slides"
-priority = "suppressed"
-tags = ["print", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyP" },
     { key = "KeyP" },
 ] }
 
 [actions.select_theme]
-name = "Select theme"
-priority = "medium"
-tags = ["design", "theme", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyG" },
     { key = "KeyH" },
 ] }
 
 [actions.select_slide_layout]
-name = "Select slide layout"
-priority = "high"
-tags = ["slide", "layout", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyH" },
     { key = "KeyL" },
 ] }
 
 [actions.toggle_notes_pane]
-name = "Show or hide Notes pane"
-priority = "medium"
-tags = ["view", "notes", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyW" },
     { key = "KeyP" },
@@ -133,9 +79,6 @@ cmd = { sequence = [
 ] }
 
 [actions.open_clipboard_pane]
-name = "Open Clipboard pane"
-priority = "low"
-tags = ["clipboard", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyH" },
     { key = "KeyF" },
@@ -143,36 +86,24 @@ cmd = { sequence = [
 ] }
 
 [actions.insert_text_box]
-name = "Insert text box"
-priority = "high"
-tags = ["insert", "text", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyN" },
     { key = "KeyX" },
 ] }
 
 [actions.insert_embedded_object]
-name = "Insert embedded object"
-priority = "suppressed"
-tags = ["insert", "object", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyN" },
     { key = "KeyJ" },
 ] }
 
 [actions.insert_wordart]
-name = "Insert WordArt"
-priority = "suppressed"
-tags = ["insert", "text", "wordart", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyN" },
     { key = "KeyW" },
 ] }
 
 [actions.insert_picture_from_device]
-name = "Insert picture from device"
-priority = "medium"
-tags = ["insert", "picture", "image", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyN" },
     { key = "KeyP" },
@@ -180,9 +111,6 @@ cmd = { sequence = [
 ] }
 
 [actions.insert_shape]
-name = "Insert shape"
-priority = "high"
-tags = ["insert", "shape", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyN" },
     { key = "KeyS" },
@@ -190,9 +118,6 @@ cmd = { sequence = [
 ] }
 
 [actions.open_selection_pane]
-name = "Open Selection pane"
-priority = "medium"
-tags = ["selection", "pane", "ribbon"]
 cmd = { sequence = [
     { mods = ["alt"], key = "KeyH" },
     { key = "KeyS" },
@@ -201,310 +126,112 @@ cmd = { sequence = [
 ] }
 
 [actions.next_slide]
-name = "Go to next slide"
-priority = "medium"
-tags = ["navigate"]
 cmd = { mods = [], key = "PageDown" }
 
 [actions.previous_slide]
-name = "Go to previous slide"
-priority = "medium"
-tags = ["navigate"]
 cmd = { mods = [], key = "PageUp" }
 
 [actions.zoom_out]
-name = "Zoom out"
-priority = "low"
-tags = ["view", "zoom"]
 cmd = { mods = ["ctrl"], key = "Minus" }
 
 [actions.zoom_to_fit]
-name = "Zoom to fit"
-priority = "medium"
-tags = ["view", "zoom"]
 cmd = { mods = ["ctrl", "alt"], key = "KeyO" }
 
 [actions.duplicate_slide]
-name = "Duplicate selected slide"
-priority = "high"
-tags = ["duplicate", "copy"]
 cmd = { mods = ["ctrl", "shift"], key = "KeyD" }
 
-[actions.duplicate_slide.when]
-any = ["ppt.selection.slide"]
-
 [actions.duplicate_object]
-name = "Duplicate selected object"
-priority = "high"
-tags = ["duplicate", "copy", "shape", "image"]
 cmd = { mods = ["ctrl"], key = "KeyD" }
 
-[actions.duplicate_object.when]
-any = ["ppt.selection.shape", "ppt.selection.picture"]
-
 [actions.cut_selection]
-name = "Cut selected text, object, or slide"
-priority = "medium"
-tags = ["clipboard"]
 cmd = { mods = ["ctrl"], key = "KeyX" }
 
-[actions.cut_selection.when]
-any = ["ppt.selection.text", "ppt.selection.shape", "ppt.selection.picture", "ppt.selection.slide", "ui.text_input"]
-
 [actions.copy_selection]
-name = "Copy selected text, object, or slide"
-priority = "medium"
-tags = ["clipboard"]
 cmd = { mods = ["ctrl"], key = "KeyC" }
 
-[actions.copy_selection.when]
-any = ["ppt.selection.text", "ppt.selection.shape", "ppt.selection.picture", "ppt.selection.slide", "ui.text_input"]
-
 [actions.paste]
-name = "Paste"
-priority = "high"
-tags = ["clipboard"]
 cmd = { mods = ["ctrl"], key = "KeyV" }
 
 [actions.copy_formatting]
-name = "Copy selected formatting"
-priority = "medium"
-tags = ["clipboard", "format"]
 cmd = { mods = ["ctrl", "shift"], key = "KeyC" }
 
-[actions.copy_formatting.when]
-any = ["ppt.selection.text", "ppt.selection.shape", "ppt.selection.picture", "ui.text_input"]
-
 [actions.paste_formatting]
-name = "Paste formatting"
-priority = "medium"
-tags = ["clipboard", "format"]
 cmd = { mods = ["ctrl", "shift"], key = "KeyV" }
 
-[actions.paste_formatting.when]
-any = ["ppt.selection.text", "ppt.selection.shape", "ppt.selection.picture", "ui.text_input"]
-
 [actions.insert_hyperlink]
-name = "Insert hyperlink"
-priority = "medium"
-tags = ["link"]
 cmd = { mods = ["ctrl"], key = "KeyK" }
 
-[actions.insert_hyperlink.when]
-any = ["ppt.selection.text", "ppt.selection.shape", "ppt.selection.picture", "ui.text_input"]
-
 [actions.insert_comment]
-name = "Insert comment"
-priority = "medium"
-tags = ["comment"]
 cmd = { mods = ["ctrl", "alt"], key = "KeyM" }
 
 [actions.open_font_dialog]
-name = "Open Font dialog"
-priority = "suppressed"
-tags = ["format", "font"]
 cmd = { mods = ["ctrl"], key = "KeyT" }
 
-[actions.open_font_dialog.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.increase_font_size]
-name = "Increase font size"
-priority = "medium"
-tags = ["format", "font"]
 cmd = { mods = ["ctrl", "shift"], key = "Period" }
 
-[actions.increase_font_size.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.decrease_font_size]
-name = "Decrease font size"
-priority = "medium"
-tags = ["format", "font"]
 cmd = { mods = ["ctrl", "shift"], key = "Comma" }
 
-[actions.decrease_font_size.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.change_case]
-name = "Change selected text case"
-priority = "low"
-tags = ["format", "font"]
 cmd = { mods = ["shift"], key = "F3" }
 
-[actions.change_case.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.bold]
-name = "Bold text"
-priority = "high"
-tags = ["format", "font"]
 cmd = { mods = ["ctrl"], key = "KeyB" }
 
-[actions.bold.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.italic]
-name = "Italic text"
-priority = "high"
-tags = ["format", "font"]
 cmd = { mods = ["ctrl"], key = "KeyI" }
 
-[actions.italic.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.underline]
-name = "Underline text"
-priority = "medium"
-tags = ["format", "font"]
 cmd = { mods = ["ctrl"], key = "KeyU" }
 
-[actions.underline.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.subscript]
-name = "Subscript text"
-priority = "suppressed"
-tags = ["format", "font"]
 cmd = { mods = ["ctrl"], key = "Equal" }
 
-[actions.subscript.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.superscript]
-name = "Superscript text"
-priority = "suppressed"
-tags = ["format", "font"]
 cmd = { mods = ["ctrl", "shift"], key = "Equal" }
 
-[actions.superscript.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.clear_manual_character_formatting]
-name = "Clear manual character formatting"
-priority = "suppressed"
-tags = ["format", "font"]
 cmd = { mods = ["ctrl"], key = "Space" }
 
-[actions.clear_manual_character_formatting.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.align_left]
-name = "Align text left"
-priority = "medium"
-tags = ["format", "paragraph"]
 cmd = { mods = ["ctrl"], key = "KeyL" }
 
-[actions.align_left.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.align_center]
-name = "Center text"
-priority = "medium"
-tags = ["format", "paragraph"]
 cmd = { mods = ["ctrl"], key = "KeyE" }
 
-[actions.align_center.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.align_right]
-name = "Align text right"
-priority = "medium"
-tags = ["format", "paragraph"]
 cmd = { mods = ["ctrl"], key = "KeyR" }
 
-[actions.align_right.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.justify_text]
-name = "Justify text"
-priority = "suppressed"
-tags = ["format", "paragraph"]
 cmd = { mods = ["ctrl"], key = "KeyJ" }
 
-[actions.justify_text.when]
-any = ["ppt.selection.text", "ui.text_input"]
-
 [actions.find_text]
-name = "Find text"
-priority = "medium"
-tags = ["find"]
 cmd = { mods = ["ctrl"], key = "KeyF" }
 
 [actions.replace_text]
-name = "Replace text"
-priority = "low"
-tags = ["find"]
 cmd = { mods = ["ctrl"], key = "KeyH" }
 
 [actions.group_objects]
-name = "Group selected objects"
-priority = "high"
-tags = ["arrange", "shape", "image"]
 cmd = { mods = ["ctrl"], key = "KeyG" }
 
-[actions.group_objects.when]
-any = ["ppt.selection.shape", "ppt.selection.picture"]
-
 [actions.ungroup_objects]
-name = "Ungroup selected objects"
-priority = "medium"
-tags = ["arrange", "shape", "image"]
 cmd = { mods = ["ctrl", "shift"], key = "KeyG" }
 
-[actions.ungroup_objects.when]
-any = ["ppt.selection.shape", "ppt.selection.picture"]
-
 [actions.regroup_objects]
-name = "Regroup selected objects"
-priority = "suppressed"
-tags = ["arrange", "shape", "image"]
 cmd = { mods = ["ctrl", "shift"], key = "KeyJ" }
 
-[actions.regroup_objects.when]
-any = ["ppt.selection.shape", "ppt.selection.picture"]
-
 [actions.bring_forward]
-name = "Bring selected object forward"
-priority = "medium"
-tags = ["arrange", "shape", "image"]
 cmd = { mods = ["ctrl", "shift"], key = "RightBracket" }
 
-[actions.bring_forward.when]
-any = ["ppt.selection.shape", "ppt.selection.picture"]
-
 [actions.send_backward]
-name = "Send selected object backward"
-priority = "medium"
-tags = ["arrange", "shape", "image"]
 cmd = { mods = ["ctrl", "shift"], key = "LeftBracket" }
 
-[actions.send_backward.when]
-any = ["ppt.selection.shape", "ppt.selection.picture"]
-
 [actions.rotate_object_clockwise]
-name = "Rotate selected object clockwise"
-priority = "suppressed"
-tags = ["arrange", "shape", "image"]
 cmd = { mods = ["alt"], key = "RightArrow" }
 
-[actions.rotate_object_clockwise.when]
-any = ["ppt.selection.shape", "ppt.selection.picture"]
-
 [actions.rotate_object_counterclockwise]
-name = "Rotate selected object counterclockwise"
-priority = "suppressed"
-tags = ["arrange", "shape", "image"]
 cmd = { mods = ["alt"], key = "LeftArrow" }
 
-[actions.rotate_object_counterclockwise.when]
-any = ["ppt.selection.shape", "ppt.selection.picture"]
-
 [actions.play_or_pause_media]
-name = "Play or pause selected media"
-priority = "medium"
-tags = ["media"]
 cmd = { mods = ["ctrl"], key = "Space" }
-
-[actions.play_or_pause_media.when]
-any = ["ppt.selection.shape", "ppt.selection.picture"]

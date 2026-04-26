@@ -110,11 +110,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           foreach ($root in Get-Content package-roots.txt) {
-            $manifest = Get-Content -Raw (Join-Path $root "manifest.toml")
+            $extensionRoot = Split-Path $root -Parent
+            $manifest = Get-Content -Raw (Join-Path $extensionRoot "manifest.toml")
             $id = [regex]::Match($manifest, '(?m)^id\s*=\s*"([^"]+)"').Groups[1].Value
             $name = [regex]::Match($manifest, '(?m)^name\s*=\s*"([^"]+)"').Groups[1].Value
             $version = [regex]::Match($manifest, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
-            $platform = [regex]::Match($manifest, '(?m)^platform\s*=\s*"([^"]+)"').Groups[1].Value
+            $platform = Split-Path $root -Leaf
             $tag = "$id-v$version"
             $artifact = "target/extensions/$id-$version-$platform.gpext"
 
