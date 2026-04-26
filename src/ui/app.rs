@@ -22,12 +22,16 @@ use tray_icon::{
 };
 
 const PALETTE_WIDTH: f32 = 780.0;
-const MAX_VISIBLE_ROWS: usize = 12;
+const MAX_FILTERED_COMMANDS: usize = 18;
+const MAX_VISIBLE_COMMAND_ROWS: usize = 10;
 const ROW_HEIGHT: f32 = 38.0;
 const SETTINGS_DIVIDER_HEIGHT: f32 = 13.0;
-const PINNED_SETTINGS_ROW_HEIGHT: f32 = 30.0;
+const FIXED_ACTION_ROW_HEIGHT: f32 = 30.0;
 const ESTIMATED_VISIBLE_ROW_HEIGHT: f32 = 31.0;
-const PINNED_SETTINGS_LABEL: &str = "Omni Palette: Settings";
+const FIXED_PALETTE_ACTIONS: [FixedPaletteAction; 2] = [
+    FixedPaletteAction::RefreshExtensions,
+    FixedPaletteAction::OpenSettings,
+];
 
 const BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
 const CARD_BG: egui::Color32 = egui::Color32::from_rgb(37, 37, 38);
@@ -123,7 +127,8 @@ pub struct CommandPaletteApp {
 
 impl CommandPaletteApp {
     fn new(all_commands: Vec<Command>) -> Self {
-        let filtered_commands = initial_filtered_commands(all_commands.len());
+        let filtered_commands =
+            cap_filtered_commands(initial_filtered_commands(all_commands.len()));
         Self {
             filter_text: String::new(),
             all_commands,
@@ -134,8 +139,14 @@ impl CommandPaletteApp {
     }
 
     fn recompute_filter(&mut self) {
-        self.filtered_commands = filter_commands(&self.all_commands, &self.filter_text);
+        self.filtered_commands =
+            cap_filtered_commands(filter_commands(&self.all_commands, &self.filter_text));
     }
+}
+
+fn cap_filtered_commands(mut commands: Vec<FilteredCommand>) -> Vec<FilteredCommand> {
+    commands.truncate(MAX_FILTERED_COMMANDS);
+    commands
 }
 
 impl FilterableCommand for Command {
@@ -215,6 +226,28 @@ fn highlighted_label_job(label: &str, ranges: &[MatchRange], is_selected: bool) 
     }
 
     job
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FixedPaletteAction {
+    RefreshExtensions,
+    OpenSettings,
+}
+
+impl FixedPaletteAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::RefreshExtensions => "Refresh extensions",
+            Self::OpenSettings => "Open settings for Omni Palette",
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::RefreshExtensions => "fixed_refresh_extensions",
+            Self::OpenSettings => "fixed_open_settings",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -466,11 +499,9 @@ impl App {
     }
 
     fn execute_selected(&mut self, ctx: &egui::Context) {
-        let command_count = self.visible_command_count();
-        if self.palette.selected_index == command_count {
-            self.hide(ctx);
-            self.open_settings(ctx);
-            let _ = self.event_tx.send(UiEvent::ActionExecuted);
+        let command_count = self.command_count();
+        if let Some(action) = fixed_action_for_index(self.palette.selected_index, command_count) {
+            self.execute_fixed_action(ctx, action);
             return;
         }
 
@@ -486,18 +517,38 @@ impl App {
         }
     }
 
-    fn visible_command_count(&self) -> usize {
-        self.palette
-            .filtered_commands
-            .len()
-            .min(MAX_VISIBLE_ROWS.saturating_sub(1))
+    fn execute_fixed_action(&mut self, ctx: &egui::Context, action: FixedPaletteAction) {
+        self.hide(ctx);
+        match action {
+            FixedPaletteAction::RefreshExtensions => {
+                let _ = self.event_tx.send(UiEvent::ReloadExtensionsRequested);
+            }
+            FixedPaletteAction::OpenSettings => self.open_settings(ctx),
+        }
+        let _ = self.event_tx.send(UiEvent::ActionExecuted);
+    }
+
+    fn command_count(&self) -> usize {
+        self.palette.filtered_commands.len()
+    }
+
+    fn visible_command_row_count(&self) -> usize {
+        self.command_count().min(MAX_VISIBLE_COMMAND_ROWS)
     }
 
     fn current_list_height(&self) -> f32 {
-        let visible_rows = self.visible_command_count().max(1) as f32;
-        (visible_rows * ESTIMATED_VISIBLE_ROW_HEIGHT)
+        self.command_list_height()
             + SETTINGS_DIVIDER_HEIGHT
-            + PINNED_SETTINGS_ROW_HEIGHT
+            + (FIXED_ACTION_ROW_HEIGHT * FIXED_PALETTE_ACTIONS.len() as f32)
+    }
+
+    fn command_list_height(&self) -> f32 {
+        let visible_command_count = self.visible_command_row_count();
+        if visible_command_count == 0 {
+            ROW_HEIGHT
+        } else {
+            visible_command_count as f32 * ESTIMATED_VISIBLE_ROW_HEIGHT
+        }
     }
 
     fn handle_list_navigation_keys(&mut self, ctx: &egui::Context, visible_count: usize) {
@@ -638,9 +689,14 @@ impl App {
         );
     }
 
-    fn draw_pinned_settings_row(&mut self, ui: &mut egui::Ui, idx: usize) -> bool {
+    fn draw_fixed_action_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        idx: usize,
+        action: FixedPaletteAction,
+    ) -> bool {
         let is_selected = idx == self.palette.selected_index;
-        let desired_size = egui::vec2(ui.available_width(), PINNED_SETTINGS_ROW_HEIGHT);
+        let desired_size = egui::vec2(ui.available_width(), FIXED_ACTION_ROW_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
         if response.hovered() {
@@ -672,18 +728,20 @@ impl App {
         let inner = rect.shrink2(egui::vec2(12.0, 4.0));
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(PINNED_SETTINGS_LABEL).size(15.5).color(
-                    if is_selected {
-                        TEXT_SELECTED
-                    } else {
-                        TEXT_PRIMARY
-                    },
-                ));
+                ui.label(
+                    egui::RichText::new(action.label())
+                        .size(15.5)
+                        .color(if is_selected {
+                            TEXT_SELECTED
+                        } else {
+                            TEXT_PRIMARY
+                        }),
+                );
             });
         });
 
         let click_response = ui
-            .interact(rect, ui.id().with("pinned_settings"), egui::Sense::click())
+            .interact(rect, ui.id().with(action.id()), egui::Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
 
         if is_selected && self.keyboard_nav {
@@ -708,6 +766,15 @@ fn wrapped_selection_index(current: usize, visible_count: usize, delta: isize) -
     let visible_count = visible_count as isize;
     let current = current as isize;
     (current + delta).rem_euclid(visible_count) as usize
+}
+
+fn fixed_action_for_index(
+    selected_index: usize,
+    visible_command_count: usize,
+) -> Option<FixedPaletteAction> {
+    selected_index
+        .checked_sub(visible_command_count)
+        .and_then(|fixed_index| FIXED_PALETTE_ACTIONS.get(fixed_index).copied())
 }
 
 impl eframe::App for App {
@@ -742,11 +809,11 @@ impl eframe::App for App {
             return;
         }
 
-        let visible_command_count = self.visible_command_count();
-        let visible_count = visible_command_count + 1;
-        self.handle_list_navigation_keys(ctx, visible_count);
+        let command_count = self.command_count();
+        let selectable_count = command_count + FIXED_PALETTE_ACTIONS.len();
+        self.handle_list_navigation_keys(ctx, selectable_count);
 
-        if visible_count > 0 {
+        if selectable_count > 0 {
             if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
                 self.execute_selected(ctx);
                 return;
@@ -823,14 +890,13 @@ impl eframe::App for App {
 
                         ui.add_space(8.0);
 
-                        let list_height = self.current_list_height();
+                        let command_list_height = self.command_list_height();
+                        let mut clicked_action: Option<usize> = None;
 
                         egui::ScrollArea::vertical()
-                            .max_height(list_height)
+                            .max_height(command_list_height)
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
-                                let mut clicked_action: Option<usize> = None;
-
                                 if self.palette.filtered_commands.is_empty() {
                                     egui::Frame::new()
                                         .fill(BG)
@@ -850,7 +916,6 @@ impl eframe::App for App {
                                     .palette
                                     .filtered_commands
                                     .iter()
-                                    .take(visible_command_count)
                                     .cloned()
                                     .enumerate()
                                     .collect();
@@ -861,21 +926,22 @@ impl eframe::App for App {
                                         clicked_action = Some(clicked_idx);
                                     }
                                 }
-
-                                Self::draw_settings_divider(ui);
-                                if self.draw_pinned_settings_row(ui, visible_command_count) {
-                                    self.hide(ui.ctx());
-                                    self.open_settings(ui.ctx());
-                                    let _ = self.event_tx.send(UiEvent::ActionExecuted);
-                                    return;
-                                }
-
-                                if let Some(orig_idx) = clicked_action {
-                                    self.hide(ui.ctx());
-                                    (self.palette.all_commands[orig_idx].action)();
-                                    let _ = self.event_tx.send(UiEvent::ActionExecuted);
-                                }
                             });
+
+                        Self::draw_settings_divider(ui);
+                        for (fixed_idx, fixed_action) in FIXED_PALETTE_ACTIONS.iter().enumerate() {
+                            let row_idx = command_count + fixed_idx;
+                            if self.draw_fixed_action_row(ui, row_idx, *fixed_action) {
+                                self.execute_fixed_action(ui.ctx(), *fixed_action);
+                                return;
+                            }
+                        }
+
+                        if let Some(orig_idx) = clicked_action {
+                            self.hide(ui.ctx());
+                            (self.palette.all_commands[orig_idx].action)();
+                            let _ = self.event_tx.send(UiEvent::ActionExecuted);
+                        }
                     });
             });
     }
@@ -1000,7 +1066,10 @@ fn tray_icon() -> Result<Icon, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::wrapped_selection_index;
+    use super::{
+        cap_filtered_commands, fixed_action_for_index, wrapped_selection_index, FilteredCommand,
+        FixedPaletteAction, MAX_FILTERED_COMMANDS,
+    };
 
     #[test]
     fn wrapped_selection_moves_down_from_middle() {
@@ -1025,5 +1094,94 @@ mod tests {
     #[test]
     fn wrapped_selection_is_zero_when_no_rows_are_visible() {
         assert_eq!(wrapped_selection_index(4, 0, 1), 0);
+    }
+
+    #[test]
+    fn fixed_action_after_last_command_is_refresh_extensions() {
+        assert_eq!(
+            fixed_action_for_index(5, 5),
+            Some(FixedPaletteAction::RefreshExtensions)
+        );
+    }
+
+    #[test]
+    fn fixed_action_after_refresh_is_open_settings() {
+        assert_eq!(
+            fixed_action_for_index(6, 5),
+            Some(FixedPaletteAction::OpenSettings)
+        );
+    }
+
+    #[test]
+    fn fixed_action_ignores_command_rows() {
+        assert_eq!(fixed_action_for_index(4, 5), None);
+    }
+
+    #[test]
+    fn selection_moves_from_last_command_to_refresh_extensions() {
+        assert_eq!(wrapped_selection_index(4, 7, 1), 5);
+        assert_eq!(
+            fixed_action_for_index(wrapped_selection_index(4, 7, 1), 5),
+            Some(FixedPaletteAction::RefreshExtensions)
+        );
+    }
+
+    #[test]
+    fn selection_moves_from_refresh_to_open_settings() {
+        assert_eq!(wrapped_selection_index(5, 7, 1), 6);
+        assert_eq!(
+            fixed_action_for_index(wrapped_selection_index(5, 7, 1), 5),
+            Some(FixedPaletteAction::OpenSettings)
+        );
+    }
+
+    #[test]
+    fn selection_wraps_from_open_settings_to_first_row() {
+        assert_eq!(wrapped_selection_index(6, 7, 1), 0);
+    }
+
+    #[test]
+    fn zero_command_results_wrap_between_fixed_actions() {
+        assert_eq!(
+            fixed_action_for_index(wrapped_selection_index(0, 2, 1), 0),
+            Some(FixedPaletteAction::OpenSettings)
+        );
+        assert_eq!(
+            fixed_action_for_index(wrapped_selection_index(1, 2, 1), 0),
+            Some(FixedPaletteAction::RefreshExtensions)
+        );
+    }
+
+    #[test]
+    fn fixed_actions_start_after_all_rendered_commands_not_visible_cap() {
+        assert_eq!(fixed_action_for_index(9, 18), None);
+        assert_eq!(fixed_action_for_index(10, 18), None);
+        assert_eq!(fixed_action_for_index(17, 18), None);
+        assert_eq!(
+            fixed_action_for_index(18, 18),
+            Some(FixedPaletteAction::RefreshExtensions)
+        );
+        assert_eq!(
+            fixed_action_for_index(19, 18),
+            Some(FixedPaletteAction::OpenSettings)
+        );
+    }
+
+    #[test]
+    fn filtered_commands_are_capped_to_eighteen_items() {
+        let rows: Vec<FilteredCommand> = (0..25)
+            .map(|command_index| FilteredCommand {
+                command_index,
+                score: 0,
+                label_matches: Vec::new(),
+                is_prefix: false,
+                span: 0,
+            })
+            .collect();
+
+        let capped = cap_filtered_commands(rows);
+
+        assert_eq!(capped.len(), MAX_FILTERED_COMMANDS);
+        assert_eq!(capped.last().map(|row| row.command_index), Some(17));
     }
 }
