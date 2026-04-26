@@ -1,0 +1,152 @@
+name: Publish extension packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      extension_id:
+        description: "Optional extension id to publish, for example chrome"
+        required: false
+        type: string
+      force_all:
+        description: "Publish every registry package"
+        required: false
+        default: false
+        type: boolean
+      clobber:
+        description: "Replace an existing release asset if it already exists"
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - master
+    paths:
+      - "extensions/registry/packages/**"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Test packaging code
+        run: |
+          cargo test -p xtask
+          cargo test core::extensions::package::tests
+
+      - name: Detect changed packages
+        id: detect
+        shell: pwsh
+        run: |
+          $xtaskArgs = @("run", "-p", "xtask", "--", "detect-changed")
+
+          if ("${{ github.event_name }}" -eq "push") {
+            $xtaskArgs += @("--base", "${{ github.event.before }}", "--head", "${{ github.sha }}")
+          } elseif ("${{ inputs.force_all }}" -eq "true") {
+            $xtaskArgs += "--force-all"
+          } elseif ("${{ inputs.extension_id }}" -ne "") {
+            $xtaskArgs += @("--extension-id", "${{ inputs.extension_id }}")
+          } else {
+            $xtaskArgs += @("--base", "origin/master", "--head", "HEAD")
+          }
+
+          $roots = & cargo @xtaskArgs
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          if (-not $roots) {
+            throw "No package roots detected"
+          }
+
+          $roots | Set-Content -Path package-roots.txt
+          "roots<<EOF" | Add-Content -Path $env:GITHUB_OUTPUT
+          $roots | Add-Content -Path $env:GITHUB_OUTPUT
+          "EOF" | Add-Content -Path $env:GITHUB_OUTPUT
+
+      - name: Package extensions and update catalog
+        id: package
+        shell: pwsh
+        run: |
+          $artifacts = @()
+
+          foreach ($root in Get-Content package-roots.txt) {
+            Write-Host "Packaging $root"
+            $output = cargo run -p xtask -- package-extension --package-root $root --update-catalog
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+            $output | Write-Host
+            $artifact = ($output | Where-Object { $_ -like "artifact=*" }) -replace "^artifact=", ""
+            if (-not $artifact) {
+              throw "xtask did not report an artifact path for $root"
+            }
+            $artifacts += $artifact
+          }
+
+          $artifacts | Set-Content -Path artifacts.txt
+          "artifacts<<EOF" | Add-Content -Path $env:GITHUB_OUTPUT
+          $artifacts | Add-Content -Path $env:GITHUB_OUTPUT
+          "EOF" | Add-Content -Path $env:GITHUB_OUTPUT
+
+      - name: Validate generated artifacts
+        run: cargo test core::extensions::package::tests::generated_registry_artifacts_validate_when_present
+
+      - name: Publish GitHub releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          foreach ($root in Get-Content package-roots.txt) {
+            $manifest = Get-Content -Raw (Join-Path $root "manifest.toml")
+            $id = [regex]::Match($manifest, '(?m)^id\s*=\s*"([^"]+)"').Groups[1].Value
+            $name = [regex]::Match($manifest, '(?m)^name\s*=\s*"([^"]+)"').Groups[1].Value
+            $version = [regex]::Match($manifest, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+            $platform = [regex]::Match($manifest, '(?m)^platform\s*=\s*"([^"]+)"').Groups[1].Value
+            $tag = "$id-v$version"
+            $artifact = "target/extensions/$id-$version-$platform.gpext"
+
+            if (-not (Test-Path $artifact)) {
+              throw "Missing artifact $artifact"
+            }
+
+            gh release view $tag *> $null
+            $releaseExists = $LASTEXITCODE -eq 0
+            if ($releaseExists) {
+              $uploadArgs = @("release", "upload", $tag, $artifact)
+              if ("${{ inputs.clobber }}" -eq "true") {
+                $uploadArgs += "--clobber"
+              }
+              gh @uploadArgs
+            } else {
+              gh release create $tag $artifact --title "$name v$version" --notes "Published $name extension package v$version."
+            }
+          }
+
+      - name: Commit catalog updates
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extensions/registry/catalog.v1.json
+
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "No catalog changes to commit."
+            exit 0
+          }
+
+          git commit -m "Publish extension package catalog updates"
+          git push

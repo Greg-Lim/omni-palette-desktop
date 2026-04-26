@@ -86,6 +86,23 @@ GitHub Release before catalog installs can succeed from GitHub.
 The catalog points to release assets, not raw source files. Catalog signing is
 paused in the current v1 settings flow; only `catalog.v1.json` is fetched.
 
+## Publishing Registry Packages
+
+Extension package publishing is automated through GitHub Actions. The workflow
+detects changed package folders under `extensions/registry/packages/<id>/<platform>/`,
+builds only those packages, uploads matching `.gpext` release assets, and commits
+the updated catalog hash and URL.
+
+For local verification, use the shared packaging task:
+
+```sh
+cargo run -p xtask -- detect-changed --force-all
+cargo run -p xtask -- package-extension --package-root extensions/registry/packages/chrome/windows
+```
+
+Use `--update-catalog` when intentionally preparing catalog metadata for a newly
+published artifact.
+
 Static shortcut extensions represent known default shortcuts. They do not
 automatically track user-customized keybindings inside the target application.
 App-specific dynamic shortcut discovery should be implemented later as WASM
