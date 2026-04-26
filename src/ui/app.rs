@@ -6,9 +6,15 @@ use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog};
 use crate::core::extensions::install::{BundledStaticExtension, InstalledState};
 use crate::core::search::MatchRange;
 use crate::domain::action::{CommandPriority, FocusState};
+#[cfg(target_os = "windows")]
+use crate::platform::windows::context::context::{
+    foreground_window_handle_value, get_hwnd_from_raw,
+};
 use crate::ui::settings::{show_settings_viewport, SettingsBootstrap, SettingsState};
 use eframe::egui;
 use eframe::egui::text::LayoutJob;
+#[cfg(target_os = "windows")]
+use raw_window_handle::HasWindowHandle;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -318,6 +324,8 @@ struct App {
     work_area: Option<PaletteWorkArea>,
     visibility: SharedUiVisibility,
     #[cfg(target_os = "windows")]
+    palette_window_hwnd: Option<isize>,
+    #[cfg(target_os = "windows")]
     _tray: Option<AppTray>,
 }
 
@@ -364,6 +372,8 @@ impl App {
         visibility.store(false, Ordering::Relaxed);
         let settings = Arc::new(Mutex::new(SettingsState::new(settings_bootstrap)));
         #[cfg(target_os = "windows")]
+        let palette_window_hwnd = palette_window_handle_value(cc);
+        #[cfg(target_os = "windows")]
         let tray = AppTray::new(&cc.egui_ctx, event_tx.clone(), Arc::clone(&settings))
             .map_err(|err| {
                 log::warn!("Could not create tray icon: {err}");
@@ -381,6 +391,8 @@ impl App {
             keyboard_nav: false,
             work_area: None,
             visibility,
+            #[cfg(target_os = "windows")]
+            palette_window_hwnd,
             #[cfg(target_os = "windows")]
             _tray: tray,
         }
@@ -401,16 +413,23 @@ impl App {
         self.had_focus_since_open = false;
         self.needs_text_focus = true;
         self.visibility.store(true, Ordering::Relaxed);
+        log::debug!(
+            "Showing palette: commands={}, work_area={:?}",
+            self.palette.all_commands.len(),
+            self.work_area
+        );
 
         self.sync_viewport(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
-    fn hide(&mut self, ctx: &egui::Context) {
+    fn hide(&mut self, ctx: &egui::Context, reason: &str) {
         if !self.palette.is_open {
             return;
         }
+
+        log::debug!("Hiding palette: reason={reason}");
 
         self.palette.is_open = false;
         self.work_area = None;
@@ -442,7 +461,7 @@ impl App {
                 commands,
                 work_area,
             } => self.show(ctx, commands, work_area),
-            UiSignal::Hide => self.hide(ctx),
+            UiSignal::Hide => self.hide(ctx, "signal"),
             UiSignal::RuntimeConfigSaved { config, result } => {
                 if let Ok(mut settings) = self.settings.lock() {
                     settings.config_saved(config, result);
@@ -511,14 +530,14 @@ impl App {
             .get(self.palette.selected_index)
             .map(|row| row.command_index)
         {
-            self.hide(ctx);
+            self.hide(ctx, "execute_selected");
             (self.palette.all_commands[orig_idx].action)();
             let _ = self.event_tx.send(UiEvent::ActionExecuted);
         }
     }
 
     fn execute_fixed_action(&mut self, ctx: &egui::Context, action: FixedPaletteAction) {
-        self.hide(ctx);
+        self.hide(ctx, "execute_fixed_action");
         match action {
             FixedPaletteAction::RefreshExtensions => {
                 let _ = self.event_tx.send(UiEvent::ReloadExtensionsRequested);
@@ -777,6 +796,43 @@ fn fixed_action_for_index(
         .and_then(|fixed_index| FIXED_PALETTE_ACTIONS.get(fixed_index).copied())
 }
 
+fn should_hide_for_app_switch(
+    had_focus_since_open: bool,
+    palette_window_hwnd: Option<isize>,
+    foreground_window_hwnd: Option<isize>,
+) -> bool {
+    if !had_focus_since_open {
+        return false;
+    }
+
+    matches!(
+        (palette_window_hwnd, foreground_window_hwnd),
+        (Some(palette_window_hwnd), Some(foreground_window_hwnd))
+            if foreground_window_hwnd != palette_window_hwnd
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn palette_window_handle_value(cc: &eframe::CreationContext<'_>) -> Option<isize> {
+    let raw_window_handle = match cc.window_handle() {
+        Ok(handle) => handle.as_raw(),
+        Err(err) => {
+            log::warn!("Could not obtain palette window handle: {err}");
+            return None;
+        }
+    };
+    let hwnd = match get_hwnd_from_raw(raw_window_handle) {
+        Some(hwnd) => hwnd,
+        None => {
+            log::warn!("Palette window did not expose a Win32 window handle");
+            return None;
+        }
+    };
+    let hwnd_value = hwnd.0 as isize;
+    log::debug!("Captured palette window handle: {:?}", hwnd);
+    Some(hwnd_value)
+}
+
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(sig) = self.receiver.try_recv() {
@@ -799,13 +855,41 @@ impl eframe::App for App {
         let is_focused = ctx.input(|i| i.focused);
         if is_focused {
             self.had_focus_since_open = true;
-        } else if self.had_focus_since_open {
-            self.hide(ctx);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let foreground_window_hwnd = foreground_window_handle_value();
+            if should_hide_for_app_switch(
+                self.had_focus_since_open,
+                self.palette_window_hwnd,
+                foreground_window_hwnd,
+            ) {
+                log::debug!(
+                    "Palette lost foreground window: egui_focused={}, palette_hwnd={:?}, foreground_hwnd={:?}",
+                    is_focused,
+                    self.palette_window_hwnd,
+                    foreground_window_hwnd
+                );
+                self.hide(ctx, "app_switch");
+                return;
+            }
+
+            if !is_focused && self.had_focus_since_open && foreground_window_hwnd.is_none() {
+                log::debug!(
+                    "Palette lost egui focus, but the foreground window handle is unavailable; keeping it open"
+                );
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        if !is_focused && self.had_focus_since_open {
+            self.hide(ctx, "focus_loss");
             return;
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.hide(ctx);
+            self.hide(ctx, "escape");
             return;
         }
 
@@ -938,7 +1022,7 @@ impl eframe::App for App {
                         }
 
                         if let Some(orig_idx) = clicked_action {
-                            self.hide(ui.ctx());
+                            self.hide(ui.ctx(), "mouse_selection");
                             (self.palette.all_commands[orig_idx].action)();
                             let _ = self.event_tx.send(UiEvent::ActionExecuted);
                         }
@@ -1067,8 +1151,8 @@ fn tray_icon() -> Result<Icon, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cap_filtered_commands, fixed_action_for_index, wrapped_selection_index, FilteredCommand,
-        FixedPaletteAction, MAX_FILTERED_COMMANDS,
+        cap_filtered_commands, fixed_action_for_index, should_hide_for_app_switch,
+        wrapped_selection_index, FilteredCommand, FixedPaletteAction, MAX_FILTERED_COMMANDS,
     };
 
     #[test]
@@ -1183,5 +1267,26 @@ mod tests {
 
         assert_eq!(capped.len(), MAX_FILTERED_COMMANDS);
         assert_eq!(capped.last().map(|row| row.command_index), Some(17));
+    }
+
+    #[test]
+    fn app_switch_hide_stays_open_when_palette_is_still_foreground() {
+        assert!(!should_hide_for_app_switch(true, Some(100), Some(100)));
+    }
+
+    #[test]
+    fn app_switch_hide_stays_open_before_palette_has_been_focused() {
+        assert!(!should_hide_for_app_switch(false, Some(100), Some(200)));
+    }
+
+    #[test]
+    fn app_switch_hide_triggers_when_a_different_window_takes_foreground() {
+        assert!(should_hide_for_app_switch(true, Some(100), Some(200)));
+    }
+
+    #[test]
+    fn app_switch_hide_ignores_missing_or_invalid_foreground_handles() {
+        assert!(!should_hide_for_app_switch(true, Some(100), None));
+        assert!(!should_hide_for_app_switch(true, None, Some(200)));
     }
 }

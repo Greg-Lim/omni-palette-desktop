@@ -22,6 +22,10 @@ pub fn get_foreground_window_handle() -> HWND {
     unsafe { GetForegroundWindow() }
 }
 
+pub fn foreground_window_handle_value() -> Option<isize> {
+    NonZeroIsize::new(get_foreground_window_handle().0 as isize).map(NonZeroIsize::get)
+}
+
 struct WindowEnumContext {
     active_hwnd: HWND,
     fg: Vec<RawWindowHandle>,
