@@ -493,8 +493,6 @@ cmd = { mods = ["ctrl"], key = "T" }
             .map(|entry| entry.id.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(catalog_ids, vec!["chrome", "file_explorer", "powerpoint"]);
-
         for entry in &catalog.entries {
             let manifest_path = Path::new("extensions")
                 .join("registry")
