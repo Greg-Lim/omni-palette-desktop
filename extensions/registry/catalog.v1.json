@@ -10,14 +10,19 @@
       "platform": "windows",
       "kind": "static",
       "package_url": "https://github.com/Greg-Lim/omni-palette-desktop/releases/download/chrome-v0.1.1/chrome-0.1.1-windows.gpext",
-      "package_sha256": "438d6f650dea0b94e7483569ecd7e5a255bf557ca1069166e63bdbe9a9a7d3ab",
-      "size_bytes": 1673,
+      "package_sha256": "17f311946c66d84e3230519b53e5ec6178e8d9f9e452dc2b879ccd7e6e71d9f7",
+      "size_bytes": 1677,
       "publisher": "Greg-Lim",
       "description": "Chrome keyboard shortcut command pack.",
       "license": null,
       "homepage": null,
       "repository": "https://github.com/Greg-Lim/omni-palette-desktop",
-      "keywords": ["browser", "chrome", "tabs", "web"],
+      "keywords": [
+        "browser",
+        "chrome",
+        "tabs",
+        "web"
+      ],
       "min_app_version": null
     },
     {
@@ -27,14 +32,18 @@
       "platform": "windows",
       "kind": "static",
       "package_url": "https://github.com/Greg-Lim/omni-palette-desktop/releases/download/file_explorer-v0.1.0/file_explorer-0.1.0-windows.gpext",
-      "package_sha256": "906ae7df8a4b8afffae9eef78f0a82d2e5de460c5d821a50fa9a6224e9120fca",
-      "size_bytes": 1311,
+      "package_sha256": "ca5839b4c57de9a73736320b94735ddbeccf40929050c980fb3f359b537f4fdb",
+      "size_bytes": 1312,
       "publisher": "Greg-Lim",
       "description": "File Explorer keyboard shortcut command pack.",
       "license": null,
       "homepage": null,
       "repository": "https://github.com/Greg-Lim/omni-palette-desktop",
-      "keywords": ["files", "explorer", "windows"],
+      "keywords": [
+        "files",
+        "explorer",
+        "windows"
+      ],
       "min_app_version": null
     },
     {
@@ -44,14 +53,19 @@
       "platform": "windows",
       "kind": "static",
       "package_url": "https://github.com/Greg-Lim/omni-palette-desktop/releases/download/powerpoint-v0.1.0/powerpoint-0.1.0-windows.gpext",
-      "package_sha256": "c25b6a4c92f9ea180459c0d6ce8d99dc28c9158b73e2de99c362e95c9408047d",
-      "size_bytes": 2226,
+      "package_sha256": "8a0beb055ed3b38a215db2dfc4f23cd8df9daa9d91fbe04a78e62e55eb4d9eaf",
+      "size_bytes": 2244,
       "publisher": "Greg-Lim",
       "description": "PowerPoint keyboard shortcut command pack.",
       "license": null,
       "homepage": null,
       "repository": "https://github.com/Greg-Lim/omni-palette-desktop",
-      "keywords": ["powerpoint", "presentation", "slides", "office"],
+      "keywords": [
+        "powerpoint",
+        "presentation",
+        "slides",
+        "office"
+      ],
       "min_app_version": null
     }
   ]
