@@ -60,7 +60,7 @@ jobs:
           } elseif ("${{ inputs.extension_id }}" -ne "") {
             $xtaskArgs += @("--extension-id", "${{ inputs.extension_id }}")
           } else {
-            $xtaskArgs += @("--base", "origin/master", "--head", "HEAD")
+            throw "Manual publish requires extension_id or force_all=true."
           }
 
           $roots = & cargo @xtaskArgs
