@@ -6,26 +6,17 @@ use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog};
 use crate::core::extensions::install::{BundledStaticExtension, InstalledState};
 use crate::core::search::MatchRange;
 use crate::domain::action::{CommandPriority, FocusState};
-#[cfg(target_os = "windows")]
-use crate::platform::windows::context::context::{
-    foreground_window_handle_value, get_hwnd_from_raw,
+use crate::platform::ui_support::{
+    foreground_window_token, PlatformUiAction, PlatformUiRuntime, PlatformWindowToken,
 };
 use crate::ui::settings::{show_settings_viewport, SettingsBootstrap, SettingsState};
 use eframe::egui;
 use eframe::egui::text::LayoutJob;
-#[cfg(target_os = "windows")]
-use raw_window_handle::HasWindowHandle;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-
-#[cfg(target_os = "windows")]
-use tray_icon::{
-    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-    Icon, TrayIcon, TrayIconBuilder,
-};
 
 const PALETTE_WIDTH: f32 = 780.0;
 const MAX_FILTERED_COMMANDS: usize = 18;
@@ -323,10 +314,7 @@ struct App {
     keyboard_nav: bool,
     work_area: Option<PaletteWorkArea>,
     visibility: SharedUiVisibility,
-    #[cfg(target_os = "windows")]
-    palette_window_hwnd: Option<isize>,
-    #[cfg(target_os = "windows")]
-    _tray: Option<AppTray>,
+    platform_ui: PlatformUiRuntime,
 }
 
 impl App {
@@ -371,15 +359,7 @@ impl App {
         let _ = shared_context.set(cc.egui_ctx.clone());
         visibility.store(false, Ordering::Relaxed);
         let settings = Arc::new(Mutex::new(SettingsState::new(settings_bootstrap)));
-        #[cfg(target_os = "windows")]
-        let palette_window_hwnd = palette_window_handle_value(cc);
-        #[cfg(target_os = "windows")]
-        let tray = AppTray::new(&cc.egui_ctx, event_tx.clone(), Arc::clone(&settings))
-            .map_err(|err| {
-                log::warn!("Could not create tray icon: {err}");
-                err
-            })
-            .ok();
+        let platform_ui = PlatformUiRuntime::new(cc, &cc.egui_ctx);
 
         Self {
             palette: CommandPaletteApp::new(vec![]),
@@ -391,10 +371,7 @@ impl App {
             keyboard_nav: false,
             work_area: None,
             visibility,
-            #[cfg(target_os = "windows")]
-            palette_window_hwnd,
-            #[cfg(target_os = "windows")]
-            _tray: tray,
+            platform_ui,
         }
     }
 
@@ -441,18 +418,15 @@ impl App {
         let _ = self.event_tx.send(UiEvent::Closed);
     }
 
-    fn open_settings(&self, ctx: &egui::Context) {
-        if let Ok(mut settings) = self.settings.lock() {
-            settings.open();
-        }
-        ctx.request_repaint();
-    }
-
     fn settings_open(&self) -> bool {
         self.settings
             .lock()
             .map(|settings| settings.open)
             .unwrap_or(false)
+    }
+
+    fn handle_platform_action(&self, ctx: &egui::Context, action: PlatformUiAction) {
+        apply_platform_action(ctx, &self.settings, &self.event_tx, action);
     }
 
     fn handle_signal(&mut self, ctx: &egui::Context, signal: UiSignal) {
@@ -542,7 +516,9 @@ impl App {
             FixedPaletteAction::RefreshExtensions => {
                 let _ = self.event_tx.send(UiEvent::ReloadExtensionsRequested);
             }
-            FixedPaletteAction::OpenSettings => self.open_settings(ctx),
+            FixedPaletteAction::OpenSettings => {
+                self.handle_platform_action(ctx, PlatformUiAction::OpenSettings);
+            }
         }
         let _ = self.event_tx.send(UiEvent::ActionExecuted);
     }
@@ -796,47 +772,55 @@ fn fixed_action_for_index(
         .and_then(|fixed_index| FIXED_PALETTE_ACTIONS.get(fixed_index).copied())
 }
 
+fn apply_platform_action(
+    ctx: &egui::Context,
+    settings: &Arc<Mutex<SettingsState>>,
+    event_tx: &Sender<UiEvent>,
+    action: PlatformUiAction,
+) {
+    match action {
+        PlatformUiAction::OpenPalette => {
+            let _ = event_tx.send(UiEvent::OpenPaletteRequested);
+        }
+        PlatformUiAction::OpenSettings => {
+            if let Ok(mut settings) = settings.lock() {
+                settings.open();
+            }
+            ctx.request_repaint();
+        }
+        PlatformUiAction::ReloadExtensions => {
+            let _ = event_tx.send(UiEvent::ReloadExtensionsRequested);
+        }
+        PlatformUiAction::Quit => {
+            let _ = event_tx.send(UiEvent::QuitRequested);
+        }
+    }
+}
+
 fn should_hide_for_app_switch(
     had_focus_since_open: bool,
-    palette_window_hwnd: Option<isize>,
-    foreground_window_hwnd: Option<isize>,
+    palette_window_token: Option<PlatformWindowToken>,
+    foreground_window_token: Option<PlatformWindowToken>,
 ) -> bool {
     if !had_focus_since_open {
         return false;
     }
 
     matches!(
-        (palette_window_hwnd, foreground_window_hwnd),
-        (Some(palette_window_hwnd), Some(foreground_window_hwnd))
-            if foreground_window_hwnd != palette_window_hwnd
+        (palette_window_token, foreground_window_token),
+        (Some(palette_window_token), Some(foreground_window_token))
+            if foreground_window_token != palette_window_token
     )
-}
-
-#[cfg(target_os = "windows")]
-fn palette_window_handle_value(cc: &eframe::CreationContext<'_>) -> Option<isize> {
-    let raw_window_handle = match cc.window_handle() {
-        Ok(handle) => handle.as_raw(),
-        Err(err) => {
-            log::warn!("Could not obtain palette window handle: {err}");
-            return None;
-        }
-    };
-    let hwnd = match get_hwnd_from_raw(raw_window_handle) {
-        Some(hwnd) => hwnd,
-        None => {
-            log::warn!("Palette window did not expose a Win32 window handle");
-            return None;
-        }
-    };
-    let hwnd_value = hwnd.0 as isize;
-    log::debug!("Captured palette window handle: {:?}", hwnd);
-    Some(hwnd_value)
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(sig) = self.receiver.try_recv() {
             self.handle_signal(ctx, sig);
+        }
+
+        while let Some(action) = self.platform_ui.try_recv_action() {
+            self.handle_platform_action(ctx, action);
         }
 
         if self.settings_open() {
@@ -857,35 +841,27 @@ impl eframe::App for App {
             self.had_focus_since_open = true;
         }
 
-        #[cfg(target_os = "windows")]
-        {
-            let foreground_window_hwnd = foreground_window_handle_value();
-            if should_hide_for_app_switch(
-                self.had_focus_since_open,
-                self.palette_window_hwnd,
-                foreground_window_hwnd,
-            ) {
-                log::debug!(
-                    "Palette lost foreground window: egui_focused={}, palette_hwnd={:?}, foreground_hwnd={:?}",
-                    is_focused,
-                    self.palette_window_hwnd,
-                    foreground_window_hwnd
-                );
-                self.hide(ctx, "app_switch");
-                return;
-            }
-
-            if !is_focused && self.had_focus_since_open && foreground_window_hwnd.is_none() {
-                log::debug!(
-                    "Palette lost egui focus, but the foreground window handle is unavailable; keeping it open"
-                );
-            }
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        if !is_focused && self.had_focus_since_open {
+        let palette_window_token = self.platform_ui.palette_window_token();
+        let foreground_window_token = foreground_window_token();
+        if should_hide_for_app_switch(
+            self.had_focus_since_open,
+            palette_window_token,
+            foreground_window_token,
+        ) {
+            log::debug!(
+                "Palette lost foreground window: egui_focused={}, palette_window_token={:?}, foreground_window_token={:?}",
+                is_focused,
+                palette_window_token,
+                foreground_window_token
+            );
             self.hide(ctx, "focus_loss");
             return;
+        }
+
+        if !is_focused && self.had_focus_since_open && foreground_window_token.is_none() {
+            log::debug!(
+                "Palette lost egui focus, but the platform foreground token is unavailable; keeping it open"
+            );
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -1072,88 +1048,33 @@ pub fn run_with_shared_state(
     );
 }
 
-#[cfg(target_os = "windows")]
-struct AppTray {
-    _tray: TrayIcon,
-}
-
-#[cfg(target_os = "windows")]
-impl AppTray {
-    fn new(
-        ctx: &egui::Context,
-        event_tx: Sender<UiEvent>,
-        settings_state: Arc<Mutex<SettingsState>>,
-    ) -> Result<Self, String> {
-        let menu = Menu::new();
-        let open_palette = MenuItem::new("Open Palette", true, None);
-        let settings = MenuItem::new("Settings...", true, None);
-        let reload = MenuItem::new("Reload Extensions", true, None);
-        let quit = MenuItem::new("Quit", true, None);
-        menu.append(&open_palette).map_err(|err| err.to_string())?;
-        menu.append(&settings).map_err(|err| err.to_string())?;
-        menu.append(&reload).map_err(|err| err.to_string())?;
-        menu.append(&PredefinedMenuItem::separator())
-            .map_err(|err| err.to_string())?;
-        menu.append(&quit).map_err(|err| err.to_string())?;
-
-        let ctx = ctx.clone();
-        let open_palette_id = open_palette.id().clone();
-        let settings_id = settings.id().clone();
-        let reload_id = reload.id().clone();
-        let quit_id = quit.id().clone();
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            if open_palette_id == event.id() {
-                let _ = event_tx.send(UiEvent::OpenPaletteRequested);
-            } else if settings_id == event.id() {
-                if let Ok(mut settings) = settings_state.lock() {
-                    settings.open();
-                }
-            } else if reload_id == event.id() {
-                let _ = event_tx.send(UiEvent::ReloadExtensionsRequested);
-            } else if quit_id == event.id() {
-                let _ = event_tx.send(UiEvent::QuitRequested);
-            }
-            ctx.request_repaint();
-        }));
-
-        let tray = TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
-            .with_tooltip("Omni Palette")
-            .with_icon(tray_icon()?)
-            .build()
-            .map_err(|err| err.to_string())?;
-
-        Ok(Self { _tray: tray })
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn tray_icon() -> Result<Icon, String> {
-    let size = 16_u32;
-    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
-    for y in 0..size {
-        for x in 0..size {
-            let border = x == 0 || y == 0 || x == size - 1 || y == size - 1;
-            let diagonal = x == y || x + y == size - 1;
-            let (r, g, b) = if border {
-                (230, 230, 230)
-            } else if diagonal {
-                (66, 153, 225)
-            } else {
-                (28, 32, 40)
-            };
-            rgba.extend_from_slice(&[r, g, b, 255]);
-        }
-    }
-    Icon::from_rgba(rgba, size, size).map_err(|err| err.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        cap_filtered_commands, fixed_action_for_index, should_hide_for_app_switch,
-        wrapped_selection_index, FilteredCommand, FixedPaletteAction, MAX_FILTERED_COMMANDS,
+        apply_platform_action, cap_filtered_commands, fixed_action_for_index,
+        should_hide_for_app_switch, wrapped_selection_index, FilteredCommand, FixedPaletteAction,
+        PlatformUiAction, PlatformWindowToken, UiEvent, MAX_FILTERED_COMMANDS,
     };
+    use crate::config::runtime::RuntimeConfig;
+    use crate::core::extensions::install::InstalledState;
+    use crate::domain::action::Os;
+    use crate::ui::settings::{SettingsBootstrap, SettingsState};
+    use eframe::egui;
+    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
+
+    fn test_settings_state() -> Arc<Mutex<SettingsState>> {
+        Arc::new(Mutex::new(SettingsState::new(SettingsBootstrap {
+            config: RuntimeConfig::default(),
+            config_path: None,
+            config_error: None,
+            current_os: Os::Windows,
+            install_root: None,
+            bundled_static_extensions: Vec::new(),
+            installed_state: InstalledState::default(),
+            installed_state_error: None,
+        })))
+    }
 
     #[test]
     fn wrapped_selection_moves_down_from_middle() {
@@ -1271,22 +1192,98 @@ mod tests {
 
     #[test]
     fn app_switch_hide_stays_open_when_palette_is_still_foreground() {
-        assert!(!should_hide_for_app_switch(true, Some(100), Some(100)));
+        let token = PlatformWindowToken::new(100);
+        assert!(!should_hide_for_app_switch(true, Some(token), Some(token)));
     }
 
     #[test]
     fn app_switch_hide_stays_open_before_palette_has_been_focused() {
-        assert!(!should_hide_for_app_switch(false, Some(100), Some(200)));
+        assert!(!should_hide_for_app_switch(
+            false,
+            Some(PlatformWindowToken::new(100)),
+            Some(PlatformWindowToken::new(200)),
+        ));
     }
 
     #[test]
     fn app_switch_hide_triggers_when_a_different_window_takes_foreground() {
-        assert!(should_hide_for_app_switch(true, Some(100), Some(200)));
+        assert!(should_hide_for_app_switch(
+            true,
+            Some(PlatformWindowToken::new(100)),
+            Some(PlatformWindowToken::new(200)),
+        ));
     }
 
     #[test]
     fn app_switch_hide_ignores_missing_or_invalid_foreground_handles() {
-        assert!(!should_hide_for_app_switch(true, Some(100), None));
-        assert!(!should_hide_for_app_switch(true, None, Some(200)));
+        assert!(!should_hide_for_app_switch(
+            true,
+            Some(PlatformWindowToken::new(100)),
+            None,
+        ));
+        assert!(!should_hide_for_app_switch(
+            true,
+            None,
+            Some(PlatformWindowToken::new(200)),
+        ));
+    }
+
+    #[test]
+    fn apply_platform_action_opens_settings_locally() {
+        let ctx = egui::Context::default();
+        let settings = test_settings_state();
+        let (event_tx, event_rx) = mpsc::channel();
+
+        apply_platform_action(&ctx, &settings, &event_tx, PlatformUiAction::OpenSettings);
+
+        assert!(settings
+            .lock()
+            .map(|settings| settings.open)
+            .unwrap_or(false));
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn apply_platform_action_dispatches_open_palette_event() {
+        let ctx = egui::Context::default();
+        let settings = test_settings_state();
+        let (event_tx, event_rx) = mpsc::channel();
+
+        apply_platform_action(&ctx, &settings, &event_tx, PlatformUiAction::OpenPalette);
+
+        assert!(matches!(
+            event_rx.try_recv(),
+            Ok(UiEvent::OpenPaletteRequested)
+        ));
+    }
+
+    #[test]
+    fn apply_platform_action_dispatches_reload_extensions_event() {
+        let ctx = egui::Context::default();
+        let settings = test_settings_state();
+        let (event_tx, event_rx) = mpsc::channel();
+
+        apply_platform_action(
+            &ctx,
+            &settings,
+            &event_tx,
+            PlatformUiAction::ReloadExtensions,
+        );
+
+        assert!(matches!(
+            event_rx.try_recv(),
+            Ok(UiEvent::ReloadExtensionsRequested)
+        ));
+    }
+
+    #[test]
+    fn apply_platform_action_dispatches_quit_event() {
+        let ctx = egui::Context::default();
+        let settings = test_settings_state();
+        let (event_tx, event_rx) = mpsc::channel();
+
+        apply_platform_action(&ctx, &settings, &event_tx, PlatformUiAction::Quit);
+
+        assert!(matches!(event_rx.try_recv(), Ok(UiEvent::QuitRequested)));
     }
 }
