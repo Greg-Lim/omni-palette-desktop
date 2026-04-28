@@ -1,59 +1,39 @@
-use crate::config::runtime::RuntimeConfig;
-use crate::core::command_filter::{
-    filter_commands, initial_filtered_commands, FilterableCommand, FilteredCommand,
-};
+use crate::config::runtime::{CommandBehavior, RuntimeConfig};
+use crate::core::command_filter::FilteredCommand;
 use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog};
 use crate::core::extensions::install::{BundledStaticExtension, InstalledState};
-use crate::core::search::MatchRange;
 use crate::domain::action::{CommandPriority, FocusState};
 use crate::platform::ui_support::{
-    foreground_window_token, PlatformUiAction, PlatformUiRuntime, PlatformWindowToken,
+    focus_window_token, foreground_window_token, PlatformUiAction, PlatformUiRuntime,
+    PlatformWindowToken,
+};
+pub use crate::ui::guide::GuideHint;
+use crate::ui::guide::{close_guide_viewport, show_guide_viewport, ActiveGuide, GUIDE_DURATION};
+use crate::ui::palette::{
+    fixed_action_for_index, wrapped_selection_index, CommandPaletteApp, FixedPaletteAction,
+    ESTIMATED_VISIBLE_ROW_HEIGHT, FIXED_ACTION_ROW_HEIGHT, FIXED_PALETTE_ACTIONS,
+    MAX_VISIBLE_COMMAND_ROWS, PALETTE_BORDER, PALETTE_BORDER_WIDTH, PALETTE_CARD_BG,
+    PALETTE_CURSOR_WIDTH, PALETTE_EMPTY_ROW_MARGIN, PALETTE_EMPTY_ROW_RADIUS,
+    PALETTE_EMPTY_TEXT_SIZE, PALETTE_FRAME_MARGIN, PALETTE_FRAME_RADIUS, PALETTE_RESULTS_TOP_SPACE,
+    PALETTE_ROW_HOVER, PALETTE_ROW_SELECTED, PALETTE_ROW_SELECTED_BORDER, PALETTE_SEARCH_BG,
+    PALETTE_SEARCH_BORDER, PALETTE_SEARCH_HEIGHT, PALETTE_SEARCH_MARGIN_X, PALETTE_SEARCH_MARGIN_Y,
+    PALETTE_SEARCH_PROMPT_LEFT_SPACE, PALETTE_SEARCH_PROMPT_RIGHT_SPACE,
+    PALETTE_SEARCH_PROMPT_SIZE, PALETTE_SEARCH_RADIUS, PALETTE_TEXTBOX_CURSOR,
+    PALETTE_TEXTBOX_HINT, PALETTE_TEXTBOX_TEXT, PALETTE_TEXT_MUTED, PALETTE_TEXT_PRIMARY,
+    PALETTE_TEXT_SELECTED, PALETTE_WIDTH, PALETTE_WINDOW_BG, ROW_HEIGHT, SETTINGS_DIVIDER_HEIGHT,
 };
 use crate::ui::settings::{show_settings_viewport, SettingsBootstrap, SettingsState};
 use eframe::egui;
-use eframe::egui::text::LayoutJob;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
-
-const PALETTE_WIDTH: f32 = 780.0;
-const MAX_FILTERED_COMMANDS: usize = 18;
-const MAX_VISIBLE_COMMAND_ROWS: usize = 10;
-const ROW_HEIGHT: f32 = 38.0;
-const SETTINGS_DIVIDER_HEIGHT: f32 = 13.0;
-const FIXED_ACTION_ROW_HEIGHT: f32 = 30.0;
-const ESTIMATED_VISIBLE_ROW_HEIGHT: f32 = 31.0;
-const FIXED_PALETTE_ACTIONS: [FixedPaletteAction; 2] = [
-    FixedPaletteAction::RefreshExtensions,
-    FixedPaletteAction::OpenSettings,
-];
-
-const BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
-const CARD_BG: egui::Color32 = egui::Color32::from_rgb(37, 37, 38);
-const BORDER: egui::Color32 = egui::Color32::from_rgb(69, 69, 69);
-const SEARCH_BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
-const SEARCH_BORDER: egui::Color32 = egui::Color32::from_rgb(82, 82, 82);
-const ROW_HOVER: egui::Color32 = egui::Color32::from_rgb(43, 43, 43);
-const ROW_SELECTED: egui::Color32 = egui::Color32::from_rgb(9, 71, 113);
-const ROW_SELECTED_BORDER: egui::Color32 = egui::Color32::from_rgb(55, 148, 255);
-const TEXT_PRIMARY: egui::Color32 = egui::Color32::from_rgb(204, 204, 204);
-const TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(150, 150, 150);
-const TEXT_SELECTED: egui::Color32 = egui::Color32::WHITE;
-const TEXTBOX_TEXT: egui::Color32 = egui::Color32::from_rgb(230, 230, 230);
-const TEXTBOX_HINT: egui::Color32 = egui::Color32::from_rgb(120, 120, 120);
-const TEXTBOX_CURSOR: egui::Color32 = egui::Color32::from_rgb(0, 122, 204);
-const TEXT_MATCH: egui::Color32 = egui::Color32::from_rgb(255, 213, 122);
-const TEXT_MATCH_SELECTED: egui::Color32 = egui::Color32::from_rgb(255, 238, 180);
-const HEART_ICON: &str = "♥";
-const INDICATOR_SIZE: f32 = 12.0;
-const HEART_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 106, 148);
-const HEART_COLOR_SELECTED: egui::Color32 = egui::Color32::from_rgb(255, 190, 214);
+use std::time::{Duration, Instant};
 
 pub struct Command {
     pub label: String,
     pub shortcut_text: String,
+    pub guide_hint: Option<GuideHint>,
     pub priority: CommandPriority,
     pub focus_state: FocusState,
     pub favorite: bool,
@@ -80,15 +60,15 @@ impl PaletteWorkArea {
         }
     }
 
-    fn width(self) -> f32 {
+    pub(crate) fn width(self) -> f32 {
         self.right - self.left
     }
 
-    fn height(self) -> f32 {
+    pub(crate) fn height(self) -> f32 {
         self.bottom - self.top
     }
 
-    fn to_points(self, native_pixels_per_point: f32) -> Self {
+    pub(crate) fn to_points(self, native_pixels_per_point: f32) -> Self {
         Self {
             left: self.left / native_pixels_per_point,
             top: self.top / native_pixels_per_point,
@@ -103,6 +83,7 @@ impl fmt::Debug for Command {
         f.debug_struct("Command")
             .field("label", &self.label)
             .field("shortcut_text", &self.shortcut_text)
+            .field("guide_hint", &self.guide_hint)
             .field("priority", &self.priority)
             .field("focus_state", &self.focus_state)
             .field("favorite", &self.favorite)
@@ -110,140 +91,6 @@ impl fmt::Debug for Command {
             .field("original_order", &self.original_order)
             .field("action", &"<function>")
             .finish()
-    }
-}
-
-#[derive(Debug)]
-pub struct CommandPaletteApp {
-    pub filter_text: String,
-    pub all_commands: Vec<Command>,
-    pub filtered_commands: Vec<FilteredCommand>,
-    pub selected_index: usize,
-    pub is_open: bool,
-}
-
-impl CommandPaletteApp {
-    fn new(all_commands: Vec<Command>) -> Self {
-        let filtered_commands =
-            cap_filtered_commands(initial_filtered_commands(all_commands.len()));
-        Self {
-            filter_text: String::new(),
-            all_commands,
-            filtered_commands,
-            selected_index: 0,
-            is_open: false,
-        }
-    }
-
-    fn recompute_filter(&mut self) {
-        self.filtered_commands =
-            cap_filtered_commands(filter_commands(&self.all_commands, &self.filter_text));
-    }
-}
-
-fn cap_filtered_commands(mut commands: Vec<FilteredCommand>) -> Vec<FilteredCommand> {
-    commands.truncate(MAX_FILTERED_COMMANDS);
-    commands
-}
-
-impl FilterableCommand for Command {
-    fn label(&self) -> &str {
-        &self.label
-    }
-
-    fn priority(&self) -> CommandPriority {
-        self.priority
-    }
-
-    fn focus_state(&self) -> FocusState {
-        self.focus_state
-    }
-
-    fn favorite(&self) -> bool {
-        self.favorite
-    }
-
-    fn tags(&self) -> &[String] {
-        &self.tags
-    }
-
-    fn original_order(&self) -> usize {
-        self.original_order
-    }
-}
-
-fn highlighted_label_job(label: &str, ranges: &[MatchRange], is_selected: bool) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    let normal_color = if is_selected {
-        TEXT_SELECTED
-    } else {
-        TEXT_PRIMARY
-    };
-    let highlight_color = if is_selected {
-        TEXT_MATCH_SELECTED
-    } else {
-        TEXT_MATCH
-    };
-    let normal_format = egui::TextFormat {
-        font_id: egui::FontId::proportional(15.5),
-        color: normal_color,
-        ..Default::default()
-    };
-    let highlight_format = egui::TextFormat {
-        font_id: egui::FontId::proportional(15.5),
-        color: highlight_color,
-        ..Default::default()
-    };
-
-    let mut cursor = 0;
-    for range in ranges {
-        if range.start > label.len()
-            || range.end > label.len()
-            || range.start >= range.end
-            || !label.is_char_boundary(range.start)
-            || !label.is_char_boundary(range.end)
-        {
-            continue;
-        }
-
-        if cursor < range.start {
-            job.append(&label[cursor..range.start], 0.0, normal_format.clone());
-        }
-
-        job.append(
-            &label[range.start..range.end],
-            0.0,
-            highlight_format.clone(),
-        );
-        cursor = range.end;
-    }
-
-    if cursor < label.len() {
-        job.append(&label[cursor..], 0.0, normal_format);
-    }
-
-    job
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FixedPaletteAction {
-    RefreshExtensions,
-    OpenSettings,
-}
-
-impl FixedPaletteAction {
-    fn label(self) -> &'static str {
-        match self {
-            Self::RefreshExtensions => "Refresh extensions",
-            Self::OpenSettings => "Open settings for Omni Palette",
-        }
-    }
-
-    fn id(self) -> &'static str {
-        match self {
-            Self::RefreshExtensions => "fixed_refresh_extensions",
-            Self::OpenSettings => "fixed_open_settings",
-        }
     }
 }
 
@@ -258,8 +105,12 @@ pub enum UiSignal {
     Show {
         commands: Vec<Command>,
         work_area: Option<PaletteWorkArea>,
+        command_behavior: CommandBehavior,
+        activation_hint: String,
     },
     Hide,
+    RunGuidedAction,
+    CancelGuide,
     RuntimeConfigSaved {
         config: RuntimeConfig,
         result: Result<String, String>,
@@ -274,6 +125,10 @@ pub enum UiSignal {
 pub enum UiEvent {
     Closed,
     ActionExecuted,
+    GuideStarted {
+        shortcut: Option<crate::domain::hotkey::KeyboardShortcut>,
+    },
+    GuideEnded,
     OpenPaletteRequested,
     SaveRuntimeConfigRequested(RuntimeConfig),
     RefreshCatalogRequested(crate::config::runtime::GitHubExtensionSource),
@@ -313,6 +168,9 @@ struct App {
     needs_text_focus: bool,
     keyboard_nav: bool,
     work_area: Option<PaletteWorkArea>,
+    command_behavior: CommandBehavior,
+    activation_hint: String,
+    guide: Option<ActiveGuide>,
     visibility: SharedUiVisibility,
     platform_ui: PlatformUiRuntime,
 }
@@ -329,26 +187,30 @@ impl App {
         let mut visuals = egui::Visuals::dark();
         visuals.panel_fill = egui::Color32::TRANSPARENT;
         visuals.window_fill = egui::Color32::TRANSPARENT;
-        visuals.extreme_bg_color = SEARCH_BG;
-        visuals.faint_bg_color = CARD_BG;
-        visuals.override_text_color = Some(TEXT_PRIMARY);
+        visuals.extreme_bg_color = PALETTE_SEARCH_BG;
+        visuals.faint_bg_color = PALETTE_CARD_BG;
+        visuals.override_text_color = Some(PALETTE_TEXT_PRIMARY);
         visuals.widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
-        visuals.widgets.inactive.bg_fill = SEARCH_BG;
-        visuals.widgets.inactive.weak_bg_fill = SEARCH_BG;
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, SEARCH_BORDER);
-        visuals.widgets.inactive.fg_stroke.color = TEXT_PRIMARY;
-        visuals.widgets.hovered.bg_fill = ROW_HOVER;
-        visuals.widgets.hovered.weak_bg_fill = ROW_HOVER;
-        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, SEARCH_BORDER);
-        visuals.widgets.hovered.fg_stroke.color = TEXT_PRIMARY;
-        visuals.widgets.active.bg_fill = ROW_SELECTED;
-        visuals.widgets.active.weak_bg_fill = ROW_SELECTED;
-        visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, ROW_SELECTED_BORDER);
-        visuals.widgets.active.fg_stroke.color = TEXT_SELECTED;
-        visuals.widgets.open.bg_fill = ROW_SELECTED;
-        visuals.widgets.open.weak_bg_fill = ROW_SELECTED;
-        visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, ROW_SELECTED_BORDER);
-        visuals.widgets.open.fg_stroke.color = TEXT_SELECTED;
+        visuals.widgets.inactive.bg_fill = PALETTE_SEARCH_BG;
+        visuals.widgets.inactive.weak_bg_fill = PALETTE_SEARCH_BG;
+        visuals.widgets.inactive.bg_stroke =
+            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_SEARCH_BORDER);
+        visuals.widgets.inactive.fg_stroke.color = PALETTE_TEXT_PRIMARY;
+        visuals.widgets.hovered.bg_fill = PALETTE_ROW_HOVER;
+        visuals.widgets.hovered.weak_bg_fill = PALETTE_ROW_HOVER;
+        visuals.widgets.hovered.bg_stroke =
+            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_SEARCH_BORDER);
+        visuals.widgets.hovered.fg_stroke.color = PALETTE_TEXT_PRIMARY;
+        visuals.widgets.active.bg_fill = PALETTE_ROW_SELECTED;
+        visuals.widgets.active.weak_bg_fill = PALETTE_ROW_SELECTED;
+        visuals.widgets.active.bg_stroke =
+            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_ROW_SELECTED_BORDER);
+        visuals.widgets.active.fg_stroke.color = PALETTE_TEXT_SELECTED;
+        visuals.widgets.open.bg_fill = PALETTE_ROW_SELECTED;
+        visuals.widgets.open.weak_bg_fill = PALETTE_ROW_SELECTED;
+        visuals.widgets.open.bg_stroke =
+            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_ROW_SELECTED_BORDER);
+        visuals.widgets.open.fg_stroke.color = PALETTE_TEXT_SELECTED;
         cc.egui_ctx.set_visuals(visuals);
 
         let mut style = (*cc.egui_ctx.global_style()).clone();
@@ -358,6 +220,8 @@ impl App {
         cc.egui_ctx.set_global_style(style);
         let _ = shared_context.set(cc.egui_ctx.clone());
         visibility.store(false, Ordering::Relaxed);
+        let command_behavior = settings_bootstrap.config.command_behavior;
+        let activation_hint = settings_bootstrap.config.activation.to_string();
         let settings = Arc::new(Mutex::new(SettingsState::new(settings_bootstrap)));
         let platform_ui = PlatformUiRuntime::new(cc, &cc.egui_ctx);
 
@@ -370,6 +234,9 @@ impl App {
             needs_text_focus: false,
             keyboard_nav: false,
             work_area: None,
+            command_behavior,
+            activation_hint,
+            guide: None,
             visibility,
             platform_ui,
         }
@@ -380,13 +247,18 @@ impl App {
         ctx: &egui::Context,
         commands: Vec<Command>,
         work_area: Option<PaletteWorkArea>,
+        command_behavior: CommandBehavior,
+        activation_hint: String,
     ) {
+        self.end_guide(ctx, true);
         self.palette.all_commands = commands;
         self.palette.filter_text.clear();
         self.palette.selected_index = 0;
         self.palette.recompute_filter();
         self.palette.is_open = true;
         self.work_area = work_area;
+        self.command_behavior = command_behavior;
+        self.activation_hint = activation_hint;
         self.had_focus_since_open = false;
         self.needs_text_focus = true;
         self.visibility.store(true, Ordering::Relaxed);
@@ -434,8 +306,12 @@ impl App {
             UiSignal::Show {
                 commands,
                 work_area,
-            } => self.show(ctx, commands, work_area),
+                command_behavior,
+                activation_hint,
+            } => self.show(ctx, commands, work_area, command_behavior, activation_hint),
             UiSignal::Hide => self.hide(ctx, "signal"),
+            UiSignal::RunGuidedAction => self.run_guided_action(ctx),
+            UiSignal::CancelGuide => self.end_guide(ctx, true),
             UiSignal::RuntimeConfigSaved { config, result } => {
                 if let Ok(mut settings) = self.settings.lock() {
                     settings.config_saved(config, result);
@@ -504,13 +380,95 @@ impl App {
             .get(self.palette.selected_index)
             .map(|row| row.command_index)
         {
-            self.hide(ctx, "execute_selected");
-            (self.palette.all_commands[orig_idx].action)();
-            let _ = self.event_tx.send(UiEvent::ActionExecuted);
+            self.activate_command(ctx, orig_idx, "execute_selected");
         }
     }
 
+    fn activate_command(&mut self, ctx: &egui::Context, command_index: usize, reason: &str) {
+        if self.command_behavior == CommandBehavior::Guide
+            && self.palette.all_commands[command_index]
+                .guide_hint
+                .is_some()
+        {
+            self.start_guide(ctx, command_index, reason);
+            return;
+        }
+
+        self.hide(ctx, reason);
+        self.run_command_action(command_index);
+    }
+
+    fn run_command_action(&self, command_index: usize) {
+        (self.palette.all_commands[command_index].action)();
+        let _ = self.event_tx.send(UiEvent::ActionExecuted);
+    }
+
+    fn start_guide(&mut self, ctx: &egui::Context, command_index: usize, reason: &str) {
+        let command = &self.palette.all_commands[command_index];
+        let guide_hint = command
+            .guide_hint
+            .expect("guide commands should have guide metadata");
+        let label = command.label.clone();
+        let shortcut_text = command.shortcut_text.clone();
+        let activation_hint = self.activation_hint.clone();
+        let work_area = self.work_area;
+
+        self.hide(ctx, reason);
+        if let Some(target_window) = guide_hint.target_window {
+            focus_window_token(target_window);
+        }
+
+        self.guide = Some(ActiveGuide {
+            command_index,
+            label,
+            shortcut_text,
+            activation_hint,
+            work_area,
+            expires_at: Instant::now() + GUIDE_DURATION,
+        });
+        let _ = self.event_tx.send(UiEvent::GuideStarted {
+            shortcut: guide_hint.shortcut,
+        });
+        ctx.request_repaint();
+    }
+
+    fn run_guided_action(&mut self, ctx: &egui::Context) {
+        let Some(guide) = self.guide.take() else {
+            return;
+        };
+
+        close_guide_viewport(ctx);
+        ctx.request_repaint();
+        let _ = self.event_tx.send(UiEvent::GuideEnded);
+        self.run_command_action(guide.command_index);
+    }
+
+    fn end_guide(&mut self, ctx: &egui::Context, send_event: bool) {
+        if self.guide.take().is_some() {
+            close_guide_viewport(ctx);
+            ctx.request_repaint();
+            if send_event {
+                let _ = self.event_tx.send(UiEvent::GuideEnded);
+            }
+        }
+    }
+
+    fn refresh_guide(&mut self, ctx: &egui::Context) {
+        let Some(guide) = self.guide.clone() else {
+            return;
+        };
+
+        if Instant::now() >= guide.expires_at {
+            self.end_guide(ctx, true);
+            return;
+        }
+
+        ctx.request_repaint_after(Duration::from_millis(100));
+        show_guide_viewport(ctx, &guide);
+    }
+
     fn execute_fixed_action(&mut self, ctx: &egui::Context, action: FixedPaletteAction) {
+        self.end_guide(ctx, true);
         self.hide(ctx, "execute_fixed_action");
         match action {
             FixedPaletteAction::RefreshExtensions => {
@@ -566,210 +524,6 @@ impl App {
             self.keyboard_nav = true;
         }
     }
-
-    fn draw_command_row(
-        &mut self,
-        ui: &mut egui::Ui,
-        idx: usize,
-        row: &FilteredCommand,
-    ) -> Option<usize> {
-        let is_selected = idx == self.palette.selected_index;
-        let orig_idx = row.command_index;
-        let label = &self.palette.all_commands[orig_idx].label;
-        let shortcut_text = &self.palette.all_commands[orig_idx].shortcut_text;
-        let is_favorite = self.palette.all_commands[orig_idx].favorite;
-        let desired_size = egui::vec2(ui.available_width(), ROW_HEIGHT);
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-
-        if response.hovered() {
-            self.palette.selected_index = idx;
-        }
-
-        let fill = if is_selected {
-            ROW_SELECTED
-        } else if response.hovered() {
-            ROW_HOVER
-        } else {
-            egui::Color32::TRANSPARENT
-        };
-
-        let stroke = if is_selected {
-            egui::Stroke::new(1.0, ROW_SELECTED_BORDER)
-        } else {
-            egui::Stroke::NONE
-        };
-
-        ui.painter().rect(
-            rect,
-            egui::CornerRadius::same(6),
-            fill,
-            stroke,
-            egui::StrokeKind::Outside,
-        );
-
-        let inner = rect.shrink2(egui::vec2(12.0, 8.0));
-
-        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-            ui.with_layout(
-                egui::Layout::left_to_right(egui::Align::Center).with_main_justify(true),
-                |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(highlighted_label_job(
-                            label,
-                            &row.label_matches,
-                            is_selected,
-                        ));
-
-                        if is_favorite {
-                            ui.add_space(8.0);
-                            ui.label(egui::RichText::new(HEART_ICON).size(INDICATOR_SIZE).color(
-                                if is_selected {
-                                    HEART_COLOR_SELECTED
-                                } else {
-                                    HEART_COLOR
-                                },
-                            ));
-                        }
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if !shortcut_text.is_empty() {
-                                ui.label(egui::RichText::new(shortcut_text).size(12.5).color(
-                                    if is_selected {
-                                        egui::Color32::from_rgb(180, 200, 230)
-                                    } else {
-                                        TEXT_MUTED
-                                    },
-                                ));
-                            }
-                        });
-                    });
-                },
-            );
-        });
-
-        let click_response = ui
-            .interact(
-                rect,
-                ui.id().with(("command_row", orig_idx)),
-                egui::Sense::click(),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-
-        if is_selected && self.keyboard_nav {
-            click_response.scroll_to_me(Some(egui::Align::Center));
-            self.keyboard_nav = false;
-        }
-
-        if click_response.clicked() {
-            self.palette.selected_index = idx;
-            return Some(orig_idx);
-        }
-
-        None
-    }
-
-    fn draw_settings_divider(ui: &mut egui::Ui) {
-        let width = ui.available_width();
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(width, SETTINGS_DIVIDER_HEIGHT),
-            egui::Sense::hover(),
-        );
-        let y = rect.center().y;
-        ui.painter().line_segment(
-            [
-                egui::pos2(rect.left() + 8.0, y),
-                egui::pos2(rect.right() - 8.0, y),
-            ],
-            egui::Stroke::new(1.0, BORDER),
-        );
-    }
-
-    fn draw_fixed_action_row(
-        &mut self,
-        ui: &mut egui::Ui,
-        idx: usize,
-        action: FixedPaletteAction,
-    ) -> bool {
-        let is_selected = idx == self.palette.selected_index;
-        let desired_size = egui::vec2(ui.available_width(), FIXED_ACTION_ROW_HEIGHT);
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-
-        if response.hovered() {
-            self.palette.selected_index = idx;
-        }
-
-        let fill = if is_selected {
-            ROW_SELECTED
-        } else if response.hovered() {
-            ROW_HOVER
-        } else {
-            egui::Color32::TRANSPARENT
-        };
-
-        let stroke = if is_selected {
-            egui::Stroke::new(1.0, ROW_SELECTED_BORDER)
-        } else {
-            egui::Stroke::NONE
-        };
-
-        ui.painter().rect(
-            rect,
-            egui::CornerRadius::same(6),
-            fill,
-            stroke,
-            egui::StrokeKind::Outside,
-        );
-
-        let inner = rect.shrink2(egui::vec2(12.0, 4.0));
-        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(action.label())
-                        .size(15.5)
-                        .color(if is_selected {
-                            TEXT_SELECTED
-                        } else {
-                            TEXT_PRIMARY
-                        }),
-                );
-            });
-        });
-
-        let click_response = ui
-            .interact(rect, ui.id().with(action.id()), egui::Sense::click())
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-
-        if is_selected && self.keyboard_nav {
-            click_response.scroll_to_me(Some(egui::Align::Center));
-            self.keyboard_nav = false;
-        }
-
-        if click_response.clicked() {
-            self.palette.selected_index = idx;
-            return true;
-        }
-
-        false
-    }
-}
-
-fn wrapped_selection_index(current: usize, visible_count: usize, delta: isize) -> usize {
-    if visible_count == 0 {
-        return 0;
-    }
-
-    let visible_count = visible_count as isize;
-    let current = current as isize;
-    (current + delta).rem_euclid(visible_count) as usize
-}
-
-fn fixed_action_for_index(
-    selected_index: usize,
-    visible_command_count: usize,
-) -> Option<FixedPaletteAction> {
-    selected_index
-        .checked_sub(visible_command_count)
-        .and_then(|fixed_index| FIXED_PALETTE_ACTIONS.get(fixed_index).copied())
 }
 
 fn apply_platform_action(
@@ -826,6 +580,8 @@ impl eframe::App for App {
         if self.settings_open() {
             show_settings_viewport(ctx, Arc::clone(&self.settings), self.event_tx.clone());
         }
+
+        self.refresh_guide(ctx);
 
         if !self.palette.is_open {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
@@ -889,45 +645,55 @@ impl eframe::App for App {
                 ui.set_width(PALETTE_WIDTH);
 
                 egui::Frame::new()
-                    .fill(CARD_BG)
-                    .stroke(egui::Stroke::new(1.0, BORDER))
-                    .corner_radius(egui::CornerRadius::same(8))
-                    .inner_margin(egui::Margin::same(10))
+                    .fill(PALETTE_CARD_BG)
+                    .stroke(egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_BORDER))
+                    .corner_radius(egui::CornerRadius::same(PALETTE_FRAME_RADIUS))
+                    .inner_margin(egui::Margin::same(PALETTE_FRAME_MARGIN))
                     .show(ui, |ui| {
                         egui::Frame::new()
-                            .fill(SEARCH_BG)
-                            .stroke(egui::Stroke::new(1.0, SEARCH_BORDER))
-                            .corner_radius(egui::CornerRadius::same(6))
+                            .fill(PALETTE_SEARCH_BG)
+                            .stroke(egui::Stroke::new(
+                                PALETTE_BORDER_WIDTH,
+                                PALETTE_SEARCH_BORDER,
+                            ))
+                            .corner_radius(egui::CornerRadius::same(PALETTE_SEARCH_RADIUS))
                             .inner_margin(egui::Margin {
-                                left: 12,
-                                right: 12,
-                                top: 14,
-                                bottom: 14,
+                                left: PALETTE_SEARCH_MARGIN_X,
+                                right: PALETTE_SEARCH_MARGIN_X,
+                                top: PALETTE_SEARCH_MARGIN_Y,
+                                bottom: PALETTE_SEARCH_MARGIN_Y,
                             })
                             .show(ui, |ui| {
                                 ui.scope(|ui| {
-                                    ui.visuals_mut().override_text_color = Some(TEXTBOX_TEXT);
-                                    ui.visuals_mut().selection.bg_fill = ROW_SELECTED;
-                                    ui.visuals_mut().selection.stroke =
-                                        egui::Stroke::new(1.0, ROW_SELECTED_BORDER);
-                                    ui.visuals_mut().text_cursor.stroke =
-                                        egui::Stroke::new(2.0, TEXTBOX_CURSOR);
+                                    ui.visuals_mut().override_text_color =
+                                        Some(PALETTE_TEXTBOX_TEXT);
+                                    ui.visuals_mut().selection.bg_fill = PALETTE_ROW_SELECTED;
+                                    ui.visuals_mut().selection.stroke = egui::Stroke::new(
+                                        PALETTE_BORDER_WIDTH,
+                                        PALETTE_ROW_SELECTED_BORDER,
+                                    );
+                                    ui.visuals_mut().text_cursor.stroke = egui::Stroke::new(
+                                        PALETTE_CURSOR_WIDTH,
+                                        PALETTE_TEXTBOX_CURSOR,
+                                    );
 
                                     ui.horizontal(|ui| {
-                                        ui.add_space(2.0);
+                                        ui.add_space(PALETTE_SEARCH_PROMPT_LEFT_SPACE);
                                         ui.label(
-                                            egui::RichText::new(">").size(18.0).color(TEXTBOX_HINT),
+                                            egui::RichText::new(">")
+                                                .size(PALETTE_SEARCH_PROMPT_SIZE)
+                                                .color(PALETTE_TEXTBOX_HINT),
                                         );
-                                        ui.add_space(6.0);
+                                        ui.add_space(PALETTE_SEARCH_PROMPT_RIGHT_SPACE);
 
                                         let resp = ui.add_sized(
-                                            [ui.available_width(), 28.0],
+                                            [ui.available_width(), PALETTE_SEARCH_HEIGHT],
                                             egui::TextEdit::singleline(
                                                 &mut self.palette.filter_text,
                                             )
                                             .hint_text(
                                                 egui::RichText::new("Type a command")
-                                                    .color(TEXTBOX_HINT)
+                                                    .color(PALETTE_TEXTBOX_HINT)
                                                     .size(16.0),
                                             )
                                             .font(egui::TextStyle::Heading)
@@ -948,7 +714,7 @@ impl eframe::App for App {
                                 });
                             });
 
-                        ui.add_space(8.0);
+                        ui.add_space(PALETTE_RESULTS_TOP_SPACE);
 
                         let command_list_height = self.command_list_height();
                         let mut clicked_action: Option<usize> = None;
@@ -959,15 +725,17 @@ impl eframe::App for App {
                             .show(ui, |ui| {
                                 if self.palette.filtered_commands.is_empty() {
                                     egui::Frame::new()
-                                        .fill(BG)
-                                        .corner_radius(egui::CornerRadius::same(6))
-                                        .inner_margin(egui::Margin::same(12))
+                                        .fill(PALETTE_WINDOW_BG)
+                                        .corner_radius(egui::CornerRadius::same(
+                                            PALETTE_EMPTY_ROW_RADIUS,
+                                        ))
+                                        .inner_margin(egui::Margin::same(PALETTE_EMPTY_ROW_MARGIN))
                                         .show(ui, |ui| {
                                             ui.set_min_height(ROW_HEIGHT);
                                             ui.label(
                                                 egui::RichText::new("No matching commands")
-                                                    .size(14.5)
-                                                    .color(TEXT_MUTED),
+                                                    .size(PALETTE_EMPTY_TEXT_SIZE)
+                                                    .color(PALETTE_TEXT_MUTED),
                                             );
                                         });
                                 }
@@ -981,26 +749,33 @@ impl eframe::App for App {
                                     .collect();
 
                                 for (idx, row) in rows {
-                                    if let Some(clicked_idx) = self.draw_command_row(ui, idx, &row)
-                                    {
+                                    if let Some(clicked_idx) = self.palette.draw_command_row(
+                                        ui,
+                                        idx,
+                                        &row,
+                                        &mut self.keyboard_nav,
+                                    ) {
                                         clicked_action = Some(clicked_idx);
                                     }
                                 }
                             });
 
-                        Self::draw_settings_divider(ui);
+                        CommandPaletteApp::draw_settings_divider(ui);
                         for (fixed_idx, fixed_action) in FIXED_PALETTE_ACTIONS.iter().enumerate() {
                             let row_idx = command_count + fixed_idx;
-                            if self.draw_fixed_action_row(ui, row_idx, *fixed_action) {
+                            if self.palette.draw_fixed_action_row(
+                                ui,
+                                row_idx,
+                                *fixed_action,
+                                &mut self.keyboard_nav,
+                            ) {
                                 self.execute_fixed_action(ui.ctx(), *fixed_action);
                                 return;
                             }
                         }
 
                         if let Some(orig_idx) = clicked_action {
-                            self.hide(ui.ctx(), "mouse_selection");
-                            (self.palette.all_commands[orig_idx].action)();
-                            let _ = self.event_tx.send(UiEvent::ActionExecuted);
+                            self.activate_command(ui.ctx(), orig_idx, "mouse_selection");
                         }
                     });
             });
@@ -1051,9 +826,8 @@ pub fn run_with_shared_state(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_platform_action, cap_filtered_commands, fixed_action_for_index,
-        should_hide_for_app_switch, wrapped_selection_index, FilteredCommand, FixedPaletteAction,
-        PlatformUiAction, PlatformWindowToken, UiEvent, MAX_FILTERED_COMMANDS,
+        apply_platform_action, should_hide_for_app_switch, PlatformUiAction, PlatformWindowToken,
+        UiEvent,
     };
     use crate::config::runtime::RuntimeConfig;
     use crate::core::extensions::install::InstalledState;
@@ -1074,120 +848,6 @@ mod tests {
             installed_state: InstalledState::default(),
             installed_state_error: None,
         })))
-    }
-
-    #[test]
-    fn wrapped_selection_moves_down_from_middle() {
-        assert_eq!(wrapped_selection_index(3, 8, 1), 4);
-    }
-
-    #[test]
-    fn wrapped_selection_moves_up_from_middle() {
-        assert_eq!(wrapped_selection_index(3, 8, -1), 2);
-    }
-
-    #[test]
-    fn wrapped_selection_wraps_from_last_to_first() {
-        assert_eq!(wrapped_selection_index(7, 8, 1), 0);
-    }
-
-    #[test]
-    fn wrapped_selection_wraps_from_first_to_last() {
-        assert_eq!(wrapped_selection_index(0, 8, -1), 7);
-    }
-
-    #[test]
-    fn wrapped_selection_is_zero_when_no_rows_are_visible() {
-        assert_eq!(wrapped_selection_index(4, 0, 1), 0);
-    }
-
-    #[test]
-    fn fixed_action_after_last_command_is_refresh_extensions() {
-        assert_eq!(
-            fixed_action_for_index(5, 5),
-            Some(FixedPaletteAction::RefreshExtensions)
-        );
-    }
-
-    #[test]
-    fn fixed_action_after_refresh_is_open_settings() {
-        assert_eq!(
-            fixed_action_for_index(6, 5),
-            Some(FixedPaletteAction::OpenSettings)
-        );
-    }
-
-    #[test]
-    fn fixed_action_ignores_command_rows() {
-        assert_eq!(fixed_action_for_index(4, 5), None);
-    }
-
-    #[test]
-    fn selection_moves_from_last_command_to_refresh_extensions() {
-        assert_eq!(wrapped_selection_index(4, 7, 1), 5);
-        assert_eq!(
-            fixed_action_for_index(wrapped_selection_index(4, 7, 1), 5),
-            Some(FixedPaletteAction::RefreshExtensions)
-        );
-    }
-
-    #[test]
-    fn selection_moves_from_refresh_to_open_settings() {
-        assert_eq!(wrapped_selection_index(5, 7, 1), 6);
-        assert_eq!(
-            fixed_action_for_index(wrapped_selection_index(5, 7, 1), 5),
-            Some(FixedPaletteAction::OpenSettings)
-        );
-    }
-
-    #[test]
-    fn selection_wraps_from_open_settings_to_first_row() {
-        assert_eq!(wrapped_selection_index(6, 7, 1), 0);
-    }
-
-    #[test]
-    fn zero_command_results_wrap_between_fixed_actions() {
-        assert_eq!(
-            fixed_action_for_index(wrapped_selection_index(0, 2, 1), 0),
-            Some(FixedPaletteAction::OpenSettings)
-        );
-        assert_eq!(
-            fixed_action_for_index(wrapped_selection_index(1, 2, 1), 0),
-            Some(FixedPaletteAction::RefreshExtensions)
-        );
-    }
-
-    #[test]
-    fn fixed_actions_start_after_all_rendered_commands_not_visible_cap() {
-        assert_eq!(fixed_action_for_index(9, 18), None);
-        assert_eq!(fixed_action_for_index(10, 18), None);
-        assert_eq!(fixed_action_for_index(17, 18), None);
-        assert_eq!(
-            fixed_action_for_index(18, 18),
-            Some(FixedPaletteAction::RefreshExtensions)
-        );
-        assert_eq!(
-            fixed_action_for_index(19, 18),
-            Some(FixedPaletteAction::OpenSettings)
-        );
-    }
-
-    #[test]
-    fn filtered_commands_are_capped_to_eighteen_items() {
-        let rows: Vec<FilteredCommand> = (0..25)
-            .map(|command_index| FilteredCommand {
-                command_index,
-                score: 0,
-                label_matches: Vec::new(),
-                is_prefix: false,
-                span: 0,
-            })
-            .collect();
-
-        let capped = cap_filtered_commands(rows);
-
-        assert_eq!(capped.len(), MAX_FILTERED_COMMANDS);
-        assert_eq!(capped.last().map(|row| row.command_index), Some(17));
     }
 
     #[test]

@@ -45,6 +45,7 @@ pub struct RuntimeConfigLoad {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
     pub activation: KeyboardShortcut,
+    pub command_behavior: CommandBehavior,
     pub startup: StartupConfig,
     pub github: GitHubExtensionSource,
 }
@@ -132,9 +133,23 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             activation: default_activation_shortcut(),
+            command_behavior: CommandBehavior::default(),
             startup: StartupConfig::default(),
             github: GitHubExtensionSource::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CommandBehavior {
+    Execute,
+    Guide,
+}
+
+impl Default for CommandBehavior {
+    fn default() -> Self {
+        Self::Execute
     }
 }
 
@@ -196,6 +211,8 @@ struct RuntimeConfigFile {
     #[serde(default = "default_activation_config")]
     activation: ActivationConfig,
     #[serde(default)]
+    commands: RuntimeCommandConfig,
+    #[serde(default)]
     startup: StartupConfig,
     #[serde(default)]
     extensions: RuntimeExtensionsConfig,
@@ -211,6 +228,7 @@ impl RuntimeConfigFile {
     fn into_runtime_config(self) -> RuntimeConfig {
         RuntimeConfig {
             activation: self.activation.into_shortcut(),
+            command_behavior: self.commands.behavior,
             startup: self.startup,
             github: self.extensions.github,
         }
@@ -235,12 +253,21 @@ impl From<&RuntimeConfig> for RuntimeConfigFile {
     fn from(config: &RuntimeConfig) -> Self {
         Self {
             activation: ActivationConfig::from_shortcut(config.activation),
+            commands: RuntimeCommandConfig {
+                behavior: config.command_behavior,
+            },
             startup: config.startup,
             extensions: RuntimeExtensionsConfig {
                 github: config.github.clone(),
             },
         }
     }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct RuntimeCommandConfig {
+    #[serde(default)]
+    behavior: CommandBehavior,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -329,6 +356,13 @@ mod tests {
     }
 
     #[test]
+    fn default_command_behavior_executes_commands() {
+        let config = RuntimeConfig::default();
+
+        assert_eq!(config.command_behavior, CommandBehavior::Execute);
+    }
+
+    #[test]
     fn default_github_catalog_points_to_desktop_registry() {
         let config = RuntimeConfig::default();
 
@@ -355,6 +389,9 @@ mod tests {
             r#"
 activation = { mods = ["ctrl", "alt"], key = "Space" }
 
+[commands]
+behavior = "guide"
+
 [startup]
 launch_on_login = true
 start_hidden = true
@@ -374,6 +411,7 @@ enabled = true
         assert!(config.activation.modifier.control);
         assert!(config.activation.modifier.alt);
         assert_eq!(config.activation.key, Key::Space);
+        assert_eq!(config.command_behavior, CommandBehavior::Guide);
         assert!(config.startup.launch_on_login);
         assert_eq!(
             config.github.catalog_url(),
@@ -395,6 +433,7 @@ enabled = true
                 },
                 key: Key::Space,
             },
+            command_behavior: CommandBehavior::Guide,
             startup: StartupConfig {
                 launch_on_login: false,
                 start_hidden: true,

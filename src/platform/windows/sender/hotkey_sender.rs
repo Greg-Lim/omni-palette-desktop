@@ -3,10 +3,16 @@ use crate::domain::{
     hotkey::KeyboardShortcut,
 };
 use crate::platform::windows::mapper::hotkey_mapper::map_key;
+use std::time::{Duration, Instant};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_SHIFT,
+    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT,
+    VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
 };
+
+const MODIFIER_RELEASE_TIMEOUT: Duration = Duration::from_millis(750);
+const MODIFIER_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const SYNTHETIC_INPUT_SETTLE_DELAY: Duration = Duration::from_millis(20);
 
 // Helper function to create a keyboard press/release event
 fn make_key_event(vk: VIRTUAL_KEY, is_release: bool) -> INPUT {
@@ -30,6 +36,8 @@ fn make_key_event(vk: VIRTUAL_KEY, is_release: bool) -> INPUT {
 }
 
 pub fn send_shortcut(shortcut: &KeyboardShortcut) {
+    prepare_synthetic_shortcut_input();
+
     let mut inputs: Vec<INPUT> = Vec::new();
 
     // Press modifiers
@@ -71,9 +79,70 @@ pub fn send_shortcut(shortcut: &KeyboardShortcut) {
 }
 
 pub fn send_shortcut_sequence(sequence: &[KeySequenceStep]) {
+    prepare_synthetic_shortcut_input();
+
     for step in sequence {
         send_sequence_step(step);
         std::thread::sleep(std::time::Duration::from_millis(35));
+    }
+}
+
+fn prepare_synthetic_shortcut_input() {
+    wait_for_modifier_keys_to_be_released(MODIFIER_RELEASE_TIMEOUT);
+    release_modifier_keys();
+    std::thread::sleep(SYNTHETIC_INPUT_SETTLE_DELAY);
+}
+
+fn wait_for_modifier_keys_to_be_released(timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !any_modifier_key_down() {
+            return;
+        }
+        std::thread::sleep(MODIFIER_POLL_INTERVAL);
+    }
+}
+
+fn any_modifier_key_down() -> bool {
+    [
+        VK_CONTROL,
+        VK_LCONTROL,
+        VK_RCONTROL,
+        VK_SHIFT,
+        VK_LSHIFT,
+        VK_RSHIFT,
+        VK_MENU,
+        VK_LMENU,
+        VK_RMENU,
+        VK_LWIN,
+        VK_RWIN,
+    ]
+    .into_iter()
+    .any(is_key_down)
+}
+
+fn is_key_down(vk: VIRTUAL_KEY) -> bool {
+    const KEY_DOWN_MASK: i16 = i16::MIN;
+    unsafe { GetAsyncKeyState(vk.0 as i32) & KEY_DOWN_MASK != 0 }
+}
+
+fn release_modifier_keys() {
+    let inputs = [
+        make_key_event(VK_RWIN, true),
+        make_key_event(VK_LWIN, true),
+        make_key_event(VK_RMENU, true),
+        make_key_event(VK_LMENU, true),
+        make_key_event(VK_MENU, true),
+        make_key_event(VK_RSHIFT, true),
+        make_key_event(VK_LSHIFT, true),
+        make_key_event(VK_SHIFT, true),
+        make_key_event(VK_RCONTROL, true),
+        make_key_event(VK_LCONTROL, true),
+        make_key_event(VK_CONTROL, true),
+    ];
+
+    unsafe {
+        let _result = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
 }
 

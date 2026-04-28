@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::config::runtime::{GitHubExtensionSource, RuntimeConfig};
+use crate::config::runtime::{CommandBehavior, GitHubExtensionSource, RuntimeConfig};
 use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog, ExtensionKind};
 use crate::core::extensions::install::{
     BundledStaticExtension, InstalledExtension, InstalledState, BUNDLED_SOURCE_ID, GITHUB_SOURCE_ID,
@@ -409,6 +409,31 @@ impl SettingsState {
                         BannerTone::Info,
                     );
                 }
+            },
+        );
+
+        section(
+            ui,
+            "Command Behavior",
+            "Choose what happens when you select a command.",
+            |ui| {
+                setting_row_with_help(
+                    ui,
+                    "Mode",
+                    "Execute runs commands immediately. Guide shows the native shortcut first; press the activation shortcut again to run it for you.",
+                    |ui| {
+                        ui.radio_value(
+                            &mut self.draft.command_behavior,
+                            CommandBehavior::Execute,
+                            "Execute",
+                        );
+                        ui.radio_value(
+                            &mut self.draft.command_behavior,
+                            CommandBehavior::Guide,
+                            "Guide",
+                        );
+                    },
+                );
             },
         );
 
@@ -990,6 +1015,30 @@ fn setting_row(ui: &mut egui::Ui, label: &str, add_contents: impl FnOnce(&mut eg
         ui.add_sized(
             [ROW_LABEL_WIDTH, 30.0],
             egui::Label::new(egui::RichText::new(label).color(TEXT_SECONDARY)),
+        );
+        ui.horizontal_wrapped(|ui| {
+            add_contents(ui);
+        });
+    });
+    ui.add_space(8.0);
+}
+
+fn setting_row_with_help(
+    ui: &mut egui::Ui,
+    label: &str,
+    help: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(ROW_LABEL_WIDTH, 30.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(egui::RichText::new(label).color(TEXT_SECONDARY));
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("?").small().strong().color(TEXT_MUTED))
+                    .on_hover_text(help);
+            },
         );
         ui.horizontal_wrapped(|ui| {
             add_contents(ui);

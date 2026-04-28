@@ -9,7 +9,7 @@ use tray_icon::{
 
 use crate::platform::ui_support::{PlatformUiAction, PlatformWindowToken};
 use crate::platform::windows::context::context::{
-    foreground_window_handle_value, get_hwnd_from_raw,
+    focus_window, foreground_window_handle_value, get_hwnd_from_raw,
 };
 
 pub(crate) struct WindowsTray {
@@ -40,6 +40,12 @@ pub(crate) fn palette_window_token(
 
 pub(crate) fn foreground_window_token() -> Option<PlatformWindowToken> {
     foreground_window_handle_value().map(PlatformWindowToken::new)
+}
+
+pub(crate) fn focus_window_token(token: PlatformWindowToken) {
+    focus_window(windows::Win32::Foundation::HWND(
+        token.value() as *mut std::ffi::c_void
+    ));
 }
 
 pub(crate) fn create_tray(

@@ -28,17 +28,18 @@ use crate::core::performance::{current_process_private_bytes, current_process_th
 use crate::core::plugins::PluginRegistry;
 use crate::core::registry::registry::{MasterRegistry, UnitAction};
 use crate::domain::action::{ActionExecution, CommandPriority, ContextRoot, FocusState, Os};
-use crate::domain::hotkey::KeyboardShortcut;
+use crate::domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut};
 use crate::platform::hotkey_actions::HotkeyPassthrough;
 use crate::platform::platform_interface::{get_all_context, RawWindowHandleExt};
+use crate::platform::ui_support::PlatformWindowToken;
 use crate::platform::windows::context::context::{
     focus_window, get_hwnd_from_raw, monitor_work_area_from_window,
 };
 use crate::platform::windows::sender::hotkey_sender::{send_shortcut, send_shortcut_sequence};
 use crate::ui::app as ui_app;
 use crate::ui::app::{
-    Command, InstalledExtensionsUpdate, PaletteWorkArea, SharedUiContext, SharedUiVisibility,
-    UiEvent, UiSignal,
+    Command, GuideHint, InstalledExtensionsUpdate, PaletteWorkArea, SharedUiContext,
+    SharedUiVisibility, UiEvent, UiSignal,
 };
 use crate::ui::settings::SettingsBootstrap;
 use std::env::consts::OS;
@@ -438,6 +439,8 @@ fn spawn_hotkey_bridge(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut palette_open = false;
+        let mut guide_active = false;
+        let mut guide_shortcut = None;
 
         loop {
             handle_ui_events(
@@ -449,10 +452,25 @@ fn spawn_hotkey_bridge(
                 &mut runtime_config,
                 config_path.as_deref(),
                 &mut palette_open,
+                &mut guide_active,
+                &mut guide_shortcut,
                 &ui_context,
             );
 
             match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(shortcut) if guide_active && is_guide_cancel_hotkey(shortcut) => {
+                    guide_active = false;
+                    guide_shortcut = None;
+                    send_ui_signal(&ui_tx, &ui_context, UiSignal::CancelGuide);
+                }
+                Ok(shortcut)
+                    if guide_active && is_guide_shortcut_hotkey(shortcut, guide_shortcut) =>
+                {
+                    guide_active = false;
+                    guide_shortcut = None;
+                    send_ui_signal(&ui_tx, &ui_context, UiSignal::CancelGuide);
+                    hotkey_passthrough.forward_guide_shortcut(shortcut);
+                }
                 Ok(shortcut) if is_palette_hotkey(shortcut, activation_shortcut) => {
                     handle_palette_hotkey(
                         shortcut,
@@ -460,6 +478,9 @@ fn spawn_hotkey_bridge(
                         &runtime_state,
                         &hotkey_passthrough,
                         &mut palette_open,
+                        &mut guide_active,
+                        &mut guide_shortcut,
+                        &runtime_config,
                         &ui_context,
                     );
                 }
@@ -480,12 +501,33 @@ fn handle_ui_events(
     runtime_config: &mut RuntimeConfig,
     config_path: Option<&Path>,
     palette_open: &mut bool,
+    guide_active: &mut bool,
+    guide_shortcut: &mut Option<KeyboardShortcut>,
     ui_context: &SharedUiContext,
 ) {
     while let Ok(event) = event_rx.try_recv() {
         match event {
             UiEvent::Closed => *palette_open = false,
-            UiEvent::ActionExecuted => {}
+            UiEvent::ActionExecuted => {
+                *guide_active = false;
+                *guide_shortcut = None;
+                hotkey_passthrough.set_guide_cancel_hotkey(false);
+                hotkey_passthrough.set_guide_shortcut_hotkey(None);
+            }
+            UiEvent::GuideStarted { shortcut } => {
+                let guide_capture_shortcut =
+                    shortcut.filter(|shortcut| *shortcut != *activation_shortcut);
+                *guide_active = true;
+                *guide_shortcut = guide_capture_shortcut;
+                hotkey_passthrough.set_guide_cancel_hotkey(true);
+                hotkey_passthrough.set_guide_shortcut_hotkey(guide_capture_shortcut);
+            }
+            UiEvent::GuideEnded => {
+                *guide_active = false;
+                *guide_shortcut = None;
+                hotkey_passthrough.set_guide_cancel_hotkey(false);
+                hotkey_passthrough.set_guide_shortcut_hotkey(None);
+            }
             UiEvent::OpenPaletteRequested => {
                 let context_root = get_all_context();
                 show_palette(
@@ -493,6 +535,7 @@ fn handle_ui_events(
                     runtime_state,
                     &context_root,
                     palette_open,
+                    runtime_config,
                     ui_context,
                 );
             }
@@ -632,14 +675,41 @@ fn is_palette_hotkey(shortcut: KeyboardShortcut, activation_shortcut: KeyboardSh
     shortcut == activation_shortcut
 }
 
+fn is_guide_cancel_hotkey(shortcut: KeyboardShortcut) -> bool {
+    shortcut
+        == KeyboardShortcut {
+            modifier: HotkeyModifiers::default(),
+            key: Key::Escape,
+        }
+}
+
+fn is_guide_shortcut_hotkey(
+    shortcut: KeyboardShortcut,
+    guide_shortcut: Option<KeyboardShortcut>,
+) -> bool {
+    guide_shortcut == Some(shortcut)
+}
+
 fn handle_palette_hotkey(
     shortcut: KeyboardShortcut,
     ui_tx: &Sender<UiSignal>,
     runtime_state: &RuntimeState,
     hotkey_passthrough: &HotkeyPassthrough,
     palette_open: &mut bool,
+    guide_active: &mut bool,
+    guide_shortcut: &mut Option<KeyboardShortcut>,
+    runtime_config: &RuntimeConfig,
     ui_context: &SharedUiContext,
 ) {
+    if *guide_active {
+        *guide_active = false;
+        *guide_shortcut = None;
+        hotkey_passthrough.set_guide_cancel_hotkey(false);
+        hotkey_passthrough.set_guide_shortcut_hotkey(None);
+        send_ui_signal(ui_tx, ui_context, UiSignal::RunGuidedAction);
+        return;
+    }
+
     let context_root = get_all_context();
 
     if let Some(process_name) =
@@ -665,6 +735,7 @@ fn handle_palette_hotkey(
         runtime_state,
         &context_root,
         palette_open,
+        runtime_config,
         ui_context,
     );
 }
@@ -699,6 +770,7 @@ fn show_palette(
     runtime_state: &RuntimeState,
     context_root: &ContextRoot,
     palette_open: &mut bool,
+    runtime_config: &RuntimeConfig,
     ui_context: &SharedUiContext,
 ) {
     let work_area = palette_work_area(context_root);
@@ -729,6 +801,8 @@ fn show_palette(
         .send(UiSignal::Show {
             commands,
             work_area,
+            command_behavior: runtime_config.command_behavior,
+            activation_hint: runtime_config.activation.to_string(),
         })
         .is_ok()
     {
@@ -966,6 +1040,7 @@ fn reload_extensions_command(original_order: usize, runtime_state: RuntimeState)
     Command {
         label: "Omni Palette: Reload extensions".to_string(),
         shortcut_text: String::new(),
+        guide_hint: None,
         priority: CommandPriority::Medium,
         focus_state: FocusState::Global,
         favorite: false,
@@ -1022,10 +1097,16 @@ fn command_from_unit_action(
         .and_then(get_hwnd_from_raw)
         .map(|hwnd| hwnd.0 as isize);
     let shortcut_focus_target = shortcut_focus_target(target_hwnd_val, active_hwnd_val);
+    let guide_hint = guide_hint_for_action(
+        &execution,
+        &unit_action.shortcut_text,
+        shortcut_focus_target,
+    );
 
     Command {
         label: format!("{}: {}", unit_action.app_name, unit_action.action_name),
         shortcut_text: unit_action.shortcut_text,
+        guide_hint,
         priority: unit_action.metadata.priority,
         focus_state: unit_action.focus_state,
         favorite: unit_action.metadata.favorite,
@@ -1057,6 +1138,28 @@ fn command_from_unit_action(
                 }
             }
         }),
+    }
+}
+
+fn guide_hint_for_action(
+    execution: &ActionExecution,
+    shortcut_text: &str,
+    focus_target: Option<isize>,
+) -> Option<GuideHint> {
+    if shortcut_text.is_empty() {
+        return None;
+    }
+
+    match execution {
+        ActionExecution::Shortcut(shortcut) => Some(GuideHint {
+            target_window: focus_target.map(PlatformWindowToken::new),
+            shortcut: Some(*shortcut),
+        }),
+        ActionExecution::ShortcutSequence(_) => Some(GuideHint {
+            target_window: focus_target.map(PlatformWindowToken::new),
+            shortcut: None,
+        }),
+        ActionExecution::PluginCommand { .. } => None,
     }
 }
 
@@ -1220,5 +1323,91 @@ mod tests {
     #[test]
     fn shortcut_focus_target_allows_missing_windows() {
         assert_eq!(shortcut_focus_target(None, None), None);
+    }
+
+    #[test]
+    fn guide_hint_allows_shortcut_actions_with_shortcut_text() {
+        let shortcut = KeyboardShortcut {
+            modifier: Default::default(),
+            key: crate::domain::hotkey::Key::KeyP,
+        };
+        let execution = ActionExecution::Shortcut(shortcut);
+
+        let guide = guide_hint_for_action(&execution, "P", Some(42));
+
+        let guide = guide.expect("shortcut actions should be guide eligible");
+        assert_eq!(guide.target_window.map(|token| token.value()), Some(42));
+        assert_eq!(guide.shortcut, Some(shortcut));
+    }
+
+    #[test]
+    fn guide_hint_does_not_capture_shortcut_sequences_as_single_hotkeys() {
+        let execution =
+            ActionExecution::ShortcutSequence(vec![crate::domain::action::KeySequenceStep {
+                modifier: Default::default(),
+                key: crate::domain::action::SequenceKey::Key(crate::domain::hotkey::Key::KeyP),
+            }]);
+
+        let guide = guide_hint_for_action(&execution, "P", Some(42))
+            .expect("shortcut sequences should remain guide eligible");
+
+        assert_eq!(guide.target_window.map(|token| token.value()), Some(42));
+        assert_eq!(guide.shortcut, None);
+    }
+
+    #[test]
+    fn guide_hint_rejects_plugin_commands() {
+        let execution = ActionExecution::PluginCommand {
+            plugin_id: "plugin".to_string(),
+            command_id: "command".to_string(),
+        };
+
+        assert!(guide_hint_for_action(&execution, "Ctrl+P", Some(42)).is_none());
+    }
+
+    #[test]
+    fn guide_hint_rejects_empty_shortcut_text() {
+        let execution = ActionExecution::Shortcut(KeyboardShortcut {
+            modifier: Default::default(),
+            key: crate::domain::hotkey::Key::KeyP,
+        });
+
+        assert!(guide_hint_for_action(&execution, "", Some(42)).is_none());
+    }
+
+    #[test]
+    fn guide_cancel_hotkey_is_bare_escape() {
+        assert!(is_guide_cancel_hotkey(KeyboardShortcut {
+            modifier: HotkeyModifiers::default(),
+            key: Key::Escape,
+        }));
+        assert!(!is_guide_cancel_hotkey(KeyboardShortcut {
+            modifier: HotkeyModifiers {
+                control: true,
+                ..Default::default()
+            },
+            key: Key::Escape,
+        }));
+    }
+
+    #[test]
+    fn guide_shortcut_hotkey_matches_current_guide_shortcut_only() {
+        let shortcut = KeyboardShortcut {
+            modifier: HotkeyModifiers {
+                control: true,
+                ..Default::default()
+            },
+            key: Key::KeyT,
+        };
+
+        assert!(is_guide_shortcut_hotkey(shortcut, Some(shortcut)));
+        assert!(!is_guide_shortcut_hotkey(shortcut, None));
+        assert!(!is_guide_shortcut_hotkey(
+            KeyboardShortcut {
+                modifier: HotkeyModifiers::default(),
+                key: Key::KeyT,
+            },
+            Some(shortcut)
+        ));
     }
 }

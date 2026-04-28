@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    domain::hotkey::KeyboardShortcut,
+    domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
     platform::windows::mapper::hotkey_mapper::{
         map_key, map_key_back, map_modifier, map_modifier_back,
     },
@@ -32,11 +32,16 @@ use windows::{
 };
 
 const PALETTE_HOTKEY_ID: i32 = 1;
+const GUIDE_CANCEL_HOTKEY_ID: i32 = 2;
+const GUIDE_SHORTCUT_HOTKEY_ID: i32 = 3;
 const WM_FORWARD_SHORTCUT: u32 = WM_APP + 1;
 
 enum HotkeyThreadCommand {
     ForwardShortcut(KeyboardShortcut),
+    ForwardGuideShortcut(KeyboardShortcut),
     UpdateShortcut(KeyboardShortcut, Sender<std::result::Result<(), String>>),
+    SetGuideCancelHotkey(bool),
+    SetGuideShortcutHotkey(Option<KeyboardShortcut>),
 }
 
 #[derive(Clone)]
@@ -50,6 +55,23 @@ impl HotkeyPassthrough {
         if self
             .command_tx
             .send(HotkeyThreadCommand::ForwardShortcut(shortcut))
+            .is_ok()
+        {
+            unsafe {
+                let _ = PostThreadMessageW(
+                    self.thread_id,
+                    WM_FORWARD_SHORTCUT,
+                    Default::default(),
+                    Default::default(),
+                );
+            }
+        }
+    }
+
+    pub fn forward_guide_shortcut(&self, shortcut: KeyboardShortcut) {
+        if self
+            .command_tx
+            .send(HotkeyThreadCommand::ForwardGuideShortcut(shortcut))
             .is_ok()
         {
             unsafe {
@@ -80,6 +102,40 @@ impl HotkeyPassthrough {
         result_rx
             .recv_timeout(Duration::from_secs(2))
             .map_err(|err| format!("Timed out waiting for hotkey update: {err}"))?
+    }
+
+    pub fn set_guide_cancel_hotkey(&self, enabled: bool) {
+        if self
+            .command_tx
+            .send(HotkeyThreadCommand::SetGuideCancelHotkey(enabled))
+            .is_ok()
+        {
+            unsafe {
+                let _ = PostThreadMessageW(
+                    self.thread_id,
+                    WM_FORWARD_SHORTCUT,
+                    Default::default(),
+                    Default::default(),
+                );
+            }
+        }
+    }
+
+    pub fn set_guide_shortcut_hotkey(&self, shortcut: Option<KeyboardShortcut>) {
+        if self
+            .command_tx
+            .send(HotkeyThreadCommand::SetGuideShortcutHotkey(shortcut))
+            .is_ok()
+        {
+            unsafe {
+                let _ = PostThreadMessageW(
+                    self.thread_id,
+                    WM_FORWARD_SHORTCUT,
+                    Default::default(),
+                    Default::default(),
+                );
+            }
+        }
     }
 }
 
@@ -147,6 +203,32 @@ fn register_palette_hotkey(shortcut: KeyboardShortcut) -> Result<()> {
     }
 }
 
+fn guide_cancel_shortcut() -> KeyboardShortcut {
+    KeyboardShortcut {
+        modifier: HotkeyModifiers::default(),
+        key: Key::Escape,
+    }
+}
+
+fn register_guide_cancel_hotkey() -> Result<()> {
+    unsafe {
+        RegisterHotKey(
+            None,
+            GUIDE_CANCEL_HOTKEY_ID,
+            MOD_NOREPEAT,
+            map_key(Key::Escape).0 as u32,
+        )
+    }
+}
+
+fn register_guide_shortcut_hotkey(shortcut: KeyboardShortcut) -> Result<()> {
+    unsafe {
+        let modifiers = map_modifier(&shortcut.modifier) | MOD_NOREPEAT;
+        let key = map_key(shortcut.key);
+        RegisterHotKey(None, GUIDE_SHORTCUT_HOTKEY_ID, modifiers, key.0 as u32)
+    }
+}
+
 fn hotkey_thread_main(
     tx: Sender<KeyboardShortcut>,
     command_rx: Receiver<HotkeyThreadCommand>,
@@ -161,11 +243,24 @@ fn hotkey_thread_main(
         let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
 
         register_palette_hotkey(activation_shortcut)?;
+        let mut guide_cancel_registered = false;
+        let mut guide_shortcut_registered: Option<KeyboardShortcut> = None;
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).into() {
             if msg.message == WM_HOTKEY {
-                let _id = msg.wParam.0 as i32;
+                let id = msg.wParam.0 as i32;
+                if id == GUIDE_CANCEL_HOTKEY_ID {
+                    let _ = tx.send(guide_cancel_shortcut());
+                    continue;
+                }
+                if id == GUIDE_SHORTCUT_HOTKEY_ID {
+                    if let Some(shortcut) = guide_shortcut_registered {
+                        let _ = tx.send(shortcut);
+                    }
+                    continue;
+                }
+
                 let lp = msg.lParam.0 as u32;
                 let modifiers = lp & 0xFFFF;
                 let vk: VIRTUAL_KEY = VIRTUAL_KEY(((lp >> 16) & 0xFFFF) as u16);
@@ -184,6 +279,33 @@ fn hotkey_thread_main(
                     match command {
                         HotkeyThreadCommand::ForwardShortcut(shortcut) => {
                             let _ = UnregisterHotKey(None, PALETTE_HOTKEY_ID);
+                            if guide_shortcut_registered.is_some() {
+                                let _ = UnregisterHotKey(None, GUIDE_SHORTCUT_HOTKEY_ID);
+                            }
+                            send_shortcut(&shortcut);
+                            thread::sleep(Duration::from_millis(50));
+
+                            if let Err(err) = register_palette_hotkey(activation_shortcut) {
+                                warn!("Failed to re-register palette hotkey: {err:?}");
+                            }
+                            if let Some(guide_shortcut) = guide_shortcut_registered {
+                                if let Err(err) = register_guide_shortcut_hotkey(guide_shortcut) {
+                                    warn!("Failed to re-register guide shortcut hotkey: {err:?}");
+                                    guide_shortcut_registered = None;
+                                }
+                            }
+                        }
+                        HotkeyThreadCommand::ForwardGuideShortcut(shortcut) => {
+                            let _ = UnregisterHotKey(None, PALETTE_HOTKEY_ID);
+                            if guide_cancel_registered {
+                                let _ = UnregisterHotKey(None, GUIDE_CANCEL_HOTKEY_ID);
+                                guide_cancel_registered = false;
+                            }
+                            if guide_shortcut_registered.is_some() {
+                                let _ = UnregisterHotKey(None, GUIDE_SHORTCUT_HOTKEY_ID);
+                                guide_shortcut_registered = None;
+                            }
+
                             send_shortcut(&shortcut);
                             thread::sleep(Duration::from_millis(50));
 
@@ -213,12 +335,46 @@ fn hotkey_thread_main(
                                 }
                             }
                         }
+                        HotkeyThreadCommand::SetGuideCancelHotkey(enabled) => {
+                            if enabled && !guide_cancel_registered {
+                                match register_guide_cancel_hotkey() {
+                                    Ok(()) => guide_cancel_registered = true,
+                                    Err(err) => {
+                                        warn!("Failed to register guide cancel hotkey: {err:?}")
+                                    }
+                                }
+                            } else if !enabled && guide_cancel_registered {
+                                let _ = UnregisterHotKey(None, GUIDE_CANCEL_HOTKEY_ID);
+                                guide_cancel_registered = false;
+                            }
+                        }
+                        HotkeyThreadCommand::SetGuideShortcutHotkey(shortcut) => {
+                            if guide_shortcut_registered.is_some() {
+                                let _ = UnregisterHotKey(None, GUIDE_SHORTCUT_HOTKEY_ID);
+                                guide_shortcut_registered = None;
+                            }
+
+                            if let Some(shortcut) = shortcut {
+                                match register_guide_shortcut_hotkey(shortcut) {
+                                    Ok(()) => guide_shortcut_registered = Some(shortcut),
+                                    Err(err) => {
+                                        warn!("Failed to register guide shortcut hotkey: {err:?}")
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
         let _ = UnregisterHotKey(None, PALETTE_HOTKEY_ID);
+        if guide_shortcut_registered.is_some() {
+            let _ = UnregisterHotKey(None, GUIDE_SHORTCUT_HOTKEY_ID);
+        }
+        if guide_cancel_registered {
+            let _ = UnregisterHotKey(None, GUIDE_CANCEL_HOTKEY_ID);
+        }
         Ok(())
     }
 }

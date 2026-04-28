@@ -9,6 +9,10 @@ impl PlatformWindowToken {
     pub(crate) const fn new(value: isize) -> Self {
         Self(value)
     }
+
+    pub(crate) const fn value(self) -> isize {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,5 +75,17 @@ pub fn foreground_window_token() -> Option<PlatformWindowToken> {
     #[cfg(not(target_os = "windows"))]
     {
         None
+    }
+}
+
+pub fn focus_window_token(token: PlatformWindowToken) {
+    #[cfg(target_os = "windows")]
+    {
+        crate::platform::windows::ui_support::focus_window_token(token);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = token;
     }
 }
