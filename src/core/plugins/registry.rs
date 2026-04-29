@@ -14,7 +14,7 @@ use log::warn;
 #[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
-    capabilities::{ReadTimeTextFn, WriteTextFn},
+    capabilities::{ReadAhkSnapshotsJsonFn, ReadTimeTextFn, WriteTextFn},
     command::PluginApplication,
     runtime::LoadedPlugin,
 };
@@ -58,6 +58,7 @@ impl PluginRegistry {
         current_os: Os,
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
+        read_ahk_snapshots_json: ReadAhkSnapshotsJsonFn,
         #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
     ) -> Self {
         let mut plugins = HashMap::new();
@@ -69,6 +70,7 @@ impl PluginRegistry {
                 current_os,
                 Arc::clone(&write_text),
                 Arc::clone(&read_time_text),
+                Arc::clone(&read_ahk_snapshots_json),
                 #[cfg(debug_assertions)]
                 Arc::clone(&write_performance_log),
             ) {
@@ -101,6 +103,7 @@ impl PluginRegistry {
             current_os,
             typed_text,
             Arc::new(std::sync::Mutex::new(Vec::new())),
+            "[]".to_string(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         )
     }
@@ -111,6 +114,7 @@ impl PluginRegistry {
         current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
         read_time_requests: Arc<std::sync::Mutex<Vec<String>>>,
+        ahk_snapshots_json: String,
         #[cfg(debug_assertions)] performance_logs: Arc<std::sync::Mutex<Vec<String>>>,
     ) -> Self {
         Self::load(
@@ -129,6 +133,7 @@ impl PluginRegistry {
                     .push("read_time".to_string());
                 Ok("6 Apr".to_string())
             }),
+            Arc::new(move || Ok(ahk_snapshots_json.clone())),
             #[cfg(debug_assertions)]
             Arc::new(move || {
                 performance_logs
@@ -266,6 +271,13 @@ mod tests {
             .join("plugin.wat")
     }
 
+    fn ahk_snapshots_json(script_text: &str) -> String {
+        format!(
+            r#"[{{"schema_version":1,"script_path":"C:\\Scripts\\Demo.ahk","script_text":{}}}]"#,
+            serde_json::to_string(script_text).expect("script text should serialize")
+        )
+    }
+
     #[test]
     fn loads_auto_typer_plugin_and_registers_command() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -316,6 +328,7 @@ mod tests {
             Os::Windows,
             Arc::clone(&typed),
             Arc::clone(&read_time_requests),
+            "[]".to_string(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -347,6 +360,7 @@ mod tests {
             Os::Windows,
             typed,
             read_time_requests,
+            "[]".to_string(),
             performance_logs,
         );
         let app = registry
@@ -372,6 +386,7 @@ mod tests {
             Os::Windows,
             typed,
             read_time_requests,
+            "[]".to_string(),
             Arc::clone(&performance_logs),
         );
 
@@ -472,6 +487,7 @@ default_focus_state = "global"
             Os::Windows,
             typed,
             read_time_requests,
+            "[]".to_string(),
             Arc::clone(&performance_logs),
         );
 
@@ -603,6 +619,7 @@ default_focus_state = "global"
             Os::Windows,
             Arc::clone(&typed),
             Arc::clone(&read_time_requests),
+            "[]".to_string(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -616,5 +633,164 @@ default_focus_state = "global"
             .lock()
             .expect("read time lock poisoned")
             .is_empty());
+    }
+
+    #[test]
+    fn ahk_plugin_registers_direct_shortcut_commands_from_snapshots() {
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_host_recorders(
+            real_plugin_manifests(),
+            Os::Windows,
+            typed,
+            read_time_requests,
+            ahk_snapshots_json("^h::MsgBox \"hi\""),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+
+        let app = registry
+            .applications()
+            .iter()
+            .find(|app| app.plugin_id == "ahk_agent")
+            .expect("ahk plugin should load");
+
+        assert_eq!(app.name, "AHK");
+        assert_eq!(app.commands.len(), 1);
+        assert_eq!(app.commands[0].name, "Demo : Ctrl+H");
+        assert_eq!(app.commands[0].shortcut_text.as_deref(), Some("Ctrl+H"));
+        assert!(app.commands[0].cmd.is_some());
+    }
+
+    #[test]
+    fn ahk_plugin_registers_hotstring_commands_from_snapshots() {
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_host_recorders(
+            real_plugin_manifests(),
+            Os::Windows,
+            typed,
+            read_time_requests,
+            ahk_snapshots_json(":?*:up;::⬆️"),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+
+        let app = registry
+            .applications()
+            .iter()
+            .find(|app| app.plugin_id == "ahk_agent")
+            .expect("ahk plugin should load");
+
+        assert_eq!(app.name, "AHK");
+        assert_eq!(app.commands.len(), 1);
+        assert_eq!(app.commands[0].name, "Demo : up; -> ⬆️");
+        assert_eq!(app.commands[0].shortcut_text.as_deref(), Some(""));
+        assert!(app.commands[0].cmd.is_none());
+    }
+
+    #[test]
+    fn ahk_plugin_executes_hotstring_commands_by_typing_trigger_text() {
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_host_recorders(
+            real_plugin_manifests(),
+            Os::Windows,
+            Arc::clone(&typed),
+            read_time_requests,
+            ahk_snapshots_json(":?*:up;::⬆️"),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+
+        let app = registry
+            .applications()
+            .iter()
+            .find(|app| app.plugin_id == "ahk_agent")
+            .expect("ahk plugin should load");
+
+        let command_id = app.commands[0].id.clone();
+        registry
+            .execute("ahk_agent", &command_id)
+            .expect("hotstring command should execute");
+
+        assert_eq!(
+            typed.lock().expect("typed text lock poisoned").as_slice(),
+            ["up;"]
+        );
+    }
+
+    #[test]
+    fn ahk_plugin_loads_realistic_hotstring_script_snapshots() {
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let script_text = concat!(
+            "#NoEnv\n",
+            "#Include \"C:\\Users\\limgr\\Documents\\GitHub\\global_palette\\extensions\\bundled\\plugins\\ahk_agent\\OmniPaletteAgent.ahk\"\n",
+            "SendMode Input\n",
+            "SetWorkingDir %A_ScriptDir%\n",
+            "#SingleInstance Force\n",
+            "Hotstring(\"EndChars\", \" \")\n",
+            ":?*:up;::\u{2B06}\u{FE0F}\n",
+            ":?*:down;::\u{2B07}\u{FE0F}\n",
+            ":?*:?;::\u{2753}\n",
+        );
+        let registry = PluginRegistry::load_with_host_recorders(
+            real_plugin_manifests(),
+            Os::Windows,
+            typed,
+            read_time_requests,
+            ahk_snapshots_json(script_text),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+
+        let app = registry
+            .applications()
+            .iter()
+            .find(|app| app.plugin_id == "ahk_agent")
+            .expect("ahk plugin should load");
+
+        assert_eq!(app.commands.len(), 3);
+        assert_eq!(
+            app.commands
+                .iter()
+                .map(|command| command.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Demo : up; -> \u{2B06}\u{FE0F}",
+                "Demo : down; -> \u{2B07}\u{FE0F}",
+                "Demo : ?; -> \u{2753}",
+            ]
+        );
+    }
+
+    #[test]
+    fn ahk_plugin_loads_large_hotstring_sets() {
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut script_lines = vec![
+            "#Requires AutoHotkey v2.0".to_string(),
+            "#SingleInstance Force".to_string(),
+            "Hotstring(\"EndChars\", \" \")".to_string(),
+        ];
+        for index in 0..200 {
+            script_lines.push(format!(":?*:item{index};::value{index}"));
+        }
+        let script_text = script_lines.join("\n");
+        let registry = PluginRegistry::load_with_host_recorders(
+            real_plugin_manifests(),
+            Os::Windows,
+            typed,
+            read_time_requests,
+            ahk_snapshots_json(&script_text),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+
+        let app = registry
+            .applications()
+            .iter()
+            .find(|app| app.plugin_id == "ahk_agent")
+            .expect("ahk plugin should load");
+
+        assert_eq!(app.commands.len(), 200);
+        assert_eq!(app.commands[0].name, "Demo : item0; -> value0");
+        assert_eq!(app.commands[199].name, "Demo : item199; -> value199");
     }
 }

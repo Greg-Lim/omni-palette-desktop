@@ -1,0 +1,10 @@
+id = "ahk_agent"
+name = "AHK"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wasm"
+permissions = ["read_ahk_snapshots", "write_text"]
+
+[app]
+default_focus_state = "global"
+default_tags = ["ahk"]

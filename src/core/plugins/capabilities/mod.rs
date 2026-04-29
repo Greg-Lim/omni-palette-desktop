@@ -11,12 +11,14 @@ mod write;
 
 pub(crate) type WriteTextFn = Arc<dyn Fn(&str) + Send + Sync>;
 pub(crate) type ReadTimeTextFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
+pub(crate) type ReadAhkSnapshotsJsonFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PluginPermission {
     WriteText,
     ReadTime,
+    ReadAhkSnapshots,
     #[cfg(debug_assertions)]
     WritePerformanceLog,
 }
@@ -25,6 +27,7 @@ pub(crate) enum PluginPermission {
 pub(crate) struct PluginHostContext {
     pub(crate) write_text: WriteTextFn,
     pub(crate) read_time_text: ReadTimeTextFn,
+    pub(crate) read_ahk_snapshots_json: ReadAhkSnapshotsJsonFn,
     #[cfg(debug_assertions)]
     pub(crate) write_performance_log: LogPerformanceSnapshotFn,
 }
@@ -32,6 +35,7 @@ pub(crate) struct PluginHostContext {
 pub(crate) struct PluginStoreState {
     pub(crate) permissions: HashSet<PluginPermission>,
     pub(crate) host_context: PluginHostContext,
+    pub(crate) allow_host_reads: bool,
     pub(crate) allow_host_effects: bool,
 }
 

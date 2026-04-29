@@ -1,8 +1,13 @@
 // register action is for the user to register new actions given the context and action
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use log::{error, info};
+use log::{error, info, warn};
 
 use raw_window_handle::RawWindowHandle;
 
@@ -62,6 +67,7 @@ impl MasterRegistry {
             current_os,
             Arc::new(send_text),
             Arc::new(current_date_text),
+            Arc::new(read_ahk_snapshots_json),
             #[cfg(debug_assertions)]
             process_performance_snapshot_logger(),
         ));
@@ -92,11 +98,18 @@ impl MasterRegistry {
 
         for plugin_app in plugin_registry.applications() {
             let app_id = master_registry.application_registry.len() as u32;
-            let app = Application::from_plugin(plugin_app);
-            master_registry
-                .application_process_name_id
-                .insert(app.application_process_name.clone(), app_id);
-            master_registry.application_registry.insert(app_id, app);
+            match Application::from_plugin(plugin_app) {
+                Ok(app) => {
+                    master_registry
+                        .application_process_name_id
+                        .insert(app.application_process_name.clone(), app_id);
+                    master_registry.application_registry.insert(app_id, app);
+                }
+                Err(err) => error!(
+                    "Failed to register WASM plugin application {}: {}",
+                    plugin_app.plugin_id, err
+                ),
+            }
         }
 
         if fail_on_static_errors && !errors.is_empty() {
@@ -295,38 +308,47 @@ impl Application {
         })
     }
 
-    pub fn from_plugin(plugin: &PluginApplication) -> Application {
-        let application_registry = plugin
-            .commands
-            .iter()
-            .enumerate()
-            .map(|(idx, command)| {
-                (
-                    idx as u32,
-                    Action {
-                        name: command.name.clone(),
-                        shortcut_text: command.shortcut_text.clone(),
-                        execution: ActionExecution::PluginCommand {
-                            plugin_id: plugin.plugin_id.clone(),
-                            command_id: command.id.clone(),
-                        },
-                        focus_state: command.focus_state,
-                        when: ActionContextCondition::default(),
-                        metadata: ActionMetadata {
-                            priority: command.priority,
-                            favorite: command.favorite,
-                            tags: command.tags.clone(),
-                        },
-                    },
-                )
-            })
-            .collect();
+    pub fn from_plugin(plugin: &PluginApplication) -> Result<Application, String> {
+        let mut application_registry = HashMap::new();
 
-        Application {
+        for (idx, command) in plugin.commands.iter().enumerate() {
+            let (execution, derived_shortcut_text) = match &command.cmd {
+                Some(binding) => action_execution_from_binding(binding)?,
+                None => (
+                    ActionExecution::PluginCommand {
+                        plugin_id: plugin.plugin_id.clone(),
+                        command_id: command.id.clone(),
+                    },
+                    "WASM".to_string(),
+                ),
+            };
+            let shortcut_text = command
+                .shortcut_text
+                .clone()
+                .unwrap_or(derived_shortcut_text);
+
+            application_registry.insert(
+                idx as u32,
+                Action {
+                    name: command.name.clone(),
+                    shortcut_text,
+                    execution,
+                    focus_state: command.focus_state,
+                    when: ActionContextCondition::default(),
+                    metadata: ActionMetadata {
+                        priority: command.priority,
+                        favorite: command.favorite,
+                        tags: command.tags.clone(),
+                    },
+                },
+            );
+        }
+
+        Ok(Application {
             application_name: plugin.name.clone(),
             application_process_name: plugin.process_name.clone(),
             application_registry,
-        }
+        })
     }
 }
 
@@ -445,10 +467,103 @@ fn current_date_text() -> Result<String, String> {
     Ok(format!("{} {}", system_time.wDay, month))
 }
 
+fn read_ahk_snapshots_json() -> Result<String, String> {
+    let local_cache_root = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .map(|path| path.join("OmniPalette"));
+    read_ahk_snapshots_json_from_cache_root(local_cache_root.as_deref())
+}
+
+fn read_ahk_snapshots_json_from_cache_root(
+    local_cache_root: Option<&Path>,
+) -> Result<String, String> {
+    let Some(local_cache_root) = local_cache_root else {
+        return Ok("[]".to_string());
+    };
+
+    let snapshots_root = local_cache_root.join("ahk-agent").join("scripts");
+    let entries = match fs::read_dir(&snapshots_root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok("[]".to_string()),
+        Err(err) => {
+            return Err(format!(
+                "Could not read AHK snapshot directory {}: {err}",
+                snapshots_root.display()
+            ))
+        }
+    };
+
+    let mut snapshots = Vec::new();
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(err) => {
+                warn!("Skipping unreadable AHK snapshot entry: {}", err);
+                continue;
+            }
+        };
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+
+        let raw = match fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(err) => {
+                warn!(
+                    "Skipping unreadable AHK snapshot {}: {}",
+                    path.display(),
+                    err
+                );
+                continue;
+            }
+        };
+
+        let raw = raw.trim_start_matches('\u{feff}');
+        let snapshot = match serde_json::from_str::<serde_json::Value>(raw) {
+            Ok(snapshot) if snapshot.is_object() => snapshot,
+            Ok(_) => {
+                warn!(
+                    "Skipping non-object AHK snapshot payload at {}",
+                    path.display()
+                );
+                continue;
+            }
+            Err(err) => {
+                warn!(
+                    "Skipping malformed AHK snapshot {}: {}",
+                    path.display(),
+                    err
+                );
+                continue;
+            }
+        };
+
+        snapshots.push(snapshot);
+    }
+
+    snapshots.sort_by(|left, right| ahk_snapshot_sort_key(left).cmp(ahk_snapshot_sort_key(right)));
+    serde_json::to_string(&snapshots)
+        .map_err(|err| format!("Could not serialize aggregated AHK snapshots: {err}"))
+}
+
+fn ahk_snapshot_sort_key(snapshot: &serde_json::Value) -> &str {
+    snapshot
+        .get("script_path")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::action::InteractionContext;
+    use crate::{
+        config::extension::KeyChord,
+        core::plugins::command::PluginCommand,
+        domain::{
+            action::{CommandPriority, InteractionContext},
+            hotkey::Key,
+        },
+    };
     use std::fs;
 
     #[test]
@@ -478,6 +593,70 @@ mod tests {
         let registry = MasterRegistry::build(&discovery, Os::Windows);
 
         assert!(registry.application_registry.is_empty());
+    }
+
+    #[test]
+    fn reads_only_valid_ahk_snapshot_json_files_from_cache_root() {
+        let cache_root = tempfile::tempdir().expect("temp cache root should be created");
+        let scripts_root = cache_root.path().join("ahk-agent").join("scripts");
+        fs::create_dir_all(&scripts_root).expect("scripts dir should be created");
+        fs::write(
+            scripts_root.join("valid.json"),
+            r#"{"schema_version":1,"script_path":"C:\\Scripts\\Alpha.ahk","script_text":"^h::MsgBox"}"#,
+        )
+        .expect("valid snapshot should be written");
+        fs::write(scripts_root.join("broken.json"), "{")
+            .expect("broken snapshot should be written");
+        fs::write(scripts_root.join("ignored.txt"), "not json")
+            .expect("non-json file should be written");
+
+        let aggregated =
+            read_ahk_snapshots_json_from_cache_root(Some(cache_root.path())).expect("should read");
+        let snapshots: Vec<serde_json::Value> =
+            serde_json::from_str(&aggregated).expect("aggregated JSON should parse");
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(
+            snapshots[0]
+                .get("script_path")
+                .and_then(serde_json::Value::as_str),
+            Some("C:\\Scripts\\Alpha.ahk")
+        );
+    }
+
+    #[test]
+    fn reads_ahk_snapshot_json_files_with_utf8_bom() {
+        let cache_root = tempfile::tempdir().expect("temp cache root should be created");
+        let scripts_root = cache_root.path().join("ahk-agent").join("scripts");
+        fs::create_dir_all(&scripts_root).expect("scripts dir should be created");
+        fs::write(
+            scripts_root.join("bom.json"),
+            b"\xEF\xBB\xBF{\"schema_version\":1,\"script_path\":\"C:\\\\Scripts\\\\Bom.ahk\",\"script_text\":\"^h::MsgBox\"}",
+        )
+        .expect("bom snapshot should be written");
+
+        let aggregated =
+            read_ahk_snapshots_json_from_cache_root(Some(cache_root.path())).expect("should read");
+        let snapshots: Vec<serde_json::Value> =
+            serde_json::from_str(&aggregated).expect("aggregated JSON should parse");
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(
+            snapshots[0]
+                .get("script_path")
+                .and_then(serde_json::Value::as_str),
+            Some("C:\\Scripts\\Bom.ahk")
+        );
+    }
+
+    #[test]
+    fn missing_ahk_snapshot_directory_returns_empty_json_array() {
+        let cache_root = tempfile::tempdir().expect("temp cache root should be created");
+
+        let aggregated =
+            read_ahk_snapshots_json_from_cache_root(Some(cache_root.path())).expect("should read");
+
+        assert_eq!(aggregated, "[]");
     }
 
     fn registry_from_config(content: &str) -> MasterRegistry {
@@ -643,6 +822,86 @@ cmd = { sequence = [
         let err = app_build_error_for_command(r#"cmd = { sequence = [{ key = "Enter" }] }"#);
 
         assert!(err.contains("Enter"));
+    }
+
+    #[test]
+    fn plugin_commands_with_direct_bindings_become_shortcuts() {
+        let plugin = PluginApplication {
+            plugin_id: "ahk_agent".to_string(),
+            name: "AHK".to_string(),
+            process_name: "ahk_agent".to_string(),
+            commands: vec![PluginCommand {
+                id: "script_hotkey".to_string(),
+                name: "Demo : Ctrl+H".to_string(),
+                priority: CommandPriority::Medium,
+                focus_state: FocusState::Global,
+                favorite: false,
+                tags: vec!["ahk".to_string(), "demo".to_string()],
+                shortcut_text: None,
+                cmd: Some(CommandBinding::Shortcut(KeyChord {
+                    mods: vec![Modifier::Ctrl],
+                    key: Key::KeyH,
+                })),
+            }],
+        };
+
+        let app = Application::from_plugin(&plugin).expect("plugin app should build");
+        let action = app
+            .application_registry
+            .values()
+            .next()
+            .expect("plugin action should exist");
+
+        assert_eq!(action.shortcut_text, "Ctrl+H");
+        match action.execution {
+            ActionExecution::Shortcut(shortcut) => {
+                assert!(shortcut.modifier.control);
+                assert_eq!(shortcut.key, Key::KeyH);
+            }
+            ActionExecution::ShortcutSequence(_) | ActionExecution::PluginCommand { .. } => {
+                panic!("direct plugin binding should build a shortcut action")
+            }
+        }
+    }
+
+    #[test]
+    fn plugin_commands_without_direct_bindings_remain_plugin_commands() {
+        let plugin = PluginApplication {
+            plugin_id: "ahk_agent".to_string(),
+            name: "AHK".to_string(),
+            process_name: "ahk_agent".to_string(),
+            commands: vec![PluginCommand {
+                id: "script_hotstring".to_string(),
+                name: "Demo : up; -> ⬆️".to_string(),
+                priority: CommandPriority::Medium,
+                focus_state: FocusState::Global,
+                favorite: false,
+                tags: vec!["ahk".to_string(), "demo".to_string()],
+                shortcut_text: Some(String::new()),
+                cmd: None,
+            }],
+        };
+
+        let app = Application::from_plugin(&plugin).expect("plugin app should build");
+        let action = app
+            .application_registry
+            .values()
+            .next()
+            .expect("plugin action should exist");
+
+        assert_eq!(action.shortcut_text, "");
+        match &action.execution {
+            ActionExecution::PluginCommand {
+                plugin_id,
+                command_id,
+            } => {
+                assert_eq!(plugin_id, "ahk_agent");
+                assert_eq!(command_id, "script_hotstring");
+            }
+            ActionExecution::Shortcut(_) | ActionExecution::ShortcutSequence(_) => {
+                panic!("plugin command without a direct binding should remain a plugin command")
+            }
+        }
     }
 
     fn app_build_error_for_command(command_line: &str) -> String {

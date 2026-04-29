@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 use crate::{
+    config::extension::CommandBinding,
     core::plugins::manifest::PluginAppConfig,
     domain::action::{CommandPriority, FocusState},
 };
@@ -21,7 +22,8 @@ pub struct PluginCommand {
     pub focus_state: FocusState,
     pub favorite: bool,
     pub tags: Vec<String>,
-    pub shortcut_text: String,
+    pub shortcut_text: Option<String>,
+    pub cmd: Option<CommandBinding>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +37,7 @@ pub(crate) struct RawCommandDescriptor {
     #[serde(default)]
     favorite: bool,
     shortcut_text: Option<String>,
+    cmd: Option<CommandBinding>,
 }
 
 impl RawCommandDescriptor {
@@ -56,7 +59,8 @@ impl RawCommandDescriptor {
                 .unwrap_or(FocusState::Global),
             favorite: self.favorite,
             tags,
-            shortcut_text: self.shortcut_text.unwrap_or_else(|| "WASM".to_string()),
+            shortcut_text: self.shortcut_text,
+            cmd: self.cmd,
         }
     }
 }

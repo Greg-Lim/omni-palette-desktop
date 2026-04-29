@@ -6,13 +6,13 @@ pub(crate) fn register(linker: &mut Linker<PluginStoreState>) -> Result<(), Stri
     linker
         .func_wrap(
             "env",
-            "host_read_time_text",
+            "host_read_ahk_snapshots_json",
             |mut caller: Caller<'_, PluginStoreState>, ptr: i32, capacity: i32| -> i32 {
                 if !caller.data().allow_host_reads
                     || !caller
                         .data()
                         .permissions
-                        .contains(&PluginPermission::ReadTime)
+                        .contains(&PluginPermission::ReadAhkSnapshots)
                 {
                     return -1;
                 }
@@ -24,7 +24,7 @@ pub(crate) fn register(linker: &mut Linker<PluginStoreState>) -> Result<(), Stri
                     return -2;
                 };
 
-                let Ok(text) = (caller.data().host_context.read_time_text)() else {
+                let Ok(text) = (caller.data().host_context.read_ahk_snapshots_json)() else {
                     return -3;
                 };
                 let bytes = text.as_bytes();
@@ -43,7 +43,7 @@ pub(crate) fn register(linker: &mut Linker<PluginStoreState>) -> Result<(), Stri
                 bytes.len() as i32
             },
         )
-        .map_err(|err| format!("Could not define host_read_time_text: {err}"))?;
+        .map_err(|err| format!("Could not define host_read_ahk_snapshots_json: {err}"))?;
 
     Ok(())
 }

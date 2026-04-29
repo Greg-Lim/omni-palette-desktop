@@ -6,7 +6,8 @@ use wasmtime::{Config, Engine, Linker, Module, Store};
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
     capabilities::{
-        register_capabilities, PluginHostContext, PluginStoreState, ReadTimeTextFn, WriteTextFn,
+        register_capabilities, PluginHostContext, PluginStoreState, ReadAhkSnapshotsJsonFn,
+        ReadTimeTextFn, WriteTextFn,
     },
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::PluginManifest,
@@ -14,6 +15,7 @@ use crate::core::plugins::{
 use crate::domain::action::Os;
 
 const COMMAND_ID_OFFSET: usize = 4096;
+const PLUGIN_FUEL_BUDGET: u64 = 10_000_000;
 
 pub(crate) struct LoadedPlugin {
     id: String,
@@ -31,6 +33,7 @@ impl LoadedPlugin {
         current_os: Os,
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
+        read_ahk_snapshots_json: ReadAhkSnapshotsJsonFn,
         #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
     ) -> Result<Self, String> {
         let manifest = PluginManifest::load(manifest_path)?;
@@ -63,6 +66,7 @@ impl LoadedPlugin {
             host_context: PluginHostContext {
                 write_text,
                 read_time_text,
+                read_ahk_snapshots_json,
                 #[cfg(debug_assertions)]
                 write_performance_log,
             },
@@ -143,11 +147,12 @@ impl LoadedPlugin {
             PluginStoreState {
                 permissions: self.manifest.permissions.iter().cloned().collect(),
                 host_context: self.host_context.clone(),
+                allow_host_reads: true,
                 allow_host_effects,
             },
         );
         store
-            .set_fuel(1_000_000)
+            .set_fuel(PLUGIN_FUEL_BUDGET)
             .map_err(|err| format!("Could not set plugin fuel: {err}"))?;
 
         let mut linker = Linker::new(&self.engine);
