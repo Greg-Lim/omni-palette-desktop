@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use serde::Deserialize;
 use wasmtime::Linker;
@@ -11,14 +11,15 @@ mod write;
 
 pub(crate) type WriteTextFn = Arc<dyn Fn(&str) + Send + Sync>;
 pub(crate) type ReadTimeTextFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
-pub(crate) type ReadAhkSnapshotsJsonFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
+pub(crate) type ResolvePluginStorageRootFn =
+    Arc<dyn Fn(&str) -> Result<PathBuf, String> + Send + Sync>;
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PluginPermission {
     WriteText,
     ReadTime,
-    ReadAhkSnapshots,
+    ReadStorage,
     #[cfg(debug_assertions)]
     WritePerformanceLog,
 }
@@ -27,12 +28,13 @@ pub(crate) enum PluginPermission {
 pub(crate) struct PluginHostContext {
     pub(crate) write_text: WriteTextFn,
     pub(crate) read_time_text: ReadTimeTextFn,
-    pub(crate) read_ahk_snapshots_json: ReadAhkSnapshotsJsonFn,
+    pub(crate) resolve_storage_root: ResolvePluginStorageRootFn,
     #[cfg(debug_assertions)]
     pub(crate) write_performance_log: LogPerformanceSnapshotFn,
 }
 
 pub(crate) struct PluginStoreState {
+    pub(crate) plugin_id: String,
     pub(crate) permissions: HashSet<PluginPermission>,
     pub(crate) host_context: PluginHostContext,
     pub(crate) allow_host_reads: bool,

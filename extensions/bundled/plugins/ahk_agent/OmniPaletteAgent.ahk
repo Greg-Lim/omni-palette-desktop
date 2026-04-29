@@ -8,7 +8,7 @@ OmniPalette_RegisterForOmniPalette(scriptPath) {
         return
     }
 
-    local snapshotsRoot := localAppData "\OmniPalette\ahk-agent\scripts"
+    local snapshotsRoot := localAppData "\OmniPalette\plugins\ahk_agent\scripts"
     DirCreate(snapshotsRoot)
 
     local scriptText := FileRead(scriptPath, "UTF-8")

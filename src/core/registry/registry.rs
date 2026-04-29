@@ -2,12 +2,11 @@
 
 use std::{
     collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 
-use log::{error, info, warn};
+use log::{error, info};
 
 use raw_window_handle::RawWindowHandle;
 
@@ -67,7 +66,7 @@ impl MasterRegistry {
             current_os,
             Arc::new(send_text),
             Arc::new(current_date_text),
-            Arc::new(read_ahk_snapshots_json),
+            Arc::new(plugin_storage_root),
             #[cfg(debug_assertions)]
             process_performance_snapshot_logger(),
         ));
@@ -467,90 +466,13 @@ fn current_date_text() -> Result<String, String> {
     Ok(format!("{} {}", system_time.wDay, month))
 }
 
-fn read_ahk_snapshots_json() -> Result<String, String> {
-    let local_cache_root = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .map(|path| path.join("OmniPalette"));
-    read_ahk_snapshots_json_from_cache_root(local_cache_root.as_deref())
-}
-
-fn read_ahk_snapshots_json_from_cache_root(
-    local_cache_root: Option<&Path>,
-) -> Result<String, String> {
-    let Some(local_cache_root) = local_cache_root else {
-        return Ok("[]".to_string());
-    };
-
-    let snapshots_root = local_cache_root.join("ahk-agent").join("scripts");
-    let entries = match fs::read_dir(&snapshots_root) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok("[]".to_string()),
-        Err(err) => {
-            return Err(format!(
-                "Could not read AHK snapshot directory {}: {err}",
-                snapshots_root.display()
-            ))
-        }
-    };
-
-    let mut snapshots = Vec::new();
-    for entry in entries {
-        let path = match entry {
-            Ok(entry) => entry.path(),
-            Err(err) => {
-                warn!("Skipping unreadable AHK snapshot entry: {}", err);
-                continue;
-            }
-        };
-        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
-            continue;
-        }
-
-        let raw = match fs::read_to_string(&path) {
-            Ok(raw) => raw,
-            Err(err) => {
-                warn!(
-                    "Skipping unreadable AHK snapshot {}: {}",
-                    path.display(),
-                    err
-                );
-                continue;
-            }
-        };
-
-        let raw = raw.trim_start_matches('\u{feff}');
-        let snapshot = match serde_json::from_str::<serde_json::Value>(raw) {
-            Ok(snapshot) if snapshot.is_object() => snapshot,
-            Ok(_) => {
-                warn!(
-                    "Skipping non-object AHK snapshot payload at {}",
-                    path.display()
-                );
-                continue;
-            }
-            Err(err) => {
-                warn!(
-                    "Skipping malformed AHK snapshot {}: {}",
-                    path.display(),
-                    err
-                );
-                continue;
-            }
-        };
-
-        snapshots.push(snapshot);
-    }
-
-    snapshots.sort_by(|left, right| ahk_snapshot_sort_key(left).cmp(ahk_snapshot_sort_key(right)));
-    serde_json::to_string(&snapshots)
-        .map_err(|err| format!("Could not serialize aggregated AHK snapshots: {err}"))
-}
-
-fn ahk_snapshot_sort_key(snapshot: &serde_json::Value) -> &str {
-    snapshot
-        .get("script_path")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("")
+fn plugin_storage_root(plugin_id: &str) -> Result<PathBuf, String> {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .ok_or_else(|| "LOCALAPPDATA is not available".to_string())?;
+    Ok(PathBuf::from(local_app_data)
+        .join("OmniPalette")
+        .join("plugins")
+        .join(plugin_id))
 }
 
 #[cfg(test)]
@@ -593,70 +515,6 @@ mod tests {
         let registry = MasterRegistry::build(&discovery, Os::Windows);
 
         assert!(registry.application_registry.is_empty());
-    }
-
-    #[test]
-    fn reads_only_valid_ahk_snapshot_json_files_from_cache_root() {
-        let cache_root = tempfile::tempdir().expect("temp cache root should be created");
-        let scripts_root = cache_root.path().join("ahk-agent").join("scripts");
-        fs::create_dir_all(&scripts_root).expect("scripts dir should be created");
-        fs::write(
-            scripts_root.join("valid.json"),
-            r#"{"schema_version":1,"script_path":"C:\\Scripts\\Alpha.ahk","script_text":"^h::MsgBox"}"#,
-        )
-        .expect("valid snapshot should be written");
-        fs::write(scripts_root.join("broken.json"), "{")
-            .expect("broken snapshot should be written");
-        fs::write(scripts_root.join("ignored.txt"), "not json")
-            .expect("non-json file should be written");
-
-        let aggregated =
-            read_ahk_snapshots_json_from_cache_root(Some(cache_root.path())).expect("should read");
-        let snapshots: Vec<serde_json::Value> =
-            serde_json::from_str(&aggregated).expect("aggregated JSON should parse");
-
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(
-            snapshots[0]
-                .get("script_path")
-                .and_then(serde_json::Value::as_str),
-            Some("C:\\Scripts\\Alpha.ahk")
-        );
-    }
-
-    #[test]
-    fn reads_ahk_snapshot_json_files_with_utf8_bom() {
-        let cache_root = tempfile::tempdir().expect("temp cache root should be created");
-        let scripts_root = cache_root.path().join("ahk-agent").join("scripts");
-        fs::create_dir_all(&scripts_root).expect("scripts dir should be created");
-        fs::write(
-            scripts_root.join("bom.json"),
-            b"\xEF\xBB\xBF{\"schema_version\":1,\"script_path\":\"C:\\\\Scripts\\\\Bom.ahk\",\"script_text\":\"^h::MsgBox\"}",
-        )
-        .expect("bom snapshot should be written");
-
-        let aggregated =
-            read_ahk_snapshots_json_from_cache_root(Some(cache_root.path())).expect("should read");
-        let snapshots: Vec<serde_json::Value> =
-            serde_json::from_str(&aggregated).expect("aggregated JSON should parse");
-
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(
-            snapshots[0]
-                .get("script_path")
-                .and_then(serde_json::Value::as_str),
-            Some("C:\\Scripts\\Bom.ahk")
-        );
-    }
-
-    #[test]
-    fn missing_ahk_snapshot_directory_returns_empty_json_array() {
-        let cache_root = tempfile::tempdir().expect("temp cache root should be created");
-
-        let aggregated =
-            read_ahk_snapshots_json_from_cache_root(Some(cache_root.path())).expect("should read");
-
-        assert_eq!(aggregated, "[]");
     }
 
     fn registry_from_config(content: &str) -> MasterRegistry {

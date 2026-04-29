@@ -6,8 +6,8 @@ use wasmtime::{Config, Engine, Linker, Module, Store};
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
     capabilities::{
-        register_capabilities, PluginHostContext, PluginStoreState, ReadAhkSnapshotsJsonFn,
-        ReadTimeTextFn, WriteTextFn,
+        register_capabilities, PluginHostContext, PluginStoreState, ReadTimeTextFn,
+        ResolvePluginStorageRootFn, WriteTextFn,
     },
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::PluginManifest,
@@ -33,7 +33,7 @@ impl LoadedPlugin {
         current_os: Os,
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
-        read_ahk_snapshots_json: ReadAhkSnapshotsJsonFn,
+        resolve_storage_root: ResolvePluginStorageRootFn,
         #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
     ) -> Result<Self, String> {
         let manifest = PluginManifest::load(manifest_path)?;
@@ -66,7 +66,7 @@ impl LoadedPlugin {
             host_context: PluginHostContext {
                 write_text,
                 read_time_text,
-                read_ahk_snapshots_json,
+                resolve_storage_root,
                 #[cfg(debug_assertions)]
                 write_performance_log,
             },
@@ -145,6 +145,7 @@ impl LoadedPlugin {
         let mut store = Store::new(
             &self.engine,
             PluginStoreState {
+                plugin_id: self.id.clone(),
                 permissions: self.manifest.permissions.iter().cloned().collect(),
                 host_context: self.host_context.clone(),
                 allow_host_reads: true,

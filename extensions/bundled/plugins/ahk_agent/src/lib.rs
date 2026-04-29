@@ -6,6 +6,8 @@ const INITIAL_HOST_BUFFER_CAPACITY: usize = 16 * 1024;
 const MAX_HOST_BUFFER_CAPACITY: usize = 4 * 1024 * 1024;
 const HOST_BUFFER_TOO_SMALL_CODE: i32 = -4;
 const PREVIEW_CHAR_LIMIT: usize = 24;
+const SNAPSHOT_DIRECTORY_PREFIX: &str = "scripts/";
+const SNAPSHOT_EXTENSION: &str = ".json";
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -14,12 +16,24 @@ static RESPONSE_BUFFER: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 #[cfg(target_arch = "wasm32")]
 mod host {
     unsafe extern "C" {
-        fn host_read_ahk_snapshots_json(ptr: i32, capacity: i32) -> i32;
+        fn host_list_storage_entries_json(ptr: i32, capacity: i32) -> i32;
+        fn host_read_storage_text(path_ptr: i32, path_len: i32, ptr: i32, capacity: i32) -> i32;
         fn host_write_text(ptr: i32, len: i32) -> i32;
     }
 
-    pub(crate) fn read_ahk_snapshots_json(buffer: &mut [u8]) -> i32 {
-        unsafe { host_read_ahk_snapshots_json(buffer.as_mut_ptr() as i32, buffer.len() as i32) }
+    pub(crate) fn list_storage_entries_json(buffer: &mut [u8]) -> i32 {
+        unsafe { host_list_storage_entries_json(buffer.as_mut_ptr() as i32, buffer.len() as i32) }
+    }
+
+    pub(crate) fn read_storage_text(path: &str, buffer: &mut [u8]) -> i32 {
+        unsafe {
+            host_read_storage_text(
+                path.as_ptr() as i32,
+                path.len() as i32,
+                buffer.as_mut_ptr() as i32,
+                buffer.len() as i32,
+            )
+        }
     }
 
     pub(crate) fn write_text(text: &str) -> i32 {
@@ -29,7 +43,11 @@ mod host {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod host {
-    pub(crate) fn read_ahk_snapshots_json(_buffer: &mut [u8]) -> i32 {
+    pub(crate) fn list_storage_entries_json(_buffer: &mut [u8]) -> i32 {
+        -100
+    }
+
+    pub(crate) fn read_storage_text(_path: &str, _buffer: &mut [u8]) -> i32 {
         -100
     }
 
@@ -38,7 +56,7 @@ mod host {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 struct SnapshotRecord {
     script_path: String,
     script_text: String,
@@ -118,15 +136,8 @@ fn build_commands_json_from_host() -> Result<String, String> {
 }
 
 fn build_registered_commands_from_host() -> Result<Vec<RegisteredCommand>, String> {
-    let snapshots_json = read_snapshots_json_from_host()?;
-    build_registered_commands_from_json(&snapshots_json)
-}
-
-fn build_registered_commands_from_json(
-    snapshots_json: &str,
-) -> Result<Vec<RegisteredCommand>, String> {
-    let snapshots: Vec<SnapshotRecord> = serde_json::from_str(snapshots_json)
-        .map_err(|err| format!("Could not parse snapshots JSON: {err}"))?;
+    let storage_entries = read_storage_entries_from_host()?;
+    let snapshots = load_snapshot_records(&storage_entries, read_storage_text_from_host);
     Ok(build_registered_commands(&snapshots))
 }
 
@@ -173,6 +184,57 @@ fn build_registered_commands(snapshots: &[SnapshotRecord]) -> Vec<RegisteredComm
     }
 
     commands
+}
+
+fn load_snapshot_records(
+    storage_entries: &[String],
+    mut reader: impl FnMut(&str) -> Result<String, String>,
+) -> Vec<SnapshotRecord> {
+    let mut snapshots = Vec::new();
+
+    for storage_entry in storage_entries {
+        if !is_snapshot_storage_entry(storage_entry) {
+            continue;
+        }
+
+        let raw = match reader(storage_entry) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+        let raw = raw.trim_start_matches('\u{feff}');
+        let snapshot = match serde_json::from_str::<SnapshotRecord>(raw) {
+            Ok(snapshot) => snapshot,
+            Err(_) => continue,
+        };
+        snapshots.push(snapshot);
+    }
+
+    snapshots.sort_by(|left, right| left.script_path.cmp(&right.script_path));
+    snapshots
+}
+
+fn is_snapshot_storage_entry(storage_entry: &str) -> bool {
+    storage_entry.starts_with(SNAPSHOT_DIRECTORY_PREFIX) && storage_entry.ends_with(SNAPSHOT_EXTENSION)
+}
+
+fn read_storage_entries_from_host() -> Result<Vec<String>, String> {
+    let json = read_host_text_with_retry(
+        "host_list_storage_entries_json",
+        INITIAL_HOST_BUFFER_CAPACITY,
+        MAX_HOST_BUFFER_CAPACITY,
+        host::list_storage_entries_json,
+    )?;
+    serde_json::from_str(&json)
+        .map_err(|err| format!("Could not parse storage entry JSON: {err}"))
+}
+
+fn read_storage_text_from_host(path: &str) -> Result<String, String> {
+    read_host_text_with_retry(
+        "host_read_storage_text",
+        INITIAL_HOST_BUFFER_CAPACITY,
+        MAX_HOST_BUFFER_CAPACITY,
+        |buffer| host::read_storage_text(path, buffer),
+    )
 }
 
 fn execute_registered_command(
@@ -531,15 +593,6 @@ fn fnv1a_update(mut hash: u64, bytes: &[u8]) -> u64 {
     hash
 }
 
-fn read_snapshots_json_from_host() -> Result<String, String> {
-    read_host_text_with_retry(
-        "host_read_ahk_snapshots_json",
-        INITIAL_HOST_BUFFER_CAPACITY,
-        MAX_HOST_BUFFER_CAPACITY,
-        host::read_ahk_snapshots_json,
-    )
-}
-
 fn write_text_to_host(text: &str) -> Result<(), String> {
     let exit_code = host::write_text(text);
     if exit_code == 0 {
@@ -615,11 +668,17 @@ fn read_host_text_with_retry(
 mod tests {
     use super::*;
 
-    fn snapshot_json(script_text: &str) -> String {
-        format!(
-            r#"[{{"schema_version":1,"script_path":"C:\\Scripts\\Demo.ahk","script_text":{}}}]"#,
-            serde_json::to_string(script_text).expect("script text should serialize")
-        )
+    const UP_ARROW: &str = "\u{2B06}\u{FE0F}";
+    const DOWN_ARROW: &str = "\u{2B07}\u{FE0F}";
+    const QUESTION_MARK: &str = "\u{2753}";
+    const EXCLAMATION_MARK: &str = "\u{2757}";
+    const POUND_SIGN: &str = "\u{00A3}";
+
+    fn snapshot_record(script_text: &str) -> SnapshotRecord {
+        SnapshotRecord {
+            script_path: "C:\\Scripts\\Demo.ahk".to_string(),
+            script_text: script_text.to_string(),
+        }
     }
 
     #[test]
@@ -647,7 +706,7 @@ mod tests {
 
     #[test]
     fn ignores_hotstrings_when_parsing_hotkeys() {
-        let hotkeys = parse_hotkeys(":?*:up;::⬆️\n^h::MsgBox \"hi\"");
+        let hotkeys = parse_hotkeys(&format!(":?*:up;::{UP_ARROW}\n^h::MsgBox \"hi\""));
 
         assert_eq!(hotkeys.len(), 1);
         assert_eq!(hotkeys[0].normalized_text, "Ctrl+H");
@@ -655,18 +714,18 @@ mod tests {
 
     #[test]
     fn parses_one_line_hotstrings_with_unicode_replacements() {
-        let hotstrings = parse_hotstrings(":?*:up;::⬆️\n:?*C:gbp;::£");
+        let hotstrings = parse_hotstrings(&format!(":?*:up;::{UP_ARROW}\n:?*C:gbp;::{POUND_SIGN}"));
 
         assert_eq!(
             hotstrings,
             vec![
                 ParsedHotstring {
                     trigger: "up;".to_string(),
-                    replacement: "⬆️".to_string(),
+                    replacement: UP_ARROW.to_string(),
                 },
                 ParsedHotstring {
                     trigger: "gbp;".to_string(),
-                    replacement: "£".to_string(),
+                    replacement: POUND_SIGN.to_string(),
                 },
             ]
         );
@@ -674,7 +733,9 @@ mod tests {
 
     #[test]
     fn parses_punctuation_hotstring_triggers() {
-        let hotstrings = parse_hotstrings(":?*:?;::❓\n:?*:!;::❗");
+        let hotstrings = parse_hotstrings(&format!(
+            ":?*:?;::{QUESTION_MARK}\n:?*:!;::{EXCLAMATION_MARK}"
+        ));
 
         assert_eq!(hotstrings.len(), 2);
         assert_eq!(hotstrings[0].trigger, "?;");
@@ -683,7 +744,7 @@ mod tests {
 
     #[test]
     fn skips_hotstrings_without_immediate_expansion() {
-        let hotstrings = parse_hotstrings(":?:todo;::[](#todo)\n:?*:up;::⬆️");
+        let hotstrings = parse_hotstrings(&format!(":?:todo;::[](#todo)\n:?*:up;::{UP_ARROW}"));
 
         assert_eq!(hotstrings.len(), 1);
         assert_eq!(hotstrings[0].trigger, "up;");
@@ -691,9 +752,9 @@ mod tests {
 
     #[test]
     fn skips_body_style_hotstrings_and_function_created_hotstrings() {
-        let hotstrings = parse_hotstrings(
-            "Hotstring(\"EndChars\", \" \")\n:?*:today;::\n    SendText FormatTime(A_Now, \"dd MMM\")\nreturn\n:?*:up;::⬆️",
-        );
+        let hotstrings = parse_hotstrings(&format!(
+            "Hotstring(\"EndChars\", \" \")\n:?*:today;::\n    SendText FormatTime(A_Now, \"dd MMM\")\nreturn\n:?*:up;::{UP_ARROW}"
+        ));
 
         assert_eq!(hotstrings.len(), 1);
         assert_eq!(hotstrings[0].trigger, "up;");
@@ -710,17 +771,42 @@ mod tests {
     }
 
     #[test]
+    fn loads_snapshot_records_from_storage_entries() {
+        let storage_entries = vec![
+            "scripts/demo.json".to_string(),
+            "notes.txt".to_string(),
+            "scripts/broken.json".to_string(),
+            "scripts/bom.json".to_string(),
+        ];
+        let snapshots = load_snapshot_records(&storage_entries, |path| match path {
+            "scripts/demo.json" => Ok(
+                r#"{"schema_version":1,"script_path":"C:\\Scripts\\Demo.ahk","script_text":"^h::MsgBox \"hi\""}"#
+                    .to_string(),
+            ),
+            "scripts/broken.json" => Ok("{".to_string()),
+            "scripts/bom.json" => Ok(
+                "\u{feff}{\"schema_version\":1,\"script_path\":\"C:\\\\Scripts\\\\Bom.ahk\",\"script_text\":\":?*:up;::\\u2B06\\uFE0F\"}"
+                    .to_string(),
+            ),
+            _ => Err("missing".to_string()),
+        });
+
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].script_path, "C:\\Scripts\\Bom.ahk");
+        assert_eq!(snapshots[1].script_path, "C:\\Scripts\\Demo.ahk");
+    }
+
+    #[test]
     fn builds_hotkey_and_hotstring_commands_from_snapshots() {
-        let commands =
-            build_registered_commands_from_json(&snapshot_json("^h::MsgBox \"hi\"\n:?*:up;::⬆️"))
-                .expect("commands should build");
+        let snapshots = vec![snapshot_record(&format!("^h::MsgBox \"hi\"\n:?*:up;::{UP_ARROW}"))];
+        let commands = build_registered_commands(&snapshots);
 
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].descriptor.name, "Demo : Ctrl+H");
         assert_eq!(commands[0].descriptor.shortcut_text, "Ctrl+H");
         assert!(commands[0].descriptor.cmd.is_some());
         assert!(commands[0].trigger_text.is_none());
-        assert_eq!(commands[1].descriptor.name, "Demo : up; -> ⬆️");
+        assert_eq!(commands[1].descriptor.name, format!("Demo : up; -> {UP_ARROW}"));
         assert_eq!(commands[1].descriptor.shortcut_text, "");
         assert!(commands[1].descriptor.cmd.is_none());
         assert_eq!(commands[1].trigger_text.as_deref(), Some("up;"));
@@ -736,8 +822,7 @@ mod tests {
 
     #[test]
     fn executes_hotstring_commands_by_typing_trigger_text() {
-        let commands = build_registered_commands_from_json(&snapshot_json(":?*:up;::⬆️"))
-            .expect("commands should build");
+        let commands = build_registered_commands(&[snapshot_record(&format!(":?*:up;::{UP_ARROW}"))]);
         let hotstring_id = commands[0].descriptor.id.clone();
         let mut typed = Vec::new();
 
@@ -752,8 +837,7 @@ mod tests {
 
     #[test]
     fn refuses_to_execute_shortcut_backed_commands_through_plugin_path() {
-        let commands = build_registered_commands_from_json(&snapshot_json("^h::MsgBox \"hi\""))
-            .expect("commands should build");
+        let commands = build_registered_commands(&[snapshot_record("^h::MsgBox \"hi\"")]);
         let shortcut_id = commands[0].descriptor.id.clone();
         let err = execute_registered_command(&commands, &shortcut_id, |_| Ok(()))
             .expect_err("shortcut-backed command should not execute through plugin path");
@@ -763,8 +847,7 @@ mod tests {
 
     #[test]
     fn serializes_hotstring_command_without_cmd_binding() {
-        let commands = build_registered_commands_from_json(&snapshot_json(":?*:up;::⬆️"))
-            .expect("commands should build");
+        let commands = build_registered_commands(&[snapshot_record(&format!(":?*:up;::{UP_ARROW}"))]);
         let json =
             serde_json::to_string(&commands[0].descriptor).expect("descriptor should serialize");
 
@@ -774,19 +857,21 @@ mod tests {
 
     #[test]
     fn builds_commands_from_realistic_hotstring_script() {
-        let script_text = concat!(
-            "#NoEnv\n",
-            "#Include \"C:\\Users\\limgr\\Documents\\GitHub\\global_palette\\extensions\\bundled\\plugins\\ahk_agent\\OmniPaletteAgent.ahk\"\n",
-            "SendMode Input\n",
-            "SetWorkingDir %A_ScriptDir%\n",
-            "#SingleInstance Force\n",
-            "Hotstring(\"EndChars\", \" \")\n",
-            ":?*:up;::\u{2B06}\u{FE0F}\n",
-            ":?*:down;::\u{2B07}\u{FE0F}\n",
-            ":?*:?;::\u{2753}\n",
+        let script_text = format!(
+            concat!(
+                "#NoEnv\n",
+                "#Include \"C:\\Users\\limgr\\Documents\\GitHub\\global_palette\\extensions\\bundled\\plugins\\ahk_agent\\OmniPaletteAgent.ahk\"\n",
+                "SendMode Input\n",
+                "SetWorkingDir %A_ScriptDir%\n",
+                "#SingleInstance Force\n",
+                "Hotstring(\"EndChars\", \" \")\n",
+                ":?*:up;::{}\n",
+                ":?*:down;::{}\n",
+                ":?*:?;::{}\n",
+            ),
+            UP_ARROW, DOWN_ARROW, QUESTION_MARK,
         );
-        let commands =
-            build_registered_commands_from_json(&snapshot_json(script_text)).expect("commands should build");
+        let commands = build_registered_commands(&[snapshot_record(&script_text)]);
 
         assert_eq!(commands.len(), 3);
         assert_eq!(
@@ -795,9 +880,25 @@ mod tests {
                 .map(|command| command.descriptor.name.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                "Demo : up; -> \u{2B06}\u{FE0F}",
-                "Demo : down; -> \u{2B07}\u{FE0F}",
-                "Demo : ?; -> \u{2753}",
+                format!("Demo : up; -> {UP_ARROW}").as_str(),
+                format!("Demo : down; -> {DOWN_ARROW}").as_str(),
+                format!("Demo : ?; -> {QUESTION_MARK}").as_str(),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_storage_entry_json_from_host() {
+        let json = serde_json::to_string(&vec!["scripts/alpha.json", "scripts/beta.json"])
+            .expect("json should serialize");
+        let entries: Vec<String> =
+            serde_json::from_str(&json).expect("json should deserialize into entries");
+
+        assert_eq!(
+            entries,
+            vec![
+                "scripts/alpha.json".to_string(),
+                "scripts/beta.json".to_string(),
             ]
         );
     }

@@ -11,10 +11,17 @@ use std::{
 
 use log::warn;
 
+#[cfg(test)]
+use std::{
+    fs,
+    path::Path,
+    sync::atomic::{AtomicUsize, Ordering as AtomicOrdering},
+};
+
 #[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
-    capabilities::{ReadAhkSnapshotsJsonFn, ReadTimeTextFn, WriteTextFn},
+    capabilities::{ReadTimeTextFn, ResolvePluginStorageRootFn, WriteTextFn},
     command::PluginApplication,
     runtime::LoadedPlugin,
 };
@@ -58,7 +65,7 @@ impl PluginRegistry {
         current_os: Os,
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
-        read_ahk_snapshots_json: ReadAhkSnapshotsJsonFn,
+        resolve_storage_root: ResolvePluginStorageRootFn,
         #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
     ) -> Self {
         let mut plugins = HashMap::new();
@@ -70,7 +77,7 @@ impl PluginRegistry {
                 current_os,
                 Arc::clone(&write_text),
                 Arc::clone(&read_time_text),
-                Arc::clone(&read_ahk_snapshots_json),
+                Arc::clone(&resolve_storage_root),
                 #[cfg(debug_assertions)]
                 Arc::clone(&write_performance_log),
             ) {
@@ -103,7 +110,7 @@ impl PluginRegistry {
             current_os,
             typed_text,
             Arc::new(std::sync::Mutex::new(Vec::new())),
-            "[]".to_string(),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         )
     }
@@ -114,9 +121,10 @@ impl PluginRegistry {
         current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
         read_time_requests: Arc<std::sync::Mutex<Vec<String>>>,
-        ahk_snapshots_json: String,
+        storage_files: Vec<(String, String, String)>,
         #[cfg(debug_assertions)] performance_logs: Arc<std::sync::Mutex<Vec<String>>>,
     ) -> Self {
+        let storage_base_root = prepare_test_storage_root(&storage_files);
         Self::load(
             manifest_paths,
             current_os,
@@ -133,7 +141,7 @@ impl PluginRegistry {
                     .push("read_time".to_string());
                 Ok("6 Apr".to_string())
             }),
-            Arc::new(move || Ok(ahk_snapshots_json.clone())),
+            Arc::new(move |plugin_id| Ok(storage_base_root.join(plugin_id))),
             #[cfg(debug_assertions)]
             Arc::new(move || {
                 performance_logs
@@ -245,9 +253,36 @@ fn spawn_plugin_executor(
 }
 
 #[cfg(test)]
+static TEST_STORAGE_ROOT_ID: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+fn prepare_test_storage_root(storage_files: &[(String, String, String)]) -> PathBuf {
+    let root = Path::new("target")
+        .join("plugin-storage-tests")
+        .join(format!(
+            "case-{}",
+            TEST_STORAGE_ROOT_ID.fetch_add(1, AtomicOrdering::Relaxed)
+        ));
+    if root.exists() {
+        fs::remove_dir_all(&root).expect("test storage root should reset");
+    }
+    fs::create_dir_all(&root).expect("test storage root should be created");
+
+    for (plugin_id, relative_path, content) in storage_files {
+        let file_path = root.join(plugin_id).join(relative_path);
+        let parent = file_path
+            .parent()
+            .expect("storage file should have a parent directory");
+        fs::create_dir_all(parent).expect("storage parent dir should be created");
+        fs::write(&file_path, content).expect("storage file should be written");
+    }
+
+    root
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::Path};
 
     use crate::core::extensions::discovery::ExtensionDiscovery;
 
@@ -271,11 +306,19 @@ mod tests {
             .join("plugin.wat")
     }
 
-    fn ahk_snapshots_json(script_text: &str) -> String {
+    fn ahk_snapshot_file_json(script_text: &str) -> String {
         format!(
-            r#"[{{"schema_version":1,"script_path":"C:\\Scripts\\Demo.ahk","script_text":{}}}]"#,
+            r#"{{"schema_version":1,"script_path":"C:\\Scripts\\Demo.ahk","script_text":{}}}"#,
             serde_json::to_string(script_text).expect("script text should serialize")
         )
+    }
+
+    fn ahk_storage_files(script_text: &str) -> Vec<(String, String, String)> {
+        vec![(
+            "ahk_agent".to_string(),
+            "scripts/demo.json".to_string(),
+            ahk_snapshot_file_json(script_text),
+        )]
     }
 
     #[test]
@@ -328,7 +371,7 @@ mod tests {
             Os::Windows,
             Arc::clone(&typed),
             Arc::clone(&read_time_requests),
-            "[]".to_string(),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -360,7 +403,7 @@ mod tests {
             Os::Windows,
             typed,
             read_time_requests,
-            "[]".to_string(),
+            Vec::new(),
             performance_logs,
         );
         let app = registry
@@ -386,7 +429,7 @@ mod tests {
             Os::Windows,
             typed,
             read_time_requests,
-            "[]".to_string(),
+            Vec::new(),
             Arc::clone(&performance_logs),
         );
 
@@ -487,7 +530,7 @@ default_focus_state = "global"
             Os::Windows,
             typed,
             read_time_requests,
-            "[]".to_string(),
+            Vec::new(),
             Arc::clone(&performance_logs),
         );
 
@@ -619,7 +662,7 @@ default_focus_state = "global"
             Os::Windows,
             Arc::clone(&typed),
             Arc::clone(&read_time_requests),
-            "[]".to_string(),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -644,7 +687,7 @@ default_focus_state = "global"
             Os::Windows,
             typed,
             read_time_requests,
-            ahk_snapshots_json("^h::MsgBox \"hi\""),
+            ahk_storage_files("^h::MsgBox \"hi\""),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -670,7 +713,7 @@ default_focus_state = "global"
             Os::Windows,
             typed,
             read_time_requests,
-            ahk_snapshots_json(":?*:up;::⬆️"),
+            ahk_storage_files(":?*:up;::\u{2B06}\u{FE0F}"),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -696,7 +739,7 @@ default_focus_state = "global"
             Os::Windows,
             Arc::clone(&typed),
             read_time_requests,
-            ahk_snapshots_json(":?*:up;::⬆️"),
+            ahk_storage_files(":?*:up;::\u{2B06}\u{FE0F}"),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -737,7 +780,7 @@ default_focus_state = "global"
             Os::Windows,
             typed,
             read_time_requests,
-            ahk_snapshots_json(script_text),
+            ahk_storage_files(script_text),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -779,7 +822,7 @@ default_focus_state = "global"
             Os::Windows,
             typed,
             read_time_requests,
-            ahk_snapshots_json(&script_text),
+            ahk_storage_files(&script_text),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
