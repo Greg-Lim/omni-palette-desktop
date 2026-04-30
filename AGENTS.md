@@ -1,106 +1,115 @@
-# Omni Palette — AGENTS.md
+# Omni Palette - AGENTS.md
 
 ## Project Overview
 
-**Omni Palette** is a Windows application launcher / command palette (think VS Code's Ctrl+Shift+P, but system-wide). It listens for a global hotkey (Ctrl+Shift+P), shows a floating egui UI, and lets users search & execute actions defined in TOML extension files.
+Omni Palette is a Windows system-wide command palette. It listens for a global hotkey, shows an egui UI, searches available commands, and executes static shortcut actions or WASM plugin actions.
 
 ## Tech Stack
 
-- **Language:** Rust (edition 2021)
-- **UI:** [egui](https://github.com/emilk/egui) + [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) v0.33
-- **Platform:** Windows-only currently (via the `windows` crate v0.60)
-- **Window handle abstraction:** `raw-window-handle` v0.6
-- **Config parsing:** `toml` + `serde`
-- **Logging:** `log` + `env_logger`
-- **Enum helpers:** `strum` / `strum_macros`
+- Language: Rust 2021
+- UI: egui and eframe `0.34.1`
+- Platform: Windows-only currently, using the `windows` crate `0.60`
+- Plugins: wasmtime-hosted WASM with explicit sandbox permissions
+- Config and data: TOML plus serde, with JSON used for plugin host contracts
+- Logging: `log` plus `env_logger`
+- Packaging: `xtask` builds extension packages and catalog metadata
 
 ## Architecture
 
-```
+```text
 src/
-├── main.rs                    # Entry point: logger, hotkey listener, registry load, UI launch
-├── core/
-│   ├── context.rs             # (empty placeholder)
-│   ├── search.rs              # Fuzzy/sequential search scoring
-│   ├── extensions/
-│   │   └── extensions.rs      # Loads .toml extension configs from ./extensions/ folder
-│   └── registry/
-│       └── registry.rs        # MasterRegistry, Application, UnitAction
-├── models/
-│   ├── action.rs              # Action, FocusState, ContextRoot, type aliases
-│   ├── config.rs              # Serde structs for TOML config (Config, App, KeyChord, etc.)
-│   ├── hotkey.rs              # Key enum, HotkeyModifiers, KeyboardShortcut
-│   └── registry.rs            # (TBD)
-├── platform/
-│   ├── platform_interface.rs  # get_all_context(), RawWindowHandleExt trait
-│   ├── hotkey_actions.rs      # start_hotkey_listener(), returns (handle, Receiver<HotkeyEvent>)
-│   └── windows/
-│       ├── context/           # get_all_windows(), get_hwnd_from_raw(), get_app_process_name()
-│       ├── mapper/            # Hotkey mapping
-│       ├── receiver/          # Hotkey receiver
-│       ├── sender/            # Hotkey sender (e.g. send_ctrl_v)
-│       └── shortcuts/         # Windows shortcut registration
-└── ui/
-    ├── ui_main.rs             # CommandPaletteApp, App (eframe::App), ui_main()
-    └── combo_box.rs           # (UI widget)
+  main.rs                       # entry point, runtime bridge, extension reload/install events
+  config/
+    extension.rs                # static extension, package, implementation, and settings schemas
+    ignore.rs                   # ignored foreground apps for hotkey passthrough
+    runtime.rs                  # user runtime config
+  core/
+    command_filter.rs           # command search/filter orchestration
+    search.rs                   # fuzzy scoring
+    extensions/                 # discovery, install state, catalog, package, settings
+    plugins/                    # WASM manifest loading, runtime, commands, host capabilities
+    registry/registry.rs        # MasterRegistry, Application, UnitAction
+  domain/
+    action.rs                   # Action, ActionExecution, FocusState, CommandPriority
+    hotkey.rs                   # Key, modifiers, shortcuts, sequences
+  platform/
+    hotkey_actions.rs           # platform hotkey facade
+    platform_interface.rs       # context lookup facade
+    windows/                    # context, receiver, sender, key mapping, UI support
+  ui/
+    app.rs                      # CommandPaletteApp, UiEvent, UiSignal, tray integration
+    palette.rs                  # command palette UI
+    guide.rs                    # guide mode UI
+    settings.rs                 # settings window, extensions, marketplace, extension settings
+    components/                 # shared widgets such as the sliding toggle switch
 ```
+
+## Runtime Flow
+
+1. Startup loads runtime config, extension discovery, bundled defaults, installed extensions, WASM plugins, and ignored app config.
+2. The Windows hotkey receiver registers the activation shortcut and forwards events to the runtime bridge.
+3. The runtime bridge refreshes window context, queries `MasterRegistry`, and sends visible commands to the UI.
+4. The UI filters commands as the user types and sends execution events back to the runtime bridge.
+5. Shortcut-backed actions focus the target window and send keys. Plugin commands call the owning WASM plugin.
+
+The egui event loop must stay on the main thread.
 
 ## Extension System
 
-Extensions live in `./extensions/*.toml`. Each file defines an app and its actions:
+Omni Palette supports three active extension shapes:
 
-```toml
-version = 1
+- Bundled static TOML files under `extensions/bundled/static/`
+- Bundled WASM plugins under `extensions/bundled/plugins/<plugin-id>/plugin.toml`
+- Downloaded static registry packages installed under `%APPDATA%\OmniPalette\extensions`
 
-[app]
-id = "chrome"
-name = "Chrome"
-default_focus_state = "focused"
+Standalone static TOML files use `version = 2`. Registry packages use `manifest.toml` plus `actions.toml` with `schema_version = 1`, and platform implementations with `version = 3`.
 
-[app.application_os_name]
-windows = "chrome.exe"
-macos = "com.google.Chrome"
+Static extension settings use `[[setting_categories]]` and `[[settings]]` with `category`. WASM plugins can declare `[settings] source = "wasm"` and export `settings_schema_json()`.
 
-[actions.new_tab]
-name = "New tab"
-focus_state = "focused"
-priority = "high"
-cmd.windows = { mods = ["ctrl"], key = "t" }
-cmd.macos = { mods = ["cmd"], key = "t" }
+Plugin permissions are intentionally narrow. Current permissions include `write_text`, `read_time`, `read_storage`, `read_settings`, and debug-only `write_performance_log`.
+
+## AHK Plugin
+
+The bundled `ahk_agent` plugin is implemented in `extensions/bundled/plugins/ahk_agent/`. It discovers instrumented AutoHotkey v2 scripts via `OmniPaletteAgent.ahk`.
+
+The helper writes per-script JSON snapshots into:
+
+```text
+%LOCALAPPDATA%\OmniPalette\plugins\ahk_agent\scripts
 ```
 
-`FocusState` controls when an action appears:
-- `focused` — only when that app is the foreground window
-- `background` — when that app is open (any window)
-- `global` — always
+The plugin reads those snapshots through generic plugin storage, parses plain global hotkeys and immediate one-line hotstrings, and exposes script and command toggles through the generic extension settings API.
 
-## Key Data Flow
+## Settings and Install State
 
-1. **Startup:** Load extensions → build `MasterRegistry` → call `get_all_context()` (enumerates open windows)
-2. **Hotkey (Ctrl+Shift+P):** Hotkey thread sends `UiSignal::ToggleVisibility` to UI thread via `mpsc`
-3. **UI:** `CommandPaletteApp` filters `all_commands` by `filter_text`; arrow keys navigate; Enter executes
-4. **Search:** `core::search::get_score()` does sequential character matching with proximity bonuses
+- Runtime config: `%APPDATA%\OmniPalette\config.toml`
+- User extension root: `%APPDATA%\OmniPalette\extensions`
+- Extension install state: `%APPDATA%\OmniPalette\extensions\installed.toml`
+- Extension settings: `%APPDATA%\OmniPalette\extensions\settings\<extension-id>.toml`
+- Plugin storage: `%LOCALAPPDATA%\OmniPalette\plugins\<plugin-id>`
 
-## Current State / Known Gaps
+Bundled extensions can be disabled from settings but not uninstalled. Downloaded extensions can be disabled or uninstalled.
 
-- `CommandPaletteApp.filtered_indices` is never populated in the current code — the filter logic is missing (search is wired in models but not connected to UI)
-- `core/context.rs` is empty
-- `src/models/registry.rs` is empty
-- Window hiding uses a hacky approach (minimize + move off-screen to `-2000, -2000`)
-- The fuzzy scorer (`do_score_fuzzy`) is `todo!()`
-- Only Windows is supported; other platforms panic
-
-## Build & Run
+## Build and Test
 
 ```sh
 cargo build
 cargo run
+cargo test
+cargo clippy --all-targets --all-features
 ```
 
-Set `RUST_LOG=info` (or `debug`) for logs.
+Useful extension packaging commands:
+
+```sh
+cargo run -p xtask -- detect-changed --force-all
+cargo run -p xtask -- package-extension --package-root extensions/registry/packages/chrome/windows
+```
 
 ## Important Notes
 
-- The egui event loop **must** run on the main thread (winit requirement)
-- Hotkey listener runs in a background thread and communicates via `mpsc`
-- `MasterRegistry` uses `ApplicationID = u32` as index counter (not stable across reloads)
+- `ApplicationID = u32` is assigned during registry builds and should not be persisted.
+- `MasterRegistry::build()` is best-effort; use strict loading paths in tests when invalid input should fail.
+- Generated catalog output in `extensions/registry/catalog.v1.json` should not be hand-edited.
+- Do not broaden plugin capabilities when a narrow host import is enough.
+- Preserve user or uncommitted work in this repository; inspect before editing files that may already be dirty.
