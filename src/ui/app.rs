@@ -13,14 +13,14 @@ use crate::ui::palette::{
     fixed_action_for_index, wrapped_selection_index, CommandPaletteApp, FixedPaletteAction,
     ESTIMATED_VISIBLE_ROW_HEIGHT, FIXED_ACTION_ROW_HEIGHT, FIXED_PALETTE_ACTIONS,
     MAX_VISIBLE_COMMAND_ROWS, PALETTE_BORDER, PALETTE_BORDER_WIDTH, PALETTE_CARD_BG,
-    PALETTE_CURSOR_WIDTH, PALETTE_EMPTY_ROW_MARGIN, PALETTE_EMPTY_ROW_RADIUS,
-    PALETTE_EMPTY_TEXT_SIZE, PALETTE_FRAME_MARGIN, PALETTE_FRAME_RADIUS, PALETTE_RESULTS_TOP_SPACE,
-    PALETTE_ROW_HOVER, PALETTE_ROW_SELECTED, PALETTE_ROW_SELECTED_BORDER, PALETTE_SEARCH_BG,
-    PALETTE_SEARCH_BORDER, PALETTE_SEARCH_HEIGHT, PALETTE_SEARCH_MARGIN_X, PALETTE_SEARCH_MARGIN_Y,
+    PALETTE_CURSOR_WIDTH, PALETTE_EMPTY_ROW_MARGIN, PALETTE_EMPTY_TEXT_SIZE,
+    PALETTE_FRAME_MARGIN, PALETTE_FRAME_RADIUS, PALETTE_RESULTS_TOP_SPACE, PALETTE_ROW_HOVER,
+    PALETTE_ROW_SELECTED, PALETTE_ROW_SELECTED_BORDER, PALETTE_SEARCH_BG, PALETTE_SEARCH_BORDER,
+    PALETTE_SEARCH_HEIGHT, PALETTE_SEARCH_MARGIN_X, PALETTE_SEARCH_MARGIN_Y,
     PALETTE_SEARCH_PROMPT_LEFT_SPACE, PALETTE_SEARCH_PROMPT_RIGHT_SPACE,
     PALETTE_SEARCH_PROMPT_SIZE, PALETTE_SEARCH_RADIUS, PALETTE_TEXTBOX_CURSOR,
     PALETTE_TEXTBOX_HINT, PALETTE_TEXTBOX_TEXT, PALETTE_TEXT_MUTED, PALETTE_TEXT_PRIMARY,
-    PALETTE_TEXT_SELECTED, PALETTE_WIDTH, PALETTE_WINDOW_BG, ROW_HEIGHT, SETTINGS_DIVIDER_HEIGHT,
+    PALETTE_TEXT_SELECTED, PALETTE_WIDTH, ROW_HEIGHT, SETTINGS_DIVIDER_HEIGHT,
 };
 use crate::ui::settings::{show_settings_viewport, SettingsBootstrap, SettingsState};
 use eframe::egui;
@@ -498,7 +498,7 @@ impl App {
     fn command_list_height(&self) -> f32 {
         let visible_command_count = self.visible_command_row_count();
         if visible_command_count == 0 {
-            ROW_HEIGHT
+            empty_command_list_height()
         } else {
             visible_command_count as f32 * ESTIMATED_VISIBLE_ROW_HEIGHT
         }
@@ -724,20 +724,7 @@ impl eframe::App for App {
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 if self.palette.filtered_commands.is_empty() {
-                                    egui::Frame::new()
-                                        .fill(PALETTE_WINDOW_BG)
-                                        .corner_radius(egui::CornerRadius::same(
-                                            PALETTE_EMPTY_ROW_RADIUS,
-                                        ))
-                                        .inner_margin(egui::Margin::same(PALETTE_EMPTY_ROW_MARGIN))
-                                        .show(ui, |ui| {
-                                            ui.set_min_height(ROW_HEIGHT);
-                                            ui.label(
-                                                egui::RichText::new("No matching commands")
-                                                    .size(PALETTE_EMPTY_TEXT_SIZE)
-                                                    .color(PALETTE_TEXT_MUTED),
-                                            );
-                                        });
+                                    draw_empty_command_row(ui);
                                 }
 
                                 let rows: Vec<(usize, FilteredCommand)> = self
@@ -826,12 +813,13 @@ pub fn run_with_shared_state(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_platform_action, should_hide_for_app_switch, PlatformUiAction, PlatformWindowToken,
-        UiEvent,
+        apply_platform_action, empty_command_list_height, should_hide_for_app_switch,
+        PlatformUiAction, PlatformWindowToken, UiEvent,
     };
     use crate::config::runtime::RuntimeConfig;
     use crate::core::extensions::install::InstalledState;
     use crate::domain::action::Os;
+    use crate::ui::palette::ROW_HEIGHT;
     use crate::ui::settings::{SettingsBootstrap, SettingsState};
     use eframe::egui;
     use std::sync::mpsc;
@@ -946,4 +934,29 @@ mod tests {
 
         assert!(matches!(event_rx.try_recv(), Ok(UiEvent::QuitRequested)));
     }
+
+    #[test]
+    fn empty_command_list_height_matches_standard_command_row_height() {
+        assert_eq!(empty_command_list_height(), ROW_HEIGHT);
+    }
+}
+
+fn empty_command_list_height() -> f32 {
+    ROW_HEIGHT
+}
+
+fn draw_empty_command_row(ui: &mut egui::Ui) {
+    let desired_size = egui::vec2(ui.available_width(), ROW_HEIGHT);
+    let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+
+    let inner = rect.shrink2(egui::vec2(f32::from(PALETTE_EMPTY_ROW_MARGIN), 0.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new("No matching commands")
+                    .size(PALETTE_EMPTY_TEXT_SIZE)
+                    .color(PALETTE_TEXT_MUTED),
+            );
+        });
+    });
 }

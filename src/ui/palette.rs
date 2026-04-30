@@ -25,7 +25,6 @@ pub(crate) const PALETTE_SEARCH_PROMPT_RIGHT_SPACE: f32 = 6.0;
 pub(crate) const PALETTE_SEARCH_HEIGHT: f32 = 28.0;
 pub(crate) const PALETTE_RESULTS_TOP_SPACE: f32 = 8.0;
 pub(crate) const PALETTE_EMPTY_ROW_MARGIN: i8 = 12;
-pub(crate) const PALETTE_EMPTY_ROW_RADIUS: u8 = 6;
 pub(crate) const PALETTE_EMPTY_TEXT_SIZE: f32 = 14.5;
 const PALETTE_ROW_RADIUS: u8 = 6;
 const PALETTE_ROW_MARGIN_X: f32 = 12.0;
@@ -38,7 +37,6 @@ const PALETTE_DIVIDER_MARGIN_X: f32 = 8.0;
 pub(crate) const PALETTE_BORDER_WIDTH: f32 = 1.0;
 pub(crate) const PALETTE_CURSOR_WIDTH: f32 = 2.0;
 
-pub(crate) const PALETTE_WINDOW_BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
 pub(crate) const PALETTE_CARD_BG: egui::Color32 = egui::Color32::from_rgb(37, 37, 38);
 pub(crate) const PALETTE_BORDER: egui::Color32 = egui::Color32::from_rgb(69, 69, 69);
 pub(crate) const PALETTE_SEARCH_BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
