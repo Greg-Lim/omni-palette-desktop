@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{collections::BTreeMap, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,7 @@ mod host {
     unsafe extern "C" {
         fn host_list_storage_entries_json(ptr: i32, capacity: i32) -> i32;
         fn host_read_storage_text(path_ptr: i32, path_len: i32, ptr: i32, capacity: i32) -> i32;
+        fn host_read_settings_json(ptr: i32, capacity: i32) -> i32;
         fn host_write_text(ptr: i32, len: i32) -> i32;
     }
 
@@ -36,6 +37,10 @@ mod host {
         }
     }
 
+    pub(crate) fn read_settings_json(buffer: &mut [u8]) -> i32 {
+        unsafe { host_read_settings_json(buffer.as_mut_ptr() as i32, buffer.len() as i32) }
+    }
+
     pub(crate) fn write_text(text: &str) -> i32 {
         unsafe { host_write_text(text.as_ptr() as i32, text.len() as i32) }
     }
@@ -48,6 +53,10 @@ mod host {
     }
 
     pub(crate) fn read_storage_text(_path: &str, _buffer: &mut [u8]) -> i32 {
+        -100
+    }
+
+    pub(crate) fn read_settings_json(_buffer: &mut [u8]) -> i32 {
         -100
     }
 
@@ -79,10 +88,66 @@ struct CommandDescriptor {
     cmd: Option<JsonShortcutBinding>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+struct SettingsSchemaDescriptor {
+    #[serde(default)]
+    categories: Vec<SettingsSchemaCategoryDescriptor>,
+    #[serde(default)]
+    items: Vec<SettingsSchemaItemDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SettingsSchemaCategoryDescriptor {
+    key: String,
+    label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    toggle_key: Option<String>,
+    #[serde(default)]
+    default_collapsed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SettingsSchemaItemDescriptor {
+    key: String,
+    label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
+    #[serde(rename = "type")]
+    kind: SettingsSchemaItemType,
+    #[serde(default)]
+    default: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SettingsSchemaItemType {
+    Toggle,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RegisteredCommand {
     descriptor: CommandDescriptor,
     trigger_text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiscoveredScript {
+    script_path: String,
+    script_name: String,
+    category_key: String,
+    toggle_key: String,
+    commands: Vec<DiscoveredCommand>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiscoveredCommand {
+    registered: RegisteredCommand,
+    toggle_key: String,
+    toggle_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,9 +168,18 @@ struct ParsedKey {
     display_text: String,
 }
 
+type PersistedSettings = BTreeMap<String, bool>;
+
 #[no_mangle]
 pub extern "C" fn register_commands_json() -> i32 {
     let json = build_commands_json_from_host().unwrap_or_else(|_| "[]".to_string());
+    store_response_string(&json)
+}
+
+#[no_mangle]
+pub extern "C" fn settings_schema_json() -> i32 {
+    let json = build_settings_schema_json_from_host()
+        .unwrap_or_else(|_| "{\"categories\":[],\"items\":[]}".to_string());
     store_response_string(&json)
 }
 
@@ -135,30 +209,49 @@ fn build_commands_json_from_host() -> Result<String, String> {
         .map_err(|err| format!("Could not serialize commands: {err}"))
 }
 
+fn build_settings_schema_json_from_host() -> Result<String, String> {
+    let storage_entries = read_storage_entries_from_host()?;
+    let snapshots = load_snapshot_records(&storage_entries, read_storage_text_from_host);
+    let discovered_scripts = discover_scripts(&snapshots);
+    let schema = build_settings_schema(&discovered_scripts);
+    serde_json::to_string(&schema)
+        .map_err(|err| format!("Could not serialize settings schema: {err}"))
+}
+
 fn build_registered_commands_from_host() -> Result<Vec<RegisteredCommand>, String> {
     let storage_entries = read_storage_entries_from_host()?;
     let snapshots = load_snapshot_records(&storage_entries, read_storage_text_from_host);
-    Ok(build_registered_commands(&snapshots))
+    let settings = read_settings_from_host().unwrap_or_default();
+    let discovered_scripts = discover_scripts(&snapshots);
+    Ok(build_registered_commands(&discovered_scripts, &settings))
 }
 
-fn build_registered_commands(snapshots: &[SnapshotRecord]) -> Vec<RegisteredCommand> {
-    let mut commands = Vec::new();
+fn discover_scripts(snapshots: &[SnapshotRecord]) -> Vec<DiscoveredScript> {
+    let mut scripts = Vec::new();
 
     for snapshot in snapshots {
         let script_name = script_name_from_path(&snapshot.script_path);
         let script_tag = normalize_tag(&script_name);
+        let script_category_key = stable_settings_key(&[&snapshot.script_path, "category"]);
+        let script_toggle_key = stable_settings_key(&[&snapshot.script_path, "script"]);
+        let mut commands = Vec::new();
 
         for hotkey in parse_hotkeys(&snapshot.script_text) {
             let id = stable_command_id(&[&snapshot.script_path, "hotkey", &hotkey.normalized_text]);
-            commands.push(RegisteredCommand {
-                descriptor: CommandDescriptor {
-                    id,
-                    name: format!("{script_name} : {}", hotkey.normalized_text),
-                    tags: command_tags(&script_tag),
-                    shortcut_text: hotkey.normalized_text,
-                    cmd: Some(hotkey.binding),
+            let toggle_label = hotkey.normalized_text.clone();
+            commands.push(DiscoveredCommand {
+                toggle_key: stable_settings_key(&[&snapshot.script_path, "command", &id]),
+                toggle_label,
+                registered: RegisteredCommand {
+                    descriptor: CommandDescriptor {
+                        id,
+                        name: format!("AHK: {script_name} : {}", hotkey.normalized_text),
+                        tags: command_tags(&script_tag),
+                        shortcut_text: hotkey.normalized_text,
+                        cmd: Some(hotkey.binding),
+                    },
+                    trigger_text: None,
                 },
-                trigger_text: None,
             });
         }
 
@@ -170,20 +263,89 @@ fn build_registered_commands(snapshots: &[SnapshotRecord]) -> Vec<RegisteredComm
                 &hotstring.replacement,
             ]);
             let preview = replacement_preview(&hotstring.replacement);
-            commands.push(RegisteredCommand {
-                descriptor: CommandDescriptor {
-                    id,
-                    name: format!("{script_name} : {} -> {}", hotstring.trigger, preview),
-                    tags: command_tags(&script_tag),
-                    shortcut_text: String::new(),
-                    cmd: None,
+            commands.push(DiscoveredCommand {
+                toggle_key: stable_settings_key(&[&snapshot.script_path, "command", &id]),
+                toggle_label: format!("{} -> {}", hotstring.trigger, preview),
+                registered: RegisteredCommand {
+                    descriptor: CommandDescriptor {
+                        id,
+                        name: format!("AHK: {script_name} : {} -> {}", hotstring.trigger, preview),
+                        tags: command_tags(&script_tag),
+                        shortcut_text: String::new(),
+                        cmd: None,
+                    },
+                    trigger_text: Some(hotstring.trigger),
                 },
-                trigger_text: Some(hotstring.trigger),
             });
+        }
+
+        scripts.push(DiscoveredScript {
+            script_path: snapshot.script_path.clone(),
+            script_name,
+            category_key: script_category_key,
+            toggle_key: script_toggle_key,
+            commands,
+        });
+    }
+
+    scripts
+}
+
+fn build_registered_commands(
+    discovered_scripts: &[DiscoveredScript],
+    settings: &PersistedSettings,
+) -> Vec<RegisteredCommand> {
+    let mut commands = Vec::new();
+
+    for script in discovered_scripts {
+        if !setting_enabled(settings, &script.toggle_key, true) {
+            continue;
+        }
+
+        for command in &script.commands {
+            if setting_enabled(settings, &command.toggle_key, true) {
+                commands.push(command.registered.clone());
+            }
         }
     }
 
     commands
+}
+
+fn build_settings_schema(discovered_scripts: &[DiscoveredScript]) -> SettingsSchemaDescriptor {
+    let mut categories = Vec::new();
+    let mut items = Vec::new();
+
+    for script in discovered_scripts {
+        categories.push(SettingsSchemaCategoryDescriptor {
+            key: script.category_key.clone(),
+            label: script.script_name.clone(),
+            description: Some(script.script_path.clone()),
+            toggle_key: Some(script.toggle_key.clone()),
+            default_collapsed: true,
+        });
+        items.push(SettingsSchemaItemDescriptor {
+            key: script.toggle_key.clone(),
+            label: "Enabled".to_string(),
+            description: None,
+            category: Some(script.category_key.clone()),
+            kind: SettingsSchemaItemType::Toggle,
+            default: true,
+        });
+
+        for command in &script.commands {
+            items.push(SettingsSchemaItemDescriptor {
+                key: command.toggle_key.clone(),
+                label: command.toggle_label.clone(),
+                description: None,
+                category: Some(script.category_key.clone()),
+                kind: SettingsSchemaItemType::Toggle,
+                default: true,
+            });
+        }
+    }
+
+    SettingsSchemaDescriptor { categories, items }
 }
 
 fn load_snapshot_records(
@@ -214,7 +376,8 @@ fn load_snapshot_records(
 }
 
 fn is_snapshot_storage_entry(storage_entry: &str) -> bool {
-    storage_entry.starts_with(SNAPSHOT_DIRECTORY_PREFIX) && storage_entry.ends_with(SNAPSHOT_EXTENSION)
+    storage_entry.starts_with(SNAPSHOT_DIRECTORY_PREFIX)
+        && storage_entry.ends_with(SNAPSHOT_EXTENSION)
 }
 
 fn read_storage_entries_from_host() -> Result<Vec<String>, String> {
@@ -224,8 +387,7 @@ fn read_storage_entries_from_host() -> Result<Vec<String>, String> {
         MAX_HOST_BUFFER_CAPACITY,
         host::list_storage_entries_json,
     )?;
-    serde_json::from_str(&json)
-        .map_err(|err| format!("Could not parse storage entry JSON: {err}"))
+    serde_json::from_str(&json).map_err(|err| format!("Could not parse storage entry JSON: {err}"))
 }
 
 fn read_storage_text_from_host(path: &str) -> Result<String, String> {
@@ -235,6 +397,16 @@ fn read_storage_text_from_host(path: &str) -> Result<String, String> {
         MAX_HOST_BUFFER_CAPACITY,
         |buffer| host::read_storage_text(path, buffer),
     )
+}
+
+fn read_settings_from_host() -> Result<PersistedSettings, String> {
+    let json = read_host_text_with_retry(
+        "host_read_settings_json",
+        INITIAL_HOST_BUFFER_CAPACITY,
+        MAX_HOST_BUFFER_CAPACITY,
+        host::read_settings_json,
+    )?;
+    serde_json::from_str(&json).map_err(|err| format!("Could not parse settings JSON: {err}"))
 }
 
 fn execute_registered_command(
@@ -253,6 +425,10 @@ fn execute_registered_command(
         .ok_or_else(|| format!("AHK command {command_id} is shortcut-backed"))?;
 
     writer(trigger_text)
+}
+
+fn setting_enabled(settings: &PersistedSettings, key: &str, default: bool) -> bool {
+    settings.get(key).copied().unwrap_or(default)
 }
 
 fn parse_hotkeys(script_text: &str) -> Vec<ParsedHotkey> {
@@ -526,11 +702,11 @@ fn shortcut_display_text(mods: &[&str], key_display_text: &str) -> String {
 }
 
 fn command_tags(script_tag: &str) -> Vec<String> {
-    if script_tag.is_empty() {
-        Vec::new()
-    } else {
-        vec![script_tag.to_string()]
+    let mut tags = vec!["ahk".to_string()];
+    if !script_tag.is_empty() {
+        tags.push(script_tag.to_string());
     }
+    tags
 }
 
 fn replacement_preview(replacement: &str) -> String {
@@ -577,12 +753,20 @@ fn normalize_tag(value: &str) -> String {
 }
 
 fn stable_command_id(parts: &[&str]) -> String {
+    format!("ahk_{}", stable_hash_suffix(parts))
+}
+
+fn stable_settings_key(parts: &[&str]) -> String {
+    format!("ahk_setting_{}", stable_hash_suffix(parts))
+}
+
+fn stable_hash_suffix(parts: &[&str]) -> String {
     let mut hash = FNV_OFFSET_BASIS;
     for part in parts {
         hash = fnv1a_update(hash, part.as_bytes());
         hash = fnv1a_update(hash, &[0xff]);
     }
-    format!("ahk_{hash:016X}")
+    format!("{hash:016X}")
 }
 
 fn fnv1a_update(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -778,7 +962,8 @@ mod tests {
             "scripts/broken.json".to_string(),
             "scripts/bom.json".to_string(),
         ];
-        let snapshots = load_snapshot_records(&storage_entries, |path| match path {
+        let snapshots = load_snapshot_records(&storage_entries, |path| {
+            match path {
             "scripts/demo.json" => Ok(
                 r#"{"schema_version":1,"script_path":"C:\\Scripts\\Demo.ahk","script_text":"^h::MsgBox \"hi\""}"#
                     .to_string(),
@@ -789,6 +974,7 @@ mod tests {
                     .to_string(),
             ),
             _ => Err("missing".to_string()),
+        }
         });
 
         assert_eq!(snapshots.len(), 2);
@@ -798,15 +984,21 @@ mod tests {
 
     #[test]
     fn builds_hotkey_and_hotstring_commands_from_snapshots() {
-        let snapshots = vec![snapshot_record(&format!("^h::MsgBox \"hi\"\n:?*:up;::{UP_ARROW}"))];
-        let commands = build_registered_commands(&snapshots);
+        let snapshots = vec![snapshot_record(&format!(
+            "^h::MsgBox \"hi\"\n:?*:up;::{UP_ARROW}"
+        ))];
+        let commands =
+            build_registered_commands(&discover_scripts(&snapshots), &PersistedSettings::default());
 
         assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].descriptor.name, "Demo : Ctrl+H");
+        assert_eq!(commands[0].descriptor.name, "AHK: Demo : Ctrl+H");
         assert_eq!(commands[0].descriptor.shortcut_text, "Ctrl+H");
         assert!(commands[0].descriptor.cmd.is_some());
         assert!(commands[0].trigger_text.is_none());
-        assert_eq!(commands[1].descriptor.name, format!("Demo : up; -> {UP_ARROW}"));
+        assert_eq!(
+            commands[1].descriptor.name,
+            format!("AHK: Demo : up; -> {UP_ARROW}")
+        );
         assert_eq!(commands[1].descriptor.shortcut_text, "");
         assert!(commands[1].descriptor.cmd.is_none());
         assert_eq!(commands[1].trigger_text.as_deref(), Some("up;"));
@@ -822,7 +1014,10 @@ mod tests {
 
     #[test]
     fn executes_hotstring_commands_by_typing_trigger_text() {
-        let commands = build_registered_commands(&[snapshot_record(&format!(":?*:up;::{UP_ARROW}"))]);
+        let commands = build_registered_commands(
+            &discover_scripts(&[snapshot_record(&format!(":?*:up;::{UP_ARROW}"))]),
+            &PersistedSettings::default(),
+        );
         let hotstring_id = commands[0].descriptor.id.clone();
         let mut typed = Vec::new();
 
@@ -837,7 +1032,10 @@ mod tests {
 
     #[test]
     fn refuses_to_execute_shortcut_backed_commands_through_plugin_path() {
-        let commands = build_registered_commands(&[snapshot_record("^h::MsgBox \"hi\"")]);
+        let commands = build_registered_commands(
+            &discover_scripts(&[snapshot_record("^h::MsgBox \"hi\"")]),
+            &PersistedSettings::default(),
+        );
         let shortcut_id = commands[0].descriptor.id.clone();
         let err = execute_registered_command(&commands, &shortcut_id, |_| Ok(()))
             .expect_err("shortcut-backed command should not execute through plugin path");
@@ -847,7 +1045,10 @@ mod tests {
 
     #[test]
     fn serializes_hotstring_command_without_cmd_binding() {
-        let commands = build_registered_commands(&[snapshot_record(&format!(":?*:up;::{UP_ARROW}"))]);
+        let commands = build_registered_commands(
+            &discover_scripts(&[snapshot_record(&format!(":?*:up;::{UP_ARROW}"))]),
+            &PersistedSettings::default(),
+        );
         let json =
             serde_json::to_string(&commands[0].descriptor).expect("descriptor should serialize");
 
@@ -871,7 +1072,10 @@ mod tests {
             ),
             UP_ARROW, DOWN_ARROW, QUESTION_MARK,
         );
-        let commands = build_registered_commands(&[snapshot_record(&script_text)]);
+        let commands = build_registered_commands(
+            &discover_scripts(&[snapshot_record(&script_text)]),
+            &PersistedSettings::default(),
+        );
 
         assert_eq!(commands.len(), 3);
         assert_eq!(
@@ -880,11 +1084,60 @@ mod tests {
                 .map(|command| command.descriptor.name.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                format!("Demo : up; -> {UP_ARROW}").as_str(),
-                format!("Demo : down; -> {DOWN_ARROW}").as_str(),
-                format!("Demo : ?; -> {QUESTION_MARK}").as_str(),
+                format!("AHK: Demo : up; -> {UP_ARROW}").as_str(),
+                format!("AHK: Demo : down; -> {DOWN_ARROW}").as_str(),
+                format!("AHK: Demo : ?; -> {QUESTION_MARK}").as_str(),
             ]
         );
+    }
+
+    #[test]
+    fn builds_settings_schema_with_script_and_command_toggles() {
+        let script_text = format!("^h::MsgBox \"hi\"\n:?*:up;::{UP_ARROW}");
+        let schema = build_settings_schema(&discover_scripts(&[snapshot_record(&script_text)]));
+
+        assert_eq!(schema.categories.len(), 1);
+        assert_eq!(schema.categories[0].label, "Demo");
+        assert_eq!(
+            schema.categories[0].toggle_key.as_deref(),
+            Some(schema.items[0].key.as_str())
+        );
+        assert!(schema.categories[0].default_collapsed);
+        assert_eq!(schema.items.len(), 3);
+        assert_eq!(schema.items[0].label, "Enabled");
+        assert_eq!(
+            schema.items[0].category.as_deref(),
+            Some(schema.categories[0].key.as_str())
+        );
+        assert_eq!(schema.items[1].label, "Ctrl+H");
+        assert_eq!(schema.items[2].label, format!("up; -> {UP_ARROW}"));
+    }
+
+    #[test]
+    fn disables_entire_scripts_via_settings() {
+        let snapshots = [snapshot_record("^h::MsgBox \"hi\"\n^j::MsgBox \"there\"")];
+        let discovered = discover_scripts(&snapshots);
+        let mut settings = PersistedSettings::default();
+        settings.insert(discovered[0].toggle_key.clone(), false);
+
+        let commands = build_registered_commands(&discovered, &settings);
+
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn disables_individual_commands_via_settings() {
+        let snapshots = [snapshot_record(&format!(
+            "^h::MsgBox \"hi\"\n:?*:up;::{UP_ARROW}"
+        ))];
+        let discovered = discover_scripts(&snapshots);
+        let mut settings = PersistedSettings::default();
+        settings.insert(discovered[0].commands[1].toggle_key.clone(), false);
+
+        let commands = build_registered_commands(&discovered, &settings);
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].descriptor.name, "AHK: Demo : Ctrl+H");
     }
 
     #[test]
@@ -924,10 +1177,9 @@ mod tests {
 
     #[test]
     fn read_host_text_with_retry_reports_capacity_exhaustion() {
-        let err = read_host_text_with_retry("mock_reader", 4, 8, |_buffer| {
-            HOST_BUFFER_TOO_SMALL_CODE
-        })
-        .expect_err("reader should report exhausted capacity");
+        let err =
+            read_host_text_with_retry("mock_reader", 4, 8, |_buffer| HOST_BUFFER_TOO_SMALL_CODE)
+                .expect_err("reader should report exhausted capacity");
 
         assert!(err.contains("max buffer capacity"));
     }

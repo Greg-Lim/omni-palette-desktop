@@ -2,6 +2,10 @@ use crate::config::runtime::{CommandBehavior, RuntimeConfig};
 use crate::core::command_filter::FilteredCommand;
 use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog};
 use crate::core::extensions::install::{BundledExtension, InstalledState};
+use crate::core::extensions::settings::{
+    ExtensionSettingsTarget, ExtensionSettingsValues, LoadedExtensionSettings,
+    SavedExtensionSettings,
+};
 use crate::domain::action::{CommandPriority, FocusState};
 use crate::platform::ui_support::{
     focus_window_token, foreground_window_token, PlatformUiAction, PlatformUiRuntime,
@@ -13,14 +17,14 @@ use crate::ui::palette::{
     fixed_action_for_index, wrapped_selection_index, CommandPaletteApp, FixedPaletteAction,
     ESTIMATED_VISIBLE_ROW_HEIGHT, FIXED_ACTION_ROW_HEIGHT, FIXED_PALETTE_ACTIONS,
     MAX_VISIBLE_COMMAND_ROWS, PALETTE_BORDER, PALETTE_BORDER_WIDTH, PALETTE_CARD_BG,
-    PALETTE_CURSOR_WIDTH, PALETTE_EMPTY_ROW_MARGIN, PALETTE_EMPTY_TEXT_SIZE,
-    PALETTE_FRAME_MARGIN, PALETTE_FRAME_RADIUS, PALETTE_RESULTS_TOP_SPACE, PALETTE_ROW_HOVER,
-    PALETTE_ROW_SELECTED, PALETTE_ROW_SELECTED_BORDER, PALETTE_SEARCH_BG, PALETTE_SEARCH_BORDER,
-    PALETTE_SEARCH_HEIGHT, PALETTE_SEARCH_MARGIN_X, PALETTE_SEARCH_MARGIN_Y,
-    PALETTE_SEARCH_PROMPT_LEFT_SPACE, PALETTE_SEARCH_PROMPT_RIGHT_SPACE,
-    PALETTE_SEARCH_PROMPT_SIZE, PALETTE_SEARCH_RADIUS, PALETTE_TEXTBOX_CURSOR,
-    PALETTE_TEXTBOX_HINT, PALETTE_TEXTBOX_TEXT, PALETTE_TEXT_MUTED, PALETTE_TEXT_PRIMARY,
-    PALETTE_TEXT_SELECTED, PALETTE_WIDTH, ROW_HEIGHT, SETTINGS_DIVIDER_HEIGHT,
+    PALETTE_CURSOR_WIDTH, PALETTE_EMPTY_ROW_MARGIN, PALETTE_EMPTY_TEXT_SIZE, PALETTE_FRAME_MARGIN,
+    PALETTE_FRAME_RADIUS, PALETTE_RESULTS_TOP_SPACE, PALETTE_ROW_HOVER, PALETTE_ROW_SELECTED,
+    PALETTE_ROW_SELECTED_BORDER, PALETTE_SEARCH_BG, PALETTE_SEARCH_BORDER, PALETTE_SEARCH_HEIGHT,
+    PALETTE_SEARCH_MARGIN_X, PALETTE_SEARCH_MARGIN_Y, PALETTE_SEARCH_PROMPT_LEFT_SPACE,
+    PALETTE_SEARCH_PROMPT_RIGHT_SPACE, PALETTE_SEARCH_PROMPT_SIZE, PALETTE_SEARCH_RADIUS,
+    PALETTE_TEXTBOX_CURSOR, PALETTE_TEXTBOX_HINT, PALETTE_TEXTBOX_TEXT, PALETTE_TEXT_MUTED,
+    PALETTE_TEXT_PRIMARY, PALETTE_TEXT_SELECTED, PALETTE_WIDTH, ROW_HEIGHT,
+    SETTINGS_DIVIDER_HEIGHT,
 };
 use crate::ui::settings::{show_settings_viewport, SettingsBootstrap, SettingsState};
 use eframe::egui;
@@ -97,6 +101,7 @@ impl fmt::Debug for Command {
 #[derive(Debug)]
 pub struct InstalledExtensionsUpdate {
     pub state: InstalledState,
+    pub extension_settings_available: std::collections::HashSet<String>,
     pub message: String,
 }
 
@@ -117,6 +122,8 @@ pub enum UiSignal {
     },
     CatalogRefreshed(Result<ExtensionCatalog, String>),
     InstalledExtensionsUpdated(Result<InstalledExtensionsUpdate, String>),
+    ExtensionSettingsLoaded(Result<LoadedExtensionSettings, String>),
+    ExtensionSettingsSaved(Result<SavedExtensionSettings, String>),
     ReloadExtensionsFinished(Result<String, String>),
     Quit,
 }
@@ -151,6 +158,13 @@ pub enum UiEvent {
     SetBundledExtensionEnabledRequested {
         extension: BundledExtension,
         enabled: bool,
+    },
+    OpenExtensionSettingsRequested {
+        target: ExtensionSettingsTarget,
+    },
+    SaveExtensionSettingsRequested {
+        target: ExtensionSettingsTarget,
+        values: ExtensionSettingsValues,
     },
     ReloadExtensionsRequested,
     QuitRequested,
@@ -325,6 +339,16 @@ impl App {
             UiSignal::InstalledExtensionsUpdated(result) => {
                 if let Ok(mut settings) = self.settings.lock() {
                     settings.installed_extensions_updated(result);
+                }
+            }
+            UiSignal::ExtensionSettingsLoaded(result) => {
+                if let Ok(mut settings) = self.settings.lock() {
+                    settings.extension_settings_loaded(result);
+                }
+            }
+            UiSignal::ExtensionSettingsSaved(result) => {
+                if let Ok(mut settings) = self.settings.lock() {
+                    settings.extension_settings_saved(result);
                 }
             }
             UiSignal::ReloadExtensionsFinished(result) => {
@@ -833,6 +857,7 @@ mod tests {
             current_os: Os::Windows,
             install_root: None,
             bundled_extensions: Vec::new(),
+            extension_settings_available: std::collections::HashSet::new(),
             installed_state: InstalledState::default(),
             installed_state_error: None,
         })))

@@ -14,6 +14,10 @@ pub struct Config {
     pub version: u32,
     pub platform: Os,
     pub app: AppConfig,
+    #[serde(default)]
+    pub setting_categories: Vec<ExtensionSettingCategoryConfig>,
+    #[serde(default)]
+    pub settings: Vec<ExtensionSettingConfig>,
     pub actions: HashMap<String, ActionConfig>,
 }
 
@@ -43,7 +47,41 @@ pub struct PackageManifestConfig {
 pub struct ActionsMetadataConfig {
     pub schema_version: u32,
     pub app: Option<ActionAppDefaultsConfig>,
+    #[serde(default)]
+    pub setting_categories: Vec<ExtensionSettingCategoryConfig>,
+    #[serde(default)]
+    pub settings: Vec<ExtensionSettingConfig>,
     pub actions: HashMap<String, ActionMetadataConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionSettingCategoryConfig {
+    pub key: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub toggle_key: Option<String>,
+    #[serde(default)]
+    pub default_collapsed: bool,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionSettingConfig {
+    pub key: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    #[serde(rename = "type")]
+    pub setting_type: ExtensionSettingTypeConfig,
+    #[serde(default)]
+    pub default: bool,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionSettingTypeConfig {
+    Toggle,
 }
 
 #[derive(Debug, Deserialize, Clone)]

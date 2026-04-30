@@ -20,12 +20,20 @@ use crate::core::extensions::{
     extensions::load_config,
     install::{
         load_installed_state, set_bundled_extension_enabled, set_installed_extension_enabled,
-        uninstall_installed_extension, BundledExtension, ExtensionInstallService,
-        InstalledState, BUNDLED_SOURCE_ID,
+        uninstall_installed_extension, BundledExtension, ExtensionInstallService, InstalledState,
+        BUNDLED_SOURCE_ID,
+    },
+    settings::{
+        extension_settings_key, load_extension_settings_values,
+        load_static_extension_settings_schema, resolved_extension_settings_values,
+        save_extension_settings_values, ExtensionSettingsTarget, LoadedExtensionSettings,
+        SavedExtensionSettings,
     },
 };
+#[cfg(debug_assertions)]
+use crate::core::performance::process_performance_snapshot_logger;
 use crate::core::performance::{current_process_private_bytes, current_process_thread_count};
-use crate::core::plugins::{manifest::PluginManifest, PluginRegistry};
+use crate::core::plugins::{manifest::PluginManifest, runtime::LoadedPlugin, PluginRegistry};
 use crate::core::registry::registry::{MasterRegistry, UnitAction};
 use crate::domain::action::{ActionExecution, CommandPriority, ContextRoot, FocusState, Os};
 use crate::domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut};
@@ -199,6 +207,12 @@ fn settings_bootstrap(
         current_os,
         &installed_state,
     );
+    let extension_settings_available = extension_settings_available(
+        &bundled_extensions,
+        &installed_state,
+        install_root.as_deref(),
+        current_os,
+    );
 
     SettingsBootstrap {
         config: runtime_config_load.config,
@@ -207,6 +221,7 @@ fn settings_bootstrap(
         current_os,
         install_root,
         bundled_extensions,
+        extension_settings_available,
         installed_state,
         installed_state_error,
     }
@@ -331,6 +346,80 @@ fn bundled_kind_sort_key(kind: ExtensionKind) -> u8 {
     match kind {
         ExtensionKind::Static => 0,
         ExtensionKind::WasmPlugin => 1,
+    }
+}
+
+fn extension_settings_available(
+    bundled_extensions: &[BundledExtension],
+    installed_state: &InstalledState,
+    install_root: Option<&Path>,
+    current_os: Os,
+) -> HashSet<String> {
+    let mut available = HashSet::new();
+
+    for extension in bundled_extensions {
+        if extension_exposes_settings(extension.kind, &extension.installed_path, current_os) {
+            available.insert(extension_settings_key(&extension.id, BUNDLED_SOURCE_ID));
+        }
+    }
+
+    for extension in installed_state
+        .extensions
+        .iter()
+        .filter(|extension| extension.source_id != BUNDLED_SOURCE_ID)
+    {
+        let installed_path =
+            resolve_extension_settings_path(install_root, &extension.installed_path);
+        if extension_exposes_settings(extension.kind, &installed_path, current_os) {
+            available.insert(extension_settings_key(&extension.id, &extension.source_id));
+        }
+    }
+
+    available
+}
+
+fn extension_settings_available_for_state(
+    bundled_extensions_root: &Path,
+    install_root: &Path,
+    current_os: Os,
+    installed_state: &InstalledState,
+) -> HashSet<String> {
+    let bundled = bundled_extensions(bundled_extensions_root, current_os, installed_state);
+    extension_settings_available(&bundled, installed_state, Some(install_root), current_os)
+}
+
+fn extension_exposes_settings(kind: ExtensionKind, path: &Path, current_os: Os) -> bool {
+    match kind {
+        ExtensionKind::Static => load_static_extension_settings_schema(path)
+            .map(|schema| schema.is_some_and(|schema| schema.has_items()))
+            .unwrap_or_else(|err| {
+                log::warn!(
+                    "Could not load static extension settings schema at {:?}: {}",
+                    path,
+                    err
+                );
+                false
+            }),
+        ExtensionKind::WasmPlugin => PluginManifest::load(path)
+            .map(|manifest| manifest.platform == current_os && manifest.settings.is_some())
+            .unwrap_or_else(|err| {
+                log::warn!(
+                    "Could not load plugin manifest for extension settings at {:?}: {}",
+                    path,
+                    err
+                );
+                false
+            }),
+    }
+}
+
+fn resolve_extension_settings_path(install_root: Option<&Path>, installed_path: &Path) -> PathBuf {
+    if installed_path.is_absolute() {
+        installed_path.to_path_buf()
+    } else if let Some(install_root) = install_root {
+        install_root.join(installed_path)
+    } else {
+        installed_path.to_path_buf()
     }
 }
 
@@ -468,6 +557,36 @@ fn extension_install_root() -> Result<std::path::PathBuf, String> {
         "APPDATA is not set, so Omni Palette cannot determine the user extension install folder."
             .to_string()
     })
+}
+
+fn plugin_host_current_date_text() -> Result<String, String> {
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+
+    let system_time = unsafe { GetLocalTime() };
+    let month_index = usize::from(system_time.wMonth.saturating_sub(1));
+    let month = MONTHS
+        .get(month_index)
+        .ok_or_else(|| format!("Invalid local month value: {}", system_time.wMonth))?;
+
+    Ok(format!("{} {}", system_time.wDay, month))
+}
+
+fn plugin_host_storage_root(plugin_id: &str) -> Result<PathBuf, String> {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .ok_or_else(|| "LOCALAPPDATA is not available".to_string())?;
+    Ok(PathBuf::from(local_app_data)
+        .join("OmniPalette")
+        .join("plugins")
+        .join(plugin_id))
+}
+
+fn plugin_host_settings_text(plugin_id: &str) -> Result<String, String> {
+    let install_root = extension_install_root()?;
+    crate::core::extensions::settings::extension_settings_json(&install_root, plugin_id)
 }
 
 fn print_extension_cli_usage() {
@@ -672,6 +791,23 @@ fn handle_ui_events(
                     runtime_state.clone(),
                     extension,
                     enabled,
+                );
+            }
+            UiEvent::OpenExtensionSettingsRequested { target } => {
+                spawn_extension_settings_load(
+                    ui_tx.clone(),
+                    Arc::clone(ui_context),
+                    runtime_state.clone(),
+                    target,
+                );
+            }
+            UiEvent::SaveExtensionSettingsRequested { target, values } => {
+                spawn_extension_settings_save(
+                    ui_tx.clone(),
+                    Arc::clone(ui_context),
+                    runtime_state.clone(),
+                    target,
+                    values,
                 );
             }
             UiEvent::ReloadExtensionsRequested => {
@@ -926,8 +1062,15 @@ fn spawn_extension_install(
                 runtime_state.current_os,
             )?;
             let state = load_installed_state(&install_root).map_err(|err| err.to_string())?;
+            let extension_settings_available = extension_settings_available_for_state(
+                &runtime_state.bundled_extensions_root,
+                &install_root,
+                runtime_state.current_os,
+                &state,
+            );
             Ok(InstalledExtensionsUpdate {
                 state,
+                extension_settings_available,
                 message: extension_install_message(
                     &entry.name,
                     installed_version.as_deref(),
@@ -964,8 +1107,15 @@ fn spawn_extension_enabled_update(
                 &runtime_state.bundled_extensions_root,
                 runtime_state.current_os,
             )?;
+            let extension_settings_available = extension_settings_available_for_state(
+                &runtime_state.bundled_extensions_root,
+                &install_root,
+                runtime_state.current_os,
+                &state,
+            );
             Ok(InstalledExtensionsUpdate {
                 state,
+                extension_settings_available,
                 message: extension_enabled_message(&display_name, enabled),
             })
         })();
@@ -996,8 +1146,15 @@ fn spawn_extension_uninstall(
                 &runtime_state.bundled_extensions_root,
                 runtime_state.current_os,
             )?;
+            let extension_settings_available = extension_settings_available_for_state(
+                &runtime_state.bundled_extensions_root,
+                &install_root,
+                runtime_state.current_os,
+                &state,
+            );
             Ok(InstalledExtensionsUpdate {
                 state,
+                extension_settings_available,
                 message: format!("Uninstalled {display_name}"),
             })
         })();
@@ -1005,6 +1162,52 @@ fn spawn_extension_uninstall(
             &ui_tx,
             &ui_context,
             UiSignal::InstalledExtensionsUpdated(result),
+        );
+    });
+}
+
+fn spawn_extension_settings_load(
+    ui_tx: Sender<UiSignal>,
+    ui_context: SharedUiContext,
+    runtime_state: RuntimeState,
+    target: ExtensionSettingsTarget,
+) {
+    std::thread::spawn(move || {
+        let result = load_extension_settings(&runtime_state, target);
+        send_ui_signal(
+            &ui_tx,
+            &ui_context,
+            UiSignal::ExtensionSettingsLoaded(result),
+        );
+    });
+}
+
+fn spawn_extension_settings_save(
+    ui_tx: Sender<UiSignal>,
+    ui_context: SharedUiContext,
+    runtime_state: RuntimeState,
+    target: ExtensionSettingsTarget,
+    values: crate::core::extensions::settings::ExtensionSettingsValues,
+) {
+    std::thread::spawn(move || {
+        let result = (|| {
+            let install_root = extension_install_root()?;
+            save_extension_settings_values(&install_root, &target.extension_id, &values)?;
+            reload_runtime_state(
+                &runtime_state.registry,
+                &runtime_state.ignored_process_names,
+                &runtime_state.bundled_extensions_root,
+                runtime_state.current_os,
+            )?;
+            Ok(SavedExtensionSettings {
+                message: format!("Saved settings for {}", target.display_name),
+                target,
+            })
+        })();
+        send_ui_signal(
+            &ui_tx,
+            &ui_context,
+            UiSignal::ExtensionSettingsSaved(result),
         );
     });
 }
@@ -1027,8 +1230,15 @@ fn spawn_bundled_extension_enabled_update(
                 &runtime_state.bundled_extensions_root,
                 runtime_state.current_os,
             )?;
+            let extension_settings_available = extension_settings_available_for_state(
+                &runtime_state.bundled_extensions_root,
+                &install_root,
+                runtime_state.current_os,
+                &state,
+            );
             Ok(InstalledExtensionsUpdate {
                 state,
+                extension_settings_available,
                 message: extension_enabled_message(&extension.name, enabled),
             })
         })();
@@ -1038,6 +1248,53 @@ fn spawn_bundled_extension_enabled_update(
             UiSignal::InstalledExtensionsUpdated(result),
         );
     });
+}
+
+fn load_extension_settings(
+    runtime_state: &RuntimeState,
+    target: ExtensionSettingsTarget,
+) -> Result<LoadedExtensionSettings, String> {
+    let install_root = extension_install_root()?;
+    let schema = load_extension_settings_schema(runtime_state.current_os, &target)?;
+    let stored_values = load_extension_settings_values(&install_root, &target.extension_id)?;
+    let resolved_values = resolved_extension_settings_values(&schema, &stored_values);
+
+    Ok(LoadedExtensionSettings {
+        target,
+        schema,
+        values: resolved_values,
+    })
+}
+
+fn load_extension_settings_schema(
+    current_os: Os,
+    target: &ExtensionSettingsTarget,
+) -> Result<crate::core::extensions::settings::ExtensionSettingsSchema, String> {
+    match target.kind {
+        ExtensionKind::Static => load_static_extension_settings_schema(&target.installed_path)?
+            .ok_or_else(|| {
+                format!(
+                    "{} does not currently expose custom settings",
+                    target.display_name
+                )
+            }),
+        ExtensionKind::WasmPlugin => LoadedPlugin::load_settings_schema_from_manifest(
+            &target.installed_path,
+            current_os,
+            Arc::new(|_text| {}),
+            Arc::new(plugin_host_current_date_text),
+            Arc::new(plugin_host_storage_root),
+            Arc::new(plugin_host_settings_text),
+            #[cfg(debug_assertions)]
+            process_performance_snapshot_logger(),
+        )?
+        .ok_or_else(|| {
+            format!(
+                "{} does not currently expose custom settings",
+                target.display_name
+            )
+        }),
+    }
 }
 
 fn extension_enabled_message(display_name: &str, enabled: bool) -> String {
@@ -1378,8 +1635,7 @@ mod tests {
     #[test]
     fn bundled_extensions_include_static_configs_and_wasm_plugins() {
         let root = tempfile::tempdir().expect("temp dir should be created");
-        std::fs::create_dir_all(root.path().join("static"))
-            .expect("static dir should be created");
+        std::fs::create_dir_all(root.path().join("static")).expect("static dir should be created");
         std::fs::create_dir_all(root.path().join("plugins").join("ahk_agent"))
             .expect("plugin dir should be created");
         std::fs::write(
@@ -1418,16 +1674,12 @@ permissions = []
         let bundled = bundled_extensions(root.path(), Os::Windows, &InstalledState::default());
 
         assert_eq!(bundled.len(), 2);
-        assert!(bundled
-            .iter()
-            .any(|extension| extension.id == "windows"
-                && extension.kind == ExtensionKind::Static
-                && extension.version == "schema 2"));
-        assert!(bundled
-            .iter()
-            .any(|extension| extension.id == "ahk_agent"
-                && extension.kind == ExtensionKind::WasmPlugin
-                && extension.version == "0.1.0"));
+        assert!(bundled.iter().any(|extension| extension.id == "windows"
+            && extension.kind == ExtensionKind::Static
+            && extension.version == "schema 2"));
+        assert!(bundled.iter().any(|extension| extension.id == "ahk_agent"
+            && extension.kind == ExtensionKind::WasmPlugin
+            && extension.version == "0.1.0"));
     }
 
     #[test]

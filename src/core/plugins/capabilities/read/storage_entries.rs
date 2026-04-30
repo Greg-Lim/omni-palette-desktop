@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 
 use wasmtime::{Caller, Linker};
 
@@ -70,7 +67,8 @@ pub(crate) fn list_storage_entries_json(root: &Path) -> Result<String, String> {
     let mut entries = Vec::new();
     collect_storage_entries(root, Path::new(""), &mut entries)?;
     entries.sort();
-    serde_json::to_string(&entries).map_err(|err| format!("Could not serialize storage entries: {err}"))
+    serde_json::to_string(&entries)
+        .map_err(|err| format!("Could not serialize storage entries: {err}"))
 }
 
 fn collect_storage_entries(
@@ -83,8 +81,12 @@ fn collect_storage_entries(
     } else {
         root.join(relative)
     };
-    let dir_entries = fs::read_dir(&folder)
-        .map_err(|err| format!("Could not read storage directory {}: {err}", folder.display()))?;
+    let dir_entries = fs::read_dir(&folder).map_err(|err| {
+        format!(
+            "Could not read storage directory {}: {err}",
+            folder.display()
+        )
+    })?;
 
     for entry in dir_entries {
         let entry = entry.map_err(|err| format!("Could not read storage entry: {err}"))?;
@@ -145,8 +147,11 @@ mod tests {
             .expect("nested dir should be created");
         fs::write(temp.path().join("scripts").join("alpha.json"), "{}")
             .expect("alpha file should be written");
-        fs::write(temp.path().join("scripts").join("nested").join("beta.json"), "{}")
-            .expect("beta file should be written");
+        fs::write(
+            temp.path().join("scripts").join("nested").join("beta.json"),
+            "{}",
+        )
+        .expect("beta file should be written");
 
         let json = list_storage_entries_json(temp.path()).expect("listing should succeed");
 

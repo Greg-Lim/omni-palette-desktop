@@ -13,6 +13,7 @@ pub(crate) type WriteTextFn = Arc<dyn Fn(&str) + Send + Sync>;
 pub(crate) type ReadTimeTextFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
 pub(crate) type ResolvePluginStorageRootFn =
     Arc<dyn Fn(&str) -> Result<PathBuf, String> + Send + Sync>;
+pub(crate) type ReadSettingsTextFn = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -20,6 +21,7 @@ pub(crate) enum PluginPermission {
     WriteText,
     ReadTime,
     ReadStorage,
+    ReadSettings,
     #[cfg(debug_assertions)]
     WritePerformanceLog,
 }
@@ -29,6 +31,7 @@ pub(crate) struct PluginHostContext {
     pub(crate) write_text: WriteTextFn,
     pub(crate) read_time_text: ReadTimeTextFn,
     pub(crate) resolve_storage_root: ResolvePluginStorageRootFn,
+    pub(crate) read_settings_text: ReadSettingsTextFn,
     #[cfg(debug_assertions)]
     pub(crate) write_performance_log: LogPerformanceSnapshotFn,
 }

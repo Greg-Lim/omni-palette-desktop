@@ -3,8 +3,11 @@ name = "AHK"
 platform = "windows"
 version = "0.1.0"
 wasm = "plugin.wasm"
-permissions = ["read_storage", "write_text"]
+permissions = ["read_storage", "read_settings", "write_text"]
 
 [app]
 default_focus_state = "global"
 default_tags = ["ahk"]
+
+[settings]
+source = "wasm"

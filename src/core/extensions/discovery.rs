@@ -307,7 +307,10 @@ mod tests {
         fs::create_dir_all(bundled.join("plugins").join("ahk_agent"))
             .expect("bundled plugin dir should be created");
         fs::write(
-            bundled.join("plugins").join("ahk_agent").join("plugin.toml"),
+            bundled
+                .join("plugins")
+                .join("ahk_agent")
+                .join("plugin.toml"),
             "",
         )
         .expect("bundled plugin manifest should be written");

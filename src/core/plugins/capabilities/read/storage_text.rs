@@ -80,7 +80,8 @@ pub(crate) fn register(linker: &mut Linker<PluginStoreState>) -> Result<(), Stri
 pub(crate) fn read_storage_text(root: &Path, relative_path: &str) -> Result<String, String> {
     let relative = normalize_relative_storage_path(relative_path)?;
     let path = root.join(relative);
-    fs::read_to_string(&path).map_err(|err| format!("Could not read storage file {}: {err}", path.display()))
+    fs::read_to_string(&path)
+        .map_err(|err| format!("Could not read storage file {}: {err}", path.display()))
 }
 
 fn normalize_relative_storage_path(relative_path: &str) -> Result<PathBuf, String> {
@@ -94,7 +95,9 @@ fn normalize_relative_storage_path(relative_path: &str) -> Result<PathBuf, Strin
             Component::Normal(segment) => normalized.push(segment),
             Component::CurDir => {}
             Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
-                return Err(format!("Storage path must stay within the plugin root: {relative_path}"));
+                return Err(format!(
+                    "Storage path must stay within the plugin root: {relative_path}"
+                ));
             }
         }
     }
@@ -114,11 +117,14 @@ mod tests {
     fn reads_text_files_from_relative_storage_paths() {
         let temp = tempfile::tempdir().expect("temp dir should be created");
         fs::create_dir_all(temp.path().join("scripts")).expect("scripts dir should be created");
-        fs::write(temp.path().join("scripts").join("alpha.json"), "{\"ok\":true}")
-            .expect("storage file should be written");
+        fs::write(
+            temp.path().join("scripts").join("alpha.json"),
+            "{\"ok\":true}",
+        )
+        .expect("storage file should be written");
 
-        let text =
-            read_storage_text(temp.path(), "scripts/alpha.json").expect("storage read should succeed");
+        let text = read_storage_text(temp.path(), "scripts/alpha.json")
+            .expect("storage read should succeed");
 
         assert_eq!(text, "{\"ok\":true}");
     }

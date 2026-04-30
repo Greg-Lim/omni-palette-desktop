@@ -21,7 +21,7 @@ use std::{
 #[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
-    capabilities::{ReadTimeTextFn, ResolvePluginStorageRootFn, WriteTextFn},
+    capabilities::{ReadSettingsTextFn, ReadTimeTextFn, ResolvePluginStorageRootFn, WriteTextFn},
     command::PluginApplication,
     runtime::LoadedPlugin,
 };
@@ -66,6 +66,7 @@ impl PluginRegistry {
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
         resolve_storage_root: ResolvePluginStorageRootFn,
+        read_settings_text: ReadSettingsTextFn,
         #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
     ) -> Self {
         let mut plugins = HashMap::new();
@@ -78,6 +79,7 @@ impl PluginRegistry {
                 Arc::clone(&write_text),
                 Arc::clone(&read_time_text),
                 Arc::clone(&resolve_storage_root),
+                Arc::clone(&read_settings_text),
                 #[cfg(debug_assertions)]
                 Arc::clone(&write_performance_log),
             ) {
@@ -111,6 +113,7 @@ impl PluginRegistry {
             typed_text,
             Arc::new(std::sync::Mutex::new(Vec::new())),
             Vec::new(),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         )
     }
@@ -122,9 +125,15 @@ impl PluginRegistry {
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
         read_time_requests: Arc<std::sync::Mutex<Vec<String>>>,
         storage_files: Vec<(String, String, String)>,
+        settings_json_by_plugin: Vec<(String, String)>,
         #[cfg(debug_assertions)] performance_logs: Arc<std::sync::Mutex<Vec<String>>>,
     ) -> Self {
         let storage_base_root = prepare_test_storage_root(&storage_files);
+        let settings_json_by_plugin = Arc::new(
+            settings_json_by_plugin
+                .into_iter()
+                .collect::<HashMap<String, String>>(),
+        );
         Self::load(
             manifest_paths,
             current_os,
@@ -142,6 +151,12 @@ impl PluginRegistry {
                 Ok("6 Apr".to_string())
             }),
             Arc::new(move |plugin_id| Ok(storage_base_root.join(plugin_id))),
+            Arc::new(move |plugin_id| {
+                Ok(settings_json_by_plugin
+                    .get(plugin_id)
+                    .cloned()
+                    .unwrap_or_else(|| "{}".to_string()))
+            }),
             #[cfg(debug_assertions)]
             Arc::new(move || {
                 performance_logs
@@ -372,6 +387,7 @@ mod tests {
             Arc::clone(&typed),
             Arc::clone(&read_time_requests),
             Vec::new(),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -404,6 +420,7 @@ mod tests {
             typed,
             read_time_requests,
             Vec::new(),
+            Vec::new(),
             performance_logs,
         );
         let app = registry
@@ -429,6 +446,7 @@ mod tests {
             Os::Windows,
             typed,
             read_time_requests,
+            Vec::new(),
             Vec::new(),
             Arc::clone(&performance_logs),
         );
@@ -530,6 +548,7 @@ default_focus_state = "global"
             Os::Windows,
             typed,
             read_time_requests,
+            Vec::new(),
             Vec::new(),
             Arc::clone(&performance_logs),
         );
@@ -663,6 +682,7 @@ default_focus_state = "global"
             Arc::clone(&typed),
             Arc::clone(&read_time_requests),
             Vec::new(),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -688,6 +708,7 @@ default_focus_state = "global"
             typed,
             read_time_requests,
             ahk_storage_files("^h::MsgBox \"hi\""),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -699,7 +720,7 @@ default_focus_state = "global"
 
         assert_eq!(app.name, "AHK");
         assert_eq!(app.commands.len(), 1);
-        assert_eq!(app.commands[0].name, "Demo : Ctrl+H");
+        assert_eq!(app.commands[0].name, "AHK: Demo : Ctrl+H");
         assert_eq!(app.commands[0].shortcut_text.as_deref(), Some("Ctrl+H"));
         assert!(app.commands[0].cmd.is_some());
     }
@@ -714,6 +735,7 @@ default_focus_state = "global"
             typed,
             read_time_requests,
             ahk_storage_files(":?*:up;::\u{2B06}\u{FE0F}"),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -725,7 +747,7 @@ default_focus_state = "global"
 
         assert_eq!(app.name, "AHK");
         assert_eq!(app.commands.len(), 1);
-        assert_eq!(app.commands[0].name, "Demo : up; -> ⬆️");
+        assert_eq!(app.commands[0].name, "AHK: Demo : up; -> ⬆️");
         assert_eq!(app.commands[0].shortcut_text.as_deref(), Some(""));
         assert!(app.commands[0].cmd.is_none());
     }
@@ -740,6 +762,7 @@ default_focus_state = "global"
             Arc::clone(&typed),
             read_time_requests,
             ahk_storage_files(":?*:up;::\u{2B06}\u{FE0F}"),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -781,6 +804,7 @@ default_focus_state = "global"
             typed,
             read_time_requests,
             ahk_storage_files(script_text),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -797,9 +821,9 @@ default_focus_state = "global"
                 .map(|command| command.name.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                "Demo : up; -> \u{2B06}\u{FE0F}",
-                "Demo : down; -> \u{2B07}\u{FE0F}",
-                "Demo : ?; -> \u{2753}",
+                "AHK: Demo : up; -> \u{2B06}\u{FE0F}",
+                "AHK: Demo : down; -> \u{2B07}\u{FE0F}",
+                "AHK: Demo : ?; -> \u{2753}",
             ]
         );
     }
@@ -823,6 +847,7 @@ default_focus_state = "global"
             typed,
             read_time_requests,
             ahk_storage_files(&script_text),
+            Vec::new(),
             Arc::new(std::sync::Mutex::new(Vec::new())),
         );
 
@@ -833,7 +858,7 @@ default_focus_state = "global"
             .expect("ahk plugin should load");
 
         assert_eq!(app.commands.len(), 200);
-        assert_eq!(app.commands[0].name, "Demo : item0; -> value0");
-        assert_eq!(app.commands[199].name, "Demo : item199; -> value199");
+        assert_eq!(app.commands[0].name, "AHK: Demo : item0; -> value0");
+        assert_eq!(app.commands[199].name, "AHK: Demo : item199; -> value199");
     }
 }

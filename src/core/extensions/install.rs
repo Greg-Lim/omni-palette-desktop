@@ -650,7 +650,10 @@ mod tests {
         let state = set_bundled_extension_enabled(root.path(), &bundled_plugin, false)
             .expect("bundled plugin state should persist");
 
-        assert_eq!(state.enabled_for("ahk_agent", BUNDLED_SOURCE_ID), Some(false));
+        assert_eq!(
+            state.enabled_for("ahk_agent", BUNDLED_SOURCE_ID),
+            Some(false)
+        );
         assert_eq!(state.extensions.len(), 1);
         assert_eq!(state.extensions[0].kind, ExtensionKind::WasmPlugin);
         assert_eq!(

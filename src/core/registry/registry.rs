@@ -1,10 +1,6 @@
 // register action is for the user to register new actions given the context and action
 
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use log::{error, info};
 
@@ -19,7 +15,10 @@ use crate::{
         SequenceKeyConfig,
     },
     core::{
-        extensions::{discovery::ExtensionDiscovery, extensions::load_config},
+        extensions::{
+            discovery::ExtensionDiscovery, extensions::load_config,
+            settings::extension_settings_json,
+        },
         plugins::{PluginApplication, PluginRegistry},
     },
     domain::{
@@ -67,6 +66,7 @@ impl MasterRegistry {
             Arc::new(send_text),
             Arc::new(current_date_text),
             Arc::new(plugin_storage_root),
+            Arc::new(plugin_settings_text),
             #[cfg(debug_assertions)]
             process_performance_snapshot_logger(),
         ));
@@ -475,6 +475,12 @@ fn plugin_storage_root(plugin_id: &str) -> Result<PathBuf, String> {
         .join(plugin_id))
 }
 
+fn plugin_settings_text(plugin_id: &str) -> Result<String, String> {
+    let install_root = crate::core::extensions::discovery::user_extensions_root()
+        .ok_or_else(|| "APPDATA is not available".to_string())?;
+    extension_settings_json(&install_root, plugin_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -690,7 +696,7 @@ cmd = { sequence = [
             process_name: "ahk_agent".to_string(),
             commands: vec![PluginCommand {
                 id: "script_hotkey".to_string(),
-                name: "Demo : Ctrl+H".to_string(),
+                name: "AHK: Demo : Ctrl+H".to_string(),
                 priority: CommandPriority::Medium,
                 focus_state: FocusState::Global,
                 favorite: false,

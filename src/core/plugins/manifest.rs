@@ -18,6 +18,7 @@ pub(crate) struct PluginManifest {
     #[serde(default)]
     pub permissions: Vec<PluginPermission>,
     pub app: Option<PluginAppConfig>,
+    pub settings: Option<PluginSettingsConfig>,
 }
 
 impl PluginManifest {
@@ -36,4 +37,15 @@ impl PluginManifest {
 pub(crate) struct PluginAppConfig {
     pub default_focus_state: Option<FocusState>,
     pub default_tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PluginSettingsConfig {
+    pub source: PluginSettingsSource,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PluginSettingsSource {
+    Wasm,
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -10,9 +10,15 @@ use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog, Extension
 use crate::core::extensions::install::{
     BundledExtension, InstalledExtension, InstalledState, BUNDLED_SOURCE_ID, GITHUB_SOURCE_ID,
 };
+use crate::core::extensions::settings::{
+    extension_settings_key, ExtensionSettingItem, ExtensionSettingsCategory,
+    ExtensionSettingsSchema, ExtensionSettingsTarget, ExtensionSettingsValues,
+    LoadedExtensionSettings, SavedExtensionSettings,
+};
 use crate::domain::action::Os;
 use crate::domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut};
 use crate::ui::app::{InstalledExtensionsUpdate, UiEvent};
+use crate::ui::components::toggle_switch;
 
 const SETTINGS_VIEWPORT_ID: &str = "omni_palette_settings";
 const SETTINGS_WIDTH: f32 = 1180.0;
@@ -52,6 +58,7 @@ pub struct SettingsBootstrap {
     pub current_os: Os,
     pub install_root: Option<PathBuf>,
     pub bundled_extensions: Vec<BundledExtension>,
+    pub extension_settings_available: HashSet<String>,
     pub installed_state: InstalledState,
     pub installed_state_error: Option<String>,
 }
@@ -75,6 +82,22 @@ struct SettingsToast {
     created_at: Instant,
 }
 
+#[derive(Debug, Clone)]
+struct ExtensionSettingsPanelState {
+    target: ExtensionSettingsTarget,
+    schema: ExtensionSettingsSchema,
+    draft_values: ExtensionSettingsValues,
+    saved_values: ExtensionSettingsValues,
+    expanded_categories: HashSet<String>,
+    saving: bool,
+}
+
+impl ExtensionSettingsPanelState {
+    fn is_dirty(&self) -> bool {
+        self.draft_values != self.saved_values
+    }
+}
+
 #[derive(Debug)]
 pub struct SettingsState {
     pub open: bool,
@@ -84,6 +107,7 @@ pub struct SettingsState {
     current_os: Os,
     install_root: Option<PathBuf>,
     bundled_extensions: Vec<BundledExtension>,
+    extension_settings_available: HashSet<String>,
     draft: RuntimeConfig,
     saved: RuntimeConfig,
     installed_state: InstalledState,
@@ -94,6 +118,8 @@ pub struct SettingsState {
     catalog_filter_text: String,
     extension_busy: Option<String>,
     pending_uninstall: Option<PendingUninstall>,
+    loading_extension_settings_key: Option<String>,
+    extension_settings_panel: Option<ExtensionSettingsPanelState>,
     saving: bool,
     recording_hotkey: bool,
     status: Option<SettingsToast>,
@@ -109,6 +135,7 @@ impl SettingsState {
             current_os: bootstrap.current_os,
             install_root: bootstrap.install_root,
             bundled_extensions: bootstrap.bundled_extensions,
+            extension_settings_available: bootstrap.extension_settings_available,
             draft: bootstrap.config.clone(),
             saved: bootstrap.config,
             installed_state: bootstrap.installed_state,
@@ -119,6 +146,8 @@ impl SettingsState {
             catalog_filter_text: String::new(),
             extension_busy: None,
             pending_uninstall: None,
+            loading_extension_settings_key: None,
+            extension_settings_panel: None,
             saving: false,
             recording_hotkey: false,
             status: None,
@@ -181,6 +210,7 @@ impl SettingsState {
         match result {
             Ok(update) => {
                 self.installed_state = update.state;
+                self.extension_settings_available = update.extension_settings_available;
                 self.sync_bundled_extension_enabled();
                 self.installed_state_error = None;
                 self.set_status(update.message);
@@ -196,6 +226,45 @@ impl SettingsState {
         });
     }
 
+    pub fn extension_settings_loaded(&mut self, result: Result<LoadedExtensionSettings, String>) {
+        self.loading_extension_settings_key = None;
+        match result {
+            Ok(loaded) => {
+                let expanded_categories = default_expanded_categories(&loaded.schema);
+                self.extension_settings_panel = Some(ExtensionSettingsPanelState {
+                    target: loaded.target,
+                    schema: loaded.schema,
+                    draft_values: loaded.values.clone(),
+                    saved_values: loaded.values,
+                    expanded_categories,
+                    saving: false,
+                });
+            }
+            Err(err) => self.set_status(err),
+        }
+    }
+
+    pub fn extension_settings_saved(&mut self, result: Result<SavedExtensionSettings, String>) {
+        match result {
+            Ok(saved) => {
+                if self
+                    .extension_settings_panel
+                    .as_ref()
+                    .is_some_and(|panel| panel.target.key() == saved.target.key())
+                {
+                    self.extension_settings_panel = None;
+                }
+                self.set_status(saved.message);
+            }
+            Err(err) => {
+                if let Some(panel) = &mut self.extension_settings_panel {
+                    panel.saving = false;
+                }
+                self.set_status(err);
+            }
+        }
+    }
+
     fn is_dirty(&self) -> bool {
         self.draft != self.saved
     }
@@ -206,6 +275,44 @@ impl SettingsState {
                 .installed_state
                 .enabled_for(&extension.id, BUNDLED_SOURCE_ID)
                 .unwrap_or(true);
+        }
+    }
+
+    fn has_extension_settings(&self, extension_id: &str, source_id: &str) -> bool {
+        self.extension_settings_available
+            .contains(&extension_settings_key(extension_id, source_id))
+    }
+
+    fn settings_target_for_bundled_extension(
+        &self,
+        extension: &BundledExtension,
+    ) -> ExtensionSettingsTarget {
+        ExtensionSettingsTarget {
+            extension_id: extension.id.clone(),
+            source_id: BUNDLED_SOURCE_ID.to_string(),
+            display_name: extension.name.clone(),
+            kind: extension.kind,
+            installed_path: extension.installed_path.clone(),
+        }
+    }
+
+    fn settings_target_for_installed_extension(
+        &self,
+        extension: &InstalledExtension,
+        display_name: String,
+    ) -> ExtensionSettingsTarget {
+        let installed_path = match (&self.install_root, extension.installed_path.is_absolute()) {
+            (_, true) => extension.installed_path.clone(),
+            (Some(root), false) => root.join(&extension.installed_path),
+            (None, false) => extension.installed_path.clone(),
+        };
+
+        ExtensionSettingsTarget {
+            extension_id: extension.id.clone(),
+            source_id: extension.source_id.clone(),
+            display_name,
+            kind: extension.kind,
+            installed_path,
         }
     }
 
@@ -255,6 +362,7 @@ impl SettingsState {
                 });
         });
         self.draw_status_toast(ui.ctx());
+        self.draw_extension_settings_panel(ui.ctx(), event_tx);
     }
 
     fn draw_sidebar(&mut self, ui: &mut egui::Ui) {
@@ -538,10 +646,8 @@ impl SettingsState {
 
     fn draw_extension_source(&mut self, ui: &mut egui::Ui, event_tx: &Sender<UiEvent>) {
         ui.horizontal(|ui| {
-            ui.checkbox(
-                &mut self.draft.github.enabled,
-                egui::RichText::new("Enable remote extension catalog").color(TEXT_PRIMARY),
-            );
+            ui.add(toggle_switch::toggle(&mut self.draft.github.enabled));
+            ui.label(egui::RichText::new("Enable remote extension catalog").color(TEXT_PRIMARY));
             let state = if self.draft.github.enabled {
                 ("Enabled", SUCCESS)
             } else {
@@ -626,19 +732,41 @@ impl SettingsState {
                     });
                 });
 
-                let action_label = extension_toggle_label(extension.enabled);
                 let busy_key = extension_busy_key(&extension.id, BUNDLED_SOURCE_ID);
                 let busy = self.extension_busy.as_deref() == Some(busy_key.as_str());
-                let next_enabled = !extension.enabled;
+                let settings_key = extension_settings_key(&extension.id, BUNDLED_SOURCE_ID);
+                let loading_settings =
+                    self.loading_extension_settings_key.as_deref() == Some(settings_key.as_str());
+                let has_settings = self.has_extension_settings(&extension.id, BUNDLED_SOURCE_ID);
                 right_aligned_actions(ui, |ui| {
-                    if ui
-                        .add_enabled(!busy, extension_toggle_button(action_label, next_enabled))
-                        .clicked()
+                    if has_settings
+                        && ui
+                            .add_enabled(
+                                !loading_settings,
+                                secondary_button_widget(if loading_settings {
+                                    "Loading..."
+                                } else {
+                                    "Settings"
+                                }),
+                            )
+                            .clicked()
                     {
+                        self.loading_extension_settings_key = Some(settings_key);
+                        let _ = event_tx.send(UiEvent::OpenExtensionSettingsRequested {
+                            target: self.settings_target_for_bundled_extension(&extension),
+                        });
+                    }
+
+                    let mut enabled = extension.enabled;
+                    ui.add_enabled_ui(!busy, |ui| {
+                        ui.add(toggle_switch::toggle(&mut enabled));
+                    });
+                    ui.label(extension_enabled_label(extension.enabled));
+                    if enabled != extension.enabled {
                         self.extension_busy = Some(busy_key);
                         let _ = event_tx.send(UiEvent::SetBundledExtensionEnabledRequested {
                             extension: extension.clone(),
-                            enabled: next_enabled,
+                            enabled,
                         });
                     }
                 });
@@ -665,6 +793,10 @@ impl SettingsState {
             let busy_key = extension_busy_key(&extension.id, &extension.source_id);
             let busy = self.extension_busy.as_deref() == Some(busy_key.as_str());
             let pending_uninstall = self.is_uninstall_pending(&extension.id, &extension.source_id);
+            let settings_key = extension_settings_key(&extension.id, &extension.source_id);
+            let loading_settings =
+                self.loading_extension_settings_key.as_deref() == Some(settings_key.as_str());
+            let has_settings = self.has_extension_settings(&extension.id, &extension.source_id);
 
             list_row(ui, |ui| {
                 ui.vertical(|ui| {
@@ -675,8 +807,6 @@ impl SettingsState {
                     });
                 });
 
-                let action_label = extension_toggle_label(extension.enabled);
-                let next_enabled = !extension.enabled;
                 right_aligned_actions(ui, |ui| {
                     if pending_uninstall {
                         self.draw_uninstall_confirmation(
@@ -687,6 +817,27 @@ impl SettingsState {
                             busy,
                         );
                     } else {
+                        if has_settings
+                            && ui
+                                .add_enabled(
+                                    !loading_settings,
+                                    secondary_button_widget(if loading_settings {
+                                        "Loading..."
+                                    } else {
+                                        "Settings"
+                                    }),
+                                )
+                                .clicked()
+                        {
+                            self.loading_extension_settings_key = Some(settings_key);
+                            let _ = event_tx.send(UiEvent::OpenExtensionSettingsRequested {
+                                target: self.settings_target_for_installed_extension(
+                                    &extension,
+                                    display_name.clone(),
+                                ),
+                            });
+                        }
+
                         if ui.add_enabled(!busy, danger_button("Uninstall")).clicked() {
                             self.pending_uninstall = Some(PendingUninstall {
                                 extension_id: extension.id.clone(),
@@ -694,16 +845,18 @@ impl SettingsState {
                             });
                         }
 
-                        if ui
-                            .add_enabled(!busy, extension_toggle_button(action_label, next_enabled))
-                            .clicked()
-                        {
+                        let mut enabled = extension.enabled;
+                        ui.add_enabled_ui(!busy, |ui| {
+                            ui.add(toggle_switch::toggle(&mut enabled));
+                        });
+                        ui.label(extension_enabled_label(extension.enabled));
+                        if enabled != extension.enabled {
                             self.extension_busy = Some(busy_key);
                             let _ = event_tx.send(UiEvent::SetExtensionEnabledRequested {
                                 extension_id: extension.id.clone(),
                                 source_id: extension.source_id.clone(),
                                 display_name: display_name.clone(),
-                                enabled: next_enabled,
+                                enabled,
                             });
                         }
                     }
@@ -907,6 +1060,112 @@ impl SettingsState {
             });
         });
     }
+
+    fn draw_extension_settings_panel(&mut self, ctx: &egui::Context, event_tx: &Sender<UiEvent>) {
+        let Some(mut panel) = self.extension_settings_panel.take() else {
+            return;
+        };
+
+        let mut open = true;
+        let mut close_requested = false;
+        let mut save_requested = false;
+        let mut reset_requested = false;
+        let title = format!("{} Settings", panel.target.display_name);
+        let available_size = ctx.content_rect().size();
+        let max_width = (available_size.x - 96.0).max(360.0).min(720.0);
+        let max_height = (available_size.y - 96.0).max(320.0).min(560.0);
+        let window_frame = egui::Frame::window(&ctx.global_style())
+            .fill(SETTINGS_BG)
+            .stroke(egui::Stroke::new(1.0, BORDER))
+            .corner_radius(egui::CornerRadius::same(12))
+            .inner_margin(egui::Margin {
+                left: 18,
+                right: 18,
+                top: 16,
+                bottom: 16,
+            });
+
+        egui::Window::new(title)
+            .id(egui::Id::new(panel.target.key()))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size(egui::vec2(560.0, 440.0))
+            .max_width(max_width)
+            .max_height(max_height)
+            .frame(window_frame)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                apply_settings_visuals(ui);
+                ui.label(
+                    egui::RichText::new(
+                        "These settings affect only this extension and are saved in your user extension folder.",
+                    )
+                    .color(TEXT_MUTED),
+                );
+                ui.add_space(16.0);
+
+                if panel.schema.items.is_empty() {
+                    empty_state(
+                        ui,
+                        "No custom settings are currently available for this extension.",
+                    );
+                } else {
+                    let body_max_height = (max_height - 146.0).max(120.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(body_max_height)
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            for category in rendered_settings_categories(&panel.schema) {
+                                draw_settings_category(ui, &mut panel, category);
+                            }
+                        });
+                }
+
+                ui.add_space(12.0);
+                save_bar(ui, panel.is_dirty(), panel.saving, |ui| {
+                    if ui
+                        .add_enabled(!panel.saving, secondary_button_widget("Reset Defaults"))
+                        .clicked()
+                    {
+                        reset_requested = true;
+                    }
+
+                    if ui
+                        .add_enabled(
+                            panel.is_dirty() && !panel.saving,
+                            primary_button("Save Settings"),
+                        )
+                        .clicked()
+                    {
+                        panel.saving = true;
+                        save_requested = true;
+                    }
+
+                    if ui
+                        .add_enabled(!panel.saving, secondary_button_widget("Close"))
+                        .clicked()
+                    {
+                        close_requested = true;
+                    }
+                });
+            });
+
+        if reset_requested {
+            panel.draft_values = default_extension_settings_values(&panel.schema);
+        }
+
+        if save_requested {
+            let _ = event_tx.send(UiEvent::SaveExtensionSettingsRequested {
+                target: panel.target.clone(),
+                values: panel.draft_values.clone(),
+            });
+        }
+
+        if open && !close_requested {
+            self.extension_settings_panel = Some(panel);
+        }
+    }
 }
 
 pub fn show_settings_viewport(
@@ -1009,6 +1268,220 @@ fn section(
             add_contents(ui);
         });
     ui.add_space(14.0);
+}
+
+#[derive(Debug, Clone)]
+struct RenderedSettingsCategory {
+    category: ExtensionSettingsCategory,
+    items: Vec<ExtensionSettingItem>,
+}
+
+fn default_expanded_categories(schema: &ExtensionSettingsSchema) -> HashSet<String> {
+    schema
+        .categories
+        .iter()
+        .filter(|category| !category.default_collapsed)
+        .map(|category| category.key.clone())
+        .collect()
+}
+
+fn rendered_settings_categories(schema: &ExtensionSettingsSchema) -> Vec<RenderedSettingsCategory> {
+    let mut items_by_category = HashMap::<String, Vec<ExtensionSettingItem>>::new();
+    let mut general_items = Vec::new();
+
+    for item in &schema.items {
+        if let Some(category_key) = &item.category {
+            items_by_category
+                .entry(category_key.clone())
+                .or_default()
+                .push(item.clone());
+        } else {
+            general_items.push(item.clone());
+        }
+    }
+
+    let mut categories = Vec::new();
+    if !general_items.is_empty() {
+        categories.push(RenderedSettingsCategory {
+            category: ExtensionSettingsCategory {
+                key: "__general__".to_string(),
+                label: "General".to_string(),
+                description: None,
+                toggle_key: None,
+                default_collapsed: false,
+            },
+            items: general_items,
+        });
+    }
+
+    for category in &schema.categories {
+        categories.push(RenderedSettingsCategory {
+            category: category.clone(),
+            items: items_by_category.remove(&category.key).unwrap_or_default(),
+        });
+    }
+
+    categories
+}
+
+fn default_extension_settings_values(schema: &ExtensionSettingsSchema) -> ExtensionSettingsValues {
+    schema
+        .items
+        .iter()
+        .map(|item| (item.key.clone(), item.default))
+        .collect()
+}
+
+fn draw_settings_category(
+    ui: &mut egui::Ui,
+    panel: &mut ExtensionSettingsPanelState,
+    category: RenderedSettingsCategory,
+) {
+    let category_key = category.category.key.clone();
+    let mut expanded = panel.expanded_categories.contains(&category_key);
+    let toggle_item = category
+        .category
+        .toggle_key
+        .as_ref()
+        .and_then(|toggle_key| category.items.iter().find(|item| item.key == *toggle_key))
+        .cloned();
+    let mut header_clicked = false;
+
+    egui::Frame::new()
+        .fill(SURFACE_ALT)
+        .stroke(egui::Stroke::new(1.0, BORDER_SOFT))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin {
+            left: 16,
+            right: 16,
+            top: 14,
+            bottom: 14,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let caret = if expanded { "v" } else { ">" };
+                let caret_response = ui.add(
+                    egui::Button::new(egui::RichText::new(caret).color(TEXT_SECONDARY))
+                        .frame(false)
+                        .min_size(egui::vec2(18.0, 18.0)),
+                );
+                let title_response = ui
+                    .vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(&category.category.label)
+                                .size(15.0)
+                                .strong()
+                                .color(TEXT_PRIMARY),
+                        );
+                        if let Some(description) = &category.category.description {
+                            ui.add_space(2.0);
+                            ui.label(
+                                egui::RichText::new(description)
+                                    .size(12.0)
+                                    .color(TEXT_MUTED),
+                            );
+                        }
+                    })
+                    .response
+                    .interact(egui::Sense::click());
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(toggle_item) = &toggle_item {
+                        draw_category_header_toggle(ui, panel, toggle_item);
+                    }
+                });
+
+                header_clicked = caret_response.clicked() || title_response.clicked();
+            });
+
+            if header_clicked {
+                expanded = !expanded;
+            }
+
+            if expanded {
+                let hidden_toggle_key = category.category.toggle_key.as_deref();
+                let child_items = category
+                    .items
+                    .into_iter()
+                    .filter(|item| Some(item.key.as_str()) != hidden_toggle_key)
+                    .collect::<Vec<_>>();
+
+                if !child_items.is_empty() {
+                    ui.add_space(10.0);
+                    for item in child_items {
+                        draw_toggle_setting_row(ui, panel, item);
+                    }
+                }
+            }
+        });
+
+    if expanded {
+        panel.expanded_categories.insert(category_key);
+    } else {
+        panel.expanded_categories.remove(&category_key);
+    }
+    ui.add_space(10.0);
+}
+
+fn draw_category_header_toggle(
+    ui: &mut egui::Ui,
+    panel: &mut ExtensionSettingsPanelState,
+    item: &ExtensionSettingItem,
+) {
+    let value = panel
+        .draft_values
+        .entry(item.key.clone())
+        .or_insert(item.default);
+
+    ui.add(toggle_switch::toggle(value));
+    ui.label(
+        egui::RichText::new(&item.label)
+            .size(12.0)
+            .color(TEXT_SECONDARY),
+    );
+}
+
+fn draw_toggle_setting_row(
+    ui: &mut egui::Ui,
+    panel: &mut ExtensionSettingsPanelState,
+    item: ExtensionSettingItem,
+) {
+    let value = panel
+        .draft_values
+        .entry(item.key.clone())
+        .or_insert(item.default);
+
+    egui::Frame::new()
+        .fill(INPUT_BG)
+        .stroke(egui::Stroke::new(1.0, BORDER_SOFT))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin {
+            left: 12,
+            right: 12,
+            top: 10,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(&item.label).color(TEXT_PRIMARY));
+                    if let Some(description) = item.description {
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(description)
+                                .size(12.0)
+                                .color(TEXT_MUTED),
+                        );
+                    }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(toggle_switch::toggle(value));
+                });
+            });
+        });
+    ui.add_space(8.0);
 }
 
 fn setting_row(ui: &mut egui::Ui, label: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
@@ -1145,36 +1618,6 @@ fn primary_button(label: &str) -> egui::Button<'_> {
     .min_size(egui::vec2(104.0, 32.0))
 }
 
-fn success_button(label: &str) -> egui::Button<'_> {
-    egui::Button::new(
-        egui::RichText::new(label)
-            .strong()
-            .color(egui::Color32::from_rgb(164, 224, 190)),
-    )
-    .fill(egui::Color32::from_rgb(29, 58, 45))
-    .stroke(egui::Stroke::new(
-        1.0,
-        egui::Color32::from_rgb(75, 148, 108),
-    ))
-    .corner_radius(egui::CornerRadius::same(7))
-    .min_size(egui::vec2(88.0, 32.0))
-}
-
-fn warning_button(label: &str) -> egui::Button<'_> {
-    egui::Button::new(
-        egui::RichText::new(label)
-            .strong()
-            .color(egui::Color32::from_rgb(232, 183, 112)),
-    )
-    .fill(egui::Color32::from_rgb(58, 47, 32))
-    .stroke(egui::Stroke::new(
-        1.0,
-        egui::Color32::from_rgb(184, 132, 64),
-    ))
-    .corner_radius(egui::CornerRadius::same(7))
-    .min_size(egui::vec2(88.0, 32.0))
-}
-
 fn danger_button(label: &str) -> egui::Button<'_> {
     egui::Button::new(
         egui::RichText::new(label)
@@ -1187,19 +1630,11 @@ fn danger_button(label: &str) -> egui::Button<'_> {
     .min_size(egui::vec2(88.0, 32.0))
 }
 
-fn extension_toggle_button(label: &str, next_enabled: bool) -> egui::Button<'_> {
-    if next_enabled {
-        success_button(label)
-    } else {
-        warning_button(label)
-    }
-}
-
-fn extension_toggle_label(enabled: bool) -> &'static str {
+fn extension_enabled_label(enabled: bool) -> &'static str {
     if enabled {
-        "Disable"
+        "Enabled"
     } else {
-        "Enable"
+        "Disabled"
     }
 }
 
@@ -1587,11 +2022,18 @@ fn map_egui_key(key: egui::Key) -> Option<Key> {
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_catalog_entries, installed_versions_by_id, validate_catalog_source};
+    use super::{
+        default_expanded_categories, filter_catalog_entries, installed_versions_by_id,
+        rendered_settings_categories, validate_catalog_source,
+    };
     use crate::config::runtime::GitHubExtensionSource;
     use crate::core::extensions::catalog::{CatalogEntry, ExtensionKind};
     use crate::core::extensions::install::{
         InstalledExtension, BUNDLED_SOURCE_ID, GITHUB_SOURCE_ID,
+    };
+    use crate::core::extensions::settings::{
+        ExtensionSettingItem, ExtensionSettingKind, ExtensionSettingsCategory,
+        ExtensionSettingsSchema,
     };
     use crate::domain::action::Os;
     use std::path::PathBuf;
@@ -1741,5 +2183,68 @@ mod tests {
 
         assert!(!versions.contains_key("windows"));
         assert_eq!(versions.get("chrome").map(String::as_str), Some("0.1.0"));
+    }
+
+    #[test]
+    fn rendered_settings_categories_synthesizes_general_for_uncategorized_items() {
+        let categories = rendered_settings_categories(&ExtensionSettingsSchema {
+            categories: vec![ExtensionSettingsCategory {
+                key: "script".to_string(),
+                label: "Script".to_string(),
+                description: None,
+                toggle_key: None,
+                default_collapsed: true,
+            }],
+            items: vec![
+                ExtensionSettingItem {
+                    key: "general.toggle".to_string(),
+                    label: "General toggle".to_string(),
+                    description: None,
+                    category: None,
+                    kind: ExtensionSettingKind::Toggle,
+                    default: true,
+                },
+                ExtensionSettingItem {
+                    key: "script.toggle".to_string(),
+                    label: "Script toggle".to_string(),
+                    description: None,
+                    category: Some("script".to_string()),
+                    kind: ExtensionSettingKind::Toggle,
+                    default: false,
+                },
+            ],
+        });
+
+        assert_eq!(categories.len(), 2);
+        assert_eq!(categories[0].category.label, "General");
+        assert_eq!(categories[0].items.len(), 1);
+        assert_eq!(categories[1].category.key, "script");
+        assert_eq!(categories[1].items[0].key, "script.toggle");
+    }
+
+    #[test]
+    fn default_expanded_categories_uses_default_collapsed_flag() {
+        let expanded = default_expanded_categories(&ExtensionSettingsSchema {
+            categories: vec![
+                ExtensionSettingsCategory {
+                    key: "open".to_string(),
+                    label: "Open".to_string(),
+                    description: None,
+                    toggle_key: None,
+                    default_collapsed: false,
+                },
+                ExtensionSettingsCategory {
+                    key: "closed".to_string(),
+                    label: "Closed".to_string(),
+                    description: None,
+                    toggle_key: None,
+                    default_collapsed: true,
+                },
+            ],
+            items: vec![],
+        });
+
+        assert!(expanded.contains("open"));
+        assert!(!expanded.contains("closed"));
     }
 }

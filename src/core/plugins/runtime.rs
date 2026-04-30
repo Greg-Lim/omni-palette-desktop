@@ -2,15 +2,18 @@ use std::path::Path;
 
 use wasmtime::{Config, Engine, Linker, Module, Store};
 
+use crate::core::extensions::settings::{
+    validate_extension_settings_schema, ExtensionSettingsSchema,
+};
 #[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
     capabilities::{
-        register_capabilities, PluginHostContext, PluginStoreState, ReadTimeTextFn,
-        ResolvePluginStorageRootFn, WriteTextFn,
+        register_capabilities, PluginHostContext, PluginStoreState, ReadSettingsTextFn,
+        ReadTimeTextFn, ResolvePluginStorageRootFn, WriteTextFn,
     },
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
-    manifest::PluginManifest,
+    manifest::{PluginManifest, PluginSettingsSource},
 };
 use crate::domain::action::Os;
 
@@ -34,6 +37,7 @@ impl LoadedPlugin {
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
         resolve_storage_root: ResolvePluginStorageRootFn,
+        read_settings_text: ReadSettingsTextFn,
         #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
     ) -> Result<Self, String> {
         let manifest = PluginManifest::load(manifest_path)?;
@@ -49,12 +53,17 @@ impl LoadedPlugin {
             .ok_or_else(|| "Plugin manifest has no parent directory".to_string())?;
         let wasm_path = plugin_dir.join(&manifest.wasm);
 
-        let mut config = Config::new();
-        config.consume_fuel(true);
-        let engine =
-            Engine::new(&config).map_err(|err| format!("Could not create engine: {err}"))?;
-        let module = Module::from_file(&engine, &wasm_path)
-            .map_err(|err| format!("Could not load plugin module {:?}: {err}", wasm_path))?;
+        let (engine, module) = load_engine_and_module(&wasm_path)?;
+        let host_context = PluginHostContext {
+            write_text,
+            read_time_text,
+            resolve_storage_root,
+            read_settings_text,
+            #[cfg(debug_assertions)]
+            write_performance_log,
+        };
+        let _settings_schema =
+            load_plugin_settings_schema_internal(&manifest, &engine, &module, &host_context)?;
 
         let mut plugin = Self {
             id: manifest.id.clone(),
@@ -63,16 +72,44 @@ impl LoadedPlugin {
             engine,
             module,
             commands: Vec::new(),
-            host_context: PluginHostContext {
-                write_text,
-                read_time_text,
-                resolve_storage_root,
-                #[cfg(debug_assertions)]
-                write_performance_log,
-            },
+            host_context,
         };
         plugin.commands = plugin.register_commands()?;
         Ok(plugin)
+    }
+
+    pub(crate) fn load_settings_schema_from_manifest(
+        manifest_path: &Path,
+        current_os: Os,
+        write_text: WriteTextFn,
+        read_time_text: ReadTimeTextFn,
+        resolve_storage_root: ResolvePluginStorageRootFn,
+        read_settings_text: ReadSettingsTextFn,
+        #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
+    ) -> Result<Option<ExtensionSettingsSchema>, String> {
+        let manifest = PluginManifest::load(manifest_path)?;
+        if manifest.platform != current_os {
+            return Err(format!(
+                "Plugin platform {:?} does not match current OS {:?}",
+                manifest.platform, current_os
+            ));
+        }
+
+        let plugin_dir = manifest_path
+            .parent()
+            .ok_or_else(|| "Plugin manifest has no parent directory".to_string())?;
+        let wasm_path = plugin_dir.join(&manifest.wasm);
+        let (engine, module) = load_engine_and_module(&wasm_path)?;
+        let host_context = PluginHostContext {
+            write_text,
+            read_time_text,
+            resolve_storage_root,
+            read_settings_text,
+            #[cfg(debug_assertions)]
+            write_performance_log,
+        };
+
+        load_plugin_settings_schema_internal(&manifest, &engine, &module, &host_context)
     }
 
     pub(crate) fn id(&self) -> &str {
@@ -142,8 +179,9 @@ impl LoadedPlugin {
         &self,
         allow_host_effects: bool,
     ) -> Result<(Store<PluginStoreState>, wasmtime::Instance), String> {
-        let mut store = Store::new(
+        instantiate_plugin(
             &self.engine,
+            &self.module,
             PluginStoreState {
                 plugin_id: self.id.clone(),
                 permissions: self.manifest.permissions.iter().cloned().collect(),
@@ -151,20 +189,74 @@ impl LoadedPlugin {
                 allow_host_reads: true,
                 allow_host_effects,
             },
-        );
-        store
-            .set_fuel(PLUGIN_FUEL_BUDGET)
-            .map_err(|err| format!("Could not set plugin fuel: {err}"))?;
-
-        let mut linker = Linker::new(&self.engine);
-        register_capabilities(&mut linker)?;
-
-        let instance = linker
-            .instantiate(&mut store, &self.module)
-            .map_err(|err| format!("Could not instantiate plugin: {err}"))?;
-
-        Ok((store, instance))
+        )
     }
+}
+
+fn load_engine_and_module(wasm_path: &Path) -> Result<(Engine, Module), String> {
+    let mut config = Config::new();
+    config.consume_fuel(true);
+    let engine = Engine::new(&config).map_err(|err| format!("Could not create engine: {err}"))?;
+    let module = Module::from_file(&engine, wasm_path)
+        .map_err(|err| format!("Could not load plugin module {:?}: {err}", wasm_path))?;
+    Ok((engine, module))
+}
+
+fn load_plugin_settings_schema_internal(
+    manifest: &PluginManifest,
+    engine: &Engine,
+    module: &Module,
+    host_context: &PluginHostContext,
+) -> Result<Option<ExtensionSettingsSchema>, String> {
+    let Some(settings) = manifest.settings else {
+        return Ok(None);
+    };
+
+    match settings.source {
+        PluginSettingsSource::Wasm => {
+            let (mut store, instance) = instantiate_plugin(
+                engine,
+                module,
+                PluginStoreState {
+                    plugin_id: manifest.id.clone(),
+                    permissions: manifest.permissions.iter().cloned().collect(),
+                    host_context: host_context.clone(),
+                    allow_host_reads: true,
+                    allow_host_effects: false,
+                },
+            )?;
+            let export = instance
+                .get_typed_func::<(), i32>(&mut store, "settings_schema_json")
+                .map_err(|err| format!("Missing settings_schema_json export: {err}"))?;
+            let ptr = export
+                .call(&mut store, ())
+                .map_err(|err| format!("settings_schema_json failed: {err}"))?;
+            let json = read_guest_c_string(&mut store, &instance, ptr as usize)?;
+            let schema: ExtensionSettingsSchema = serde_json::from_str(&json)
+                .map_err(|err| format!("Could not parse settings schema JSON: {err}"))?;
+            Ok(Some(validate_extension_settings_schema(schema)?))
+        }
+    }
+}
+
+fn instantiate_plugin(
+    engine: &Engine,
+    module: &Module,
+    initial_state: PluginStoreState,
+) -> Result<(Store<PluginStoreState>, wasmtime::Instance), String> {
+    let mut store = Store::new(engine, initial_state);
+    store
+        .set_fuel(PLUGIN_FUEL_BUDGET)
+        .map_err(|err| format!("Could not set plugin fuel: {err}"))?;
+
+    let mut linker = Linker::new(engine);
+    register_capabilities(&mut linker)?;
+
+    let instance = linker
+        .instantiate(&mut store, module)
+        .map_err(|err| format!("Could not instantiate plugin: {err}"))?;
+
+    Ok((store, instance))
 }
 
 fn read_guest_c_string(

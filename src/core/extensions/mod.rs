@@ -4,3 +4,4 @@ pub mod discovery;
 pub mod extensions;
 pub mod install;
 pub mod package;
+pub mod settings;

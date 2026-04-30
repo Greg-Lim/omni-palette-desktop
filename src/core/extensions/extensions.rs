@@ -165,6 +165,8 @@ pub fn resolved_config_from_split(
                 .and_then(|app| app.default_focus_state),
             default_tags: app_defaults.and_then(|app| app.default_tags),
         },
+        setting_categories: actions_metadata.setting_categories,
+        settings: actions_metadata.settings,
         actions,
     })
 }
@@ -179,6 +181,12 @@ platform = "windows"
 id = "chrome"
 name = "Chrome"
 process_name = "chrome.exe"
+
+[[settings]]
+key = "chrome.new_ui"
+label = "Enable new UI"
+type = "toggle"
+default = true
 
 [actions]
 
