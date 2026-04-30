@@ -22,7 +22,7 @@ pub const BUNDLED_SOURCE_ID: &str = "bundled";
 pub const GITHUB_SOURCE_ID: &str = "github";
 
 #[derive(Debug, Clone)]
-pub struct BundledStaticExtension {
+pub struct BundledExtension {
     pub id: String,
     pub name: String,
     pub version: String,
@@ -32,7 +32,7 @@ pub struct BundledStaticExtension {
     pub enabled: bool,
 }
 
-impl BundledStaticExtension {
+impl BundledExtension {
     fn to_installed_extension(&self, enabled: bool) -> InstalledExtension {
         InstalledExtension {
             id: self.id.clone(),
@@ -326,7 +326,7 @@ pub fn set_installed_extension_enabled(
 
 pub fn set_bundled_extension_enabled(
     install_root: &Path,
-    extension: &BundledStaticExtension,
+    extension: &BundledExtension,
     enabled: bool,
 ) -> Result<InstalledState, InstallError> {
     let mut state = load_installed_state(install_root)?;
@@ -632,6 +632,31 @@ mod tests {
             &source,
             "https://github.com/other/omni-palette-desktop/releases/download/chrome-v1/chrome.gpext"
         ));
+    }
+
+    #[test]
+    fn set_bundled_extension_enabled_persists_wasm_plugin_state() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let bundled_plugin = BundledExtension {
+            id: "ahk_agent".to_string(),
+            name: "AHK".to_string(),
+            version: "0.1.0".to_string(),
+            platform: Os::Windows,
+            kind: ExtensionKind::WasmPlugin,
+            installed_path: PathBuf::from("plugins/ahk_agent/plugin.toml"),
+            enabled: true,
+        };
+
+        let state = set_bundled_extension_enabled(root.path(), &bundled_plugin, false)
+            .expect("bundled plugin state should persist");
+
+        assert_eq!(state.enabled_for("ahk_agent", BUNDLED_SOURCE_ID), Some(false));
+        assert_eq!(state.extensions.len(), 1);
+        assert_eq!(state.extensions[0].kind, ExtensionKind::WasmPlugin);
+        assert_eq!(
+            state.extensions[0].installed_path,
+            PathBuf::from("plugins/ahk_agent/plugin.toml")
+        );
     }
 
     #[test]

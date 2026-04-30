@@ -1,6 +1,6 @@
 pub(crate) mod capabilities;
 pub mod command;
-mod manifest;
+pub(crate) mod manifest;
 pub mod registry;
 mod runtime;
 

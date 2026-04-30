@@ -16,16 +16,16 @@ use crate::config::{
 };
 use crate::core::extensions::{
     catalog::{CatalogEntry, ExtensionCatalog, ExtensionKind},
-    discovery::{user_extensions_root, ExtensionDiscovery},
+    discovery::{plugin_manifest_paths_in_root, user_extensions_root, ExtensionDiscovery},
     extensions::load_config,
     install::{
         load_installed_state, set_bundled_extension_enabled, set_installed_extension_enabled,
-        uninstall_installed_extension, BundledStaticExtension, ExtensionInstallService,
+        uninstall_installed_extension, BundledExtension, ExtensionInstallService,
         InstalledState, BUNDLED_SOURCE_ID,
     },
 };
 use crate::core::performance::{current_process_private_bytes, current_process_thread_count};
-use crate::core::plugins::PluginRegistry;
+use crate::core::plugins::{manifest::PluginManifest, PluginRegistry};
 use crate::core::registry::registry::{MasterRegistry, UnitAction};
 use crate::domain::action::{ActionExecution, CommandPriority, ContextRoot, FocusState, Os};
 use crate::domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut};
@@ -194,7 +194,7 @@ fn settings_bootstrap(
         },
         None => (InstalledState::default(), None),
     };
-    let bundled_static_extensions = bundled_static_extensions(
+    let bundled_extensions = bundled_extensions(
         Path::new(BUNDLED_EXTENSIONS_ROOT),
         current_os,
         &installed_state,
@@ -206,17 +206,37 @@ fn settings_bootstrap(
         config_error: runtime_config_load.user_config_error,
         current_os,
         install_root,
-        bundled_static_extensions,
+        bundled_extensions,
         installed_state,
         installed_state_error,
     }
+}
+
+fn bundled_extensions(
+    bundled_root: &Path,
+    current_os: Os,
+    installed_state: &InstalledState,
+) -> Vec<BundledExtension> {
+    let mut extensions = bundled_static_extensions(bundled_root, current_os, installed_state);
+    extensions.extend(bundled_plugin_extensions(
+        bundled_root,
+        current_os,
+        installed_state,
+    ));
+    extensions.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| bundled_kind_sort_key(left.kind).cmp(&bundled_kind_sort_key(right.kind)))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    extensions
 }
 
 fn bundled_static_extensions(
     bundled_root: &Path,
     current_os: Os,
     installed_state: &InstalledState,
-) -> Vec<BundledStaticExtension> {
+) -> Vec<BundledExtension> {
     let static_root = bundled_root.join("static");
     let entries = match std::fs::read_dir(&static_root) {
         Ok(entries) => entries,
@@ -231,7 +251,7 @@ fn bundled_static_extensions(
         }
     };
 
-    let mut extensions = entries
+    let extensions = entries
         .filter_map(|entry| {
             let path = entry.ok()?.path();
             if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
@@ -253,7 +273,7 @@ fn bundled_static_extensions(
                 .enabled_for(&config.app.id, BUNDLED_SOURCE_ID)
                 .unwrap_or(true);
 
-            Some(BundledStaticExtension {
+            Some(BundledExtension {
                 id: config.app.id,
                 name: config.app.name,
                 version: format!("schema {}", config.version),
@@ -264,9 +284,54 @@ fn bundled_static_extensions(
             })
         })
         .collect::<Vec<_>>();
-
-    extensions.sort_by(|left, right| left.name.cmp(&right.name));
     extensions
+}
+
+fn bundled_plugin_extensions(
+    bundled_root: &Path,
+    current_os: Os,
+    installed_state: &InstalledState,
+) -> Vec<BundledExtension> {
+    plugin_manifest_paths_in_root(bundled_root)
+        .into_iter()
+        .filter_map(|manifest_path| {
+            let manifest = match PluginManifest::load(&manifest_path) {
+                Ok(manifest) => manifest,
+                Err(err) => {
+                    log::warn!(
+                        "Could not load bundled plugin manifest {:?}: {}",
+                        manifest_path,
+                        err
+                    );
+                    return None;
+                }
+            };
+            if manifest.platform != current_os {
+                return None;
+            }
+
+            let enabled = installed_state
+                .enabled_for(&manifest.id, BUNDLED_SOURCE_ID)
+                .unwrap_or(true);
+
+            Some(BundledExtension {
+                id: manifest.id,
+                name: manifest.name,
+                version: manifest.version,
+                platform: manifest.platform,
+                kind: ExtensionKind::WasmPlugin,
+                installed_path: manifest_path,
+                enabled,
+            })
+        })
+        .collect()
+}
+
+fn bundled_kind_sort_key(kind: ExtensionKind) -> u8 {
+    match kind {
+        ExtensionKind::Static => 0,
+        ExtensionKind::WasmPlugin => 1,
+    }
 }
 
 fn handle_cli_command(runtime_config: &RuntimeConfig, current_os: Os) -> Result<bool, String> {
@@ -948,7 +1013,7 @@ fn spawn_bundled_extension_enabled_update(
     ui_tx: Sender<UiSignal>,
     ui_context: SharedUiContext,
     runtime_state: RuntimeState,
-    extension: BundledStaticExtension,
+    extension: BundledExtension,
     enabled: bool,
 ) {
     std::thread::spawn(move || {
@@ -1308,6 +1373,101 @@ mod tests {
             extension_install_message("Chrome", Some("0.1.0"), "0.2.0"),
             "Updated Chrome from v0.1.0 to v0.2.0"
         );
+    }
+
+    #[test]
+    fn bundled_extensions_include_static_configs_and_wasm_plugins() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        std::fs::create_dir_all(root.path().join("static"))
+            .expect("static dir should be created");
+        std::fs::create_dir_all(root.path().join("plugins").join("ahk_agent"))
+            .expect("plugin dir should be created");
+        std::fs::write(
+            root.path().join("static").join("windows.toml"),
+            r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "windows"
+name = "Windows"
+process_name = "explorer.exe"
+
+[actions.copy]
+name = "Copy"
+cmd = { mods = ["ctrl"], key = "KeyC" }
+"#,
+        )
+        .expect("bundled static config should be written");
+        std::fs::write(
+            root.path()
+                .join("plugins")
+                .join("ahk_agent")
+                .join("plugin.toml"),
+            r#"
+id = "ahk_agent"
+name = "AHK"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wasm"
+permissions = []
+"#,
+        )
+        .expect("bundled plugin manifest should be written");
+
+        let bundled = bundled_extensions(root.path(), Os::Windows, &InstalledState::default());
+
+        assert_eq!(bundled.len(), 2);
+        assert!(bundled
+            .iter()
+            .any(|extension| extension.id == "windows"
+                && extension.kind == ExtensionKind::Static
+                && extension.version == "schema 2"));
+        assert!(bundled
+            .iter()
+            .any(|extension| extension.id == "ahk_agent"
+                && extension.kind == ExtensionKind::WasmPlugin
+                && extension.version == "0.1.0"));
+    }
+
+    #[test]
+    fn bundled_extensions_reflect_disabled_bundled_plugins() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        std::fs::create_dir_all(root.path().join("plugins").join("ahk_agent"))
+            .expect("plugin dir should be created");
+        std::fs::write(
+            root.path()
+                .join("plugins")
+                .join("ahk_agent")
+                .join("plugin.toml"),
+            r#"
+id = "ahk_agent"
+name = "AHK"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wasm"
+permissions = []
+"#,
+        )
+        .expect("bundled plugin manifest should be written");
+
+        let mut installed_state = InstalledState::default();
+        installed_state.upsert(crate::core::extensions::install::InstalledExtension {
+            id: "ahk_agent".to_string(),
+            version: "0.1.0".to_string(),
+            platform: Os::Windows,
+            kind: ExtensionKind::WasmPlugin,
+            source_id: BUNDLED_SOURCE_ID.to_string(),
+            package_sha256: "0".repeat(64),
+            enabled: false,
+            installed_path: PathBuf::from("plugins/ahk_agent/plugin.toml"),
+        });
+
+        let bundled = bundled_extensions(root.path(), Os::Windows, &installed_state);
+
+        assert_eq!(bundled.len(), 1);
+        assert_eq!(bundled[0].id, "ahk_agent");
+        assert!(!bundled[0].enabled);
     }
 
     #[test]

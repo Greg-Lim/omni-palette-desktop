@@ -93,44 +93,18 @@ impl ExtensionDiscovery {
 
     pub fn plugin_manifest_paths(&self) -> Vec<PathBuf> {
         let mut merged = BTreeMap::<OsString, PathBuf>::new();
+        let bundled_disabled_ids = disabled_bundled_extension_ids_from_user_roots(&self.roots);
 
-        for root in &self.roots {
-            let plugins_root = root.join(PLUGINS_DIR_NAME);
-            let entries = match fs::read_dir(&plugins_root) {
-                Ok(entries) => entries,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => {
-                    warn!(
-                        "Could not scan plugin directory at {:?}: {}",
-                        plugins_root, err
-                    );
-                    continue;
-                }
-            };
-
-            for manifest_path in entries.filter_map(|entry| {
-                let entry = entry.ok()?;
-                let path = entry.path();
-                if !path.is_dir() {
-                    return None;
-                }
-
-                let manifest_path = path.join(PLUGIN_MANIFEST_NAME);
-                if !manifest_path.exists() {
-                    return None;
-                }
-
-                #[cfg(not(debug_assertions))]
-                {
-                    let plugin_id = path.file_name()?.to_str()?;
-                    if DEBUG_ONLY_PLUGIN_IDS.contains(&plugin_id) {
-                        return None;
-                    }
-                }
-
-                Some(manifest_path)
-            }) {
+        for (root_index, root) in self.roots.iter().enumerate() {
+            for manifest_path in plugin_manifest_paths_in_root(root) {
                 if let Some(plugin_id) = manifest_path.parent().and_then(|path| path.file_name()) {
+                    if root_index == 0
+                        && plugin_id
+                            .to_str()
+                            .is_some_and(|plugin_id| bundled_disabled_ids.contains(plugin_id))
+                    {
+                        continue;
+                    }
                     merged.insert(plugin_id.to_os_string(), manifest_path);
                 }
             }
@@ -151,6 +125,48 @@ pub fn user_extensions_root() -> Option<PathBuf> {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .map(|appdata| appdata.join("OmniPalette").join("extensions"))
+}
+
+pub(crate) fn plugin_manifest_paths_in_root(root: &Path) -> Vec<PathBuf> {
+    let plugins_root = root.join(PLUGINS_DIR_NAME);
+    let entries = match fs::read_dir(&plugins_root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(err) => {
+            warn!(
+                "Could not scan plugin directory at {:?}: {}",
+                plugins_root, err
+            );
+            return Vec::new();
+        }
+    };
+
+    let mut manifest_paths = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if !path.is_dir() {
+                return None;
+            }
+
+            let manifest_path = path.join(PLUGIN_MANIFEST_NAME);
+            if !manifest_path.exists() {
+                return None;
+            }
+
+            #[cfg(not(debug_assertions))]
+            {
+                let plugin_id = path.file_name()?.to_str()?;
+                if DEBUG_ONLY_PLUGIN_IDS.contains(&plugin_id) {
+                    return None;
+                }
+            }
+
+            Some(manifest_path)
+        })
+        .collect::<Vec<_>>();
+    manifest_paths.sort();
+    manifest_paths
 }
 
 fn disabled_installed_extension_ids(root: &Path) -> HashSet<String> {
@@ -276,6 +292,44 @@ mod tests {
             discovery.plugin_manifest_paths(),
             vec![root.join("plugins").join("auto_typer").join("plugin.toml")]
         );
+    }
+
+    #[test]
+    fn disabled_bundled_plugin_in_user_state_suppresses_bundled_plugin() {
+        let bundled = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("disabled-bundled-plugin-bundled");
+        let user = Path::new("target")
+            .join("extension-discovery-tests")
+            .join("disabled-bundled-plugin-user");
+        reset_dir(&bundled);
+        reset_dir(&user);
+        fs::create_dir_all(bundled.join("plugins").join("ahk_agent"))
+            .expect("bundled plugin dir should be created");
+        fs::write(
+            bundled.join("plugins").join("ahk_agent").join("plugin.toml"),
+            "",
+        )
+        .expect("bundled plugin manifest should be written");
+        fs::write(
+            user.join("installed.toml"),
+            r#"
+[[extensions]]
+id = "ahk_agent"
+version = "0.1.0"
+platform = "windows"
+kind = "wasm_plugin"
+source_id = "bundled"
+package_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+enabled = false
+installed_path = "plugins/ahk_agent/plugin.toml"
+"#,
+        )
+        .expect("installed state should be written");
+
+        let discovery = ExtensionDiscovery::with_roots(vec![bundled, user]);
+
+        assert!(discovery.plugin_manifest_paths().is_empty());
     }
 
     #[test]

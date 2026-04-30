@@ -1,7 +1,7 @@
 use crate::config::runtime::{CommandBehavior, RuntimeConfig};
 use crate::core::command_filter::FilteredCommand;
 use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog};
-use crate::core::extensions::install::{BundledStaticExtension, InstalledState};
+use crate::core::extensions::install::{BundledExtension, InstalledState};
 use crate::domain::action::{CommandPriority, FocusState};
 use crate::platform::ui_support::{
     focus_window_token, foreground_window_token, PlatformUiAction, PlatformUiRuntime,
@@ -149,7 +149,7 @@ pub enum UiEvent {
         enabled: bool,
     },
     SetBundledExtensionEnabledRequested {
-        extension: BundledStaticExtension,
+        extension: BundledExtension,
         enabled: bool,
     },
     ReloadExtensionsRequested,
@@ -844,7 +844,7 @@ mod tests {
             config_error: None,
             current_os: Os::Windows,
             install_root: None,
-            bundled_static_extensions: Vec::new(),
+            bundled_extensions: Vec::new(),
             installed_state: InstalledState::default(),
             installed_state_error: None,
         })))

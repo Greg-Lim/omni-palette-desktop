@@ -8,7 +8,7 @@ use eframe::egui;
 use crate::config::runtime::{CommandBehavior, GitHubExtensionSource, RuntimeConfig};
 use crate::core::extensions::catalog::{CatalogEntry, ExtensionCatalog, ExtensionKind};
 use crate::core::extensions::install::{
-    BundledStaticExtension, InstalledExtension, InstalledState, BUNDLED_SOURCE_ID, GITHUB_SOURCE_ID,
+    BundledExtension, InstalledExtension, InstalledState, BUNDLED_SOURCE_ID, GITHUB_SOURCE_ID,
 };
 use crate::domain::action::Os;
 use crate::domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut};
@@ -51,7 +51,7 @@ pub struct SettingsBootstrap {
     pub config_error: Option<String>,
     pub current_os: Os,
     pub install_root: Option<PathBuf>,
-    pub bundled_static_extensions: Vec<BundledStaticExtension>,
+    pub bundled_extensions: Vec<BundledExtension>,
     pub installed_state: InstalledState,
     pub installed_state_error: Option<String>,
 }
@@ -83,7 +83,7 @@ pub struct SettingsState {
     config_error: Option<String>,
     current_os: Os,
     install_root: Option<PathBuf>,
-    bundled_static_extensions: Vec<BundledStaticExtension>,
+    bundled_extensions: Vec<BundledExtension>,
     draft: RuntimeConfig,
     saved: RuntimeConfig,
     installed_state: InstalledState,
@@ -108,7 +108,7 @@ impl SettingsState {
             config_error: bootstrap.config_error,
             current_os: bootstrap.current_os,
             install_root: bootstrap.install_root,
-            bundled_static_extensions: bootstrap.bundled_static_extensions,
+            bundled_extensions: bootstrap.bundled_extensions,
             draft: bootstrap.config.clone(),
             saved: bootstrap.config,
             installed_state: bootstrap.installed_state,
@@ -201,7 +201,7 @@ impl SettingsState {
     }
 
     fn sync_bundled_extension_enabled(&mut self) {
-        for extension in &mut self.bundled_static_extensions {
+        for extension in &mut self.bundled_extensions {
             extension.enabled = self
                 .installed_state
                 .enabled_for(&extension.id, BUNDLED_SOURCE_ID)
@@ -609,12 +609,12 @@ impl SettingsState {
             ui.add_space(10.0);
         }
 
-        if self.bundled_static_extensions.is_empty() {
+        if self.bundled_extensions.is_empty() {
             empty_state(ui, "No bundled defaults are available.");
             return;
         }
 
-        let bundled_extensions = self.bundled_static_extensions.clone();
+        let bundled_extensions = self.bundled_extensions.clone();
         for extension in bundled_extensions {
             list_row(ui, |ui| {
                 ui.vertical(|ui| {
@@ -622,6 +622,7 @@ impl SettingsState {
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
                         badge(ui, "Bundled", TEXT_MUTED);
+                        badge(ui, extension_kind_badge(extension.kind), TEXT_MUTED);
                     });
                 });
 
@@ -1199,6 +1200,13 @@ fn extension_toggle_label(enabled: bool) -> &'static str {
         "Disable"
     } else {
         "Enable"
+    }
+}
+
+fn extension_kind_badge(kind: ExtensionKind) -> &'static str {
+    match kind {
+        ExtensionKind::Static => "Static",
+        ExtensionKind::WasmPlugin => "Plugin",
     }
 }
 
