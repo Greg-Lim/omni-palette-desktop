@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::extension::Modifier,
     domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
+    theme::ThemeMode,
 };
 
 const APP_DIR_NAME: &str = "OmniPalette";
@@ -46,6 +47,7 @@ pub struct RuntimeConfigLoad {
 pub struct RuntimeConfig {
     pub activation: KeyboardShortcut,
     pub command_behavior: CommandBehavior,
+    pub appearance: AppearanceConfig,
     pub startup: StartupConfig,
     pub github: GitHubExtensionSource,
 }
@@ -134,23 +136,25 @@ impl Default for RuntimeConfig {
         Self {
             activation: default_activation_shortcut(),
             command_behavior: CommandBehavior::default(),
+            appearance: AppearanceConfig::default(),
             startup: StartupConfig::default(),
             github: GitHubExtensionSource::default(),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum CommandBehavior {
+    #[default]
     Execute,
     Guide,
 }
 
-impl Default for CommandBehavior {
-    fn default() -> Self {
-        Self::Execute
-    }
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AppearanceConfig {
+    #[serde(default)]
+    pub theme: ThemeMode,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -211,6 +215,8 @@ struct RuntimeConfigFile {
     #[serde(default = "default_activation_config")]
     activation: ActivationConfig,
     #[serde(default)]
+    appearance: AppearanceConfig,
+    #[serde(default)]
     commands: RuntimeCommandConfig,
     #[serde(default)]
     startup: StartupConfig,
@@ -229,6 +235,7 @@ impl RuntimeConfigFile {
         RuntimeConfig {
             activation: self.activation.into_shortcut(),
             command_behavior: self.commands.behavior,
+            appearance: self.appearance,
             startup: self.startup,
             github: self.extensions.github,
         }
@@ -253,6 +260,7 @@ impl From<&RuntimeConfig> for RuntimeConfigFile {
     fn from(config: &RuntimeConfig) -> Self {
         Self {
             activation: ActivationConfig::from_shortcut(config.activation),
+            appearance: config.appearance,
             commands: RuntimeCommandConfig {
                 behavior: config.command_behavior,
             },
@@ -344,6 +352,7 @@ fn default_true() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::ThemeMode;
 
     #[test]
     fn default_activation_is_ctrl_shift_p() {
@@ -360,6 +369,13 @@ mod tests {
         let config = RuntimeConfig::default();
 
         assert_eq!(config.command_behavior, CommandBehavior::Execute);
+    }
+
+    #[test]
+    fn default_appearance_uses_system_theme() {
+        let config = RuntimeConfig::default();
+
+        assert_eq!(config.appearance.theme, ThemeMode::System);
     }
 
     #[test]
@@ -412,11 +428,40 @@ enabled = true
         assert!(config.activation.modifier.alt);
         assert_eq!(config.activation.key, Key::Space);
         assert_eq!(config.command_behavior, CommandBehavior::Guide);
+        assert_eq!(config.appearance.theme, ThemeMode::System);
         assert!(config.startup.launch_on_login);
         assert_eq!(
             config.github.catalog_url(),
             "https://raw.githubusercontent.com/Greg-Lim/omni-palette-extensions/main/dist/catalog.v1.json"
         );
+    }
+
+    #[test]
+    fn parses_appearance_theme_modes() {
+        for (theme_text, expected) in [
+            ("system", ThemeMode::System),
+            ("light", ThemeMode::Light),
+            ("dark", ThemeMode::Dark),
+        ] {
+            let root = tempfile::tempdir().expect("temp dir should be created");
+            let path = root.path().join("config.toml");
+            fs::write(
+                &path,
+                format!(
+                    r#"
+activation = {{ mods = ["ctrl", "shift"], key = "KeyP" }}
+
+[appearance]
+theme = "{theme_text}"
+"#
+                ),
+            )
+            .expect("config should be written");
+
+            let config = RuntimeConfig::load(Some(&path), Path::new("missing-dev-config.toml"));
+
+            assert_eq!(config.appearance.theme, expected);
+        }
     }
 
     #[test]
@@ -434,6 +479,9 @@ enabled = true
                 key: Key::Space,
             },
             command_behavior: CommandBehavior::Guide,
+            appearance: AppearanceConfig {
+                theme: ThemeMode::Light,
+            },
             startup: StartupConfig {
                 launch_on_login: false,
                 start_hidden: true,

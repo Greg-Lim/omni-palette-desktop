@@ -11,20 +11,17 @@ use crate::platform::ui_support::{
     focus_window_token, foreground_window_token, PlatformUiAction, PlatformUiRuntime,
     PlatformWindowToken,
 };
+use crate::theme::{apply_app_theme, current_app_theme};
 pub use crate::ui::guide::GuideHint;
 use crate::ui::guide::{close_guide_viewport, show_guide_viewport, ActiveGuide, GUIDE_DURATION};
 use crate::ui::palette::{
     fixed_action_for_index, wrapped_selection_index, CommandPaletteApp, FixedPaletteAction,
-    ESTIMATED_VISIBLE_ROW_HEIGHT, FIXED_ACTION_ROW_HEIGHT, FIXED_PALETTE_ACTIONS,
-    MAX_VISIBLE_COMMAND_ROWS, PALETTE_BORDER, PALETTE_BORDER_WIDTH, PALETTE_CARD_BG,
+    FIXED_ACTION_ROW_HEIGHT, FIXED_PALETTE_ACTIONS, MAX_VISIBLE_COMMAND_ROWS, PALETTE_BORDER_WIDTH,
     PALETTE_CURSOR_WIDTH, PALETTE_EMPTY_ROW_MARGIN, PALETTE_EMPTY_TEXT_SIZE, PALETTE_FRAME_MARGIN,
-    PALETTE_FRAME_RADIUS, PALETTE_RESULTS_TOP_SPACE, PALETTE_ROW_HOVER, PALETTE_ROW_SELECTED,
-    PALETTE_ROW_SELECTED_BORDER, PALETTE_SEARCH_BG, PALETTE_SEARCH_BORDER, PALETTE_SEARCH_HEIGHT,
+    PALETTE_FRAME_RADIUS, PALETTE_RESULTS_TOP_SPACE, PALETTE_SEARCH_HEIGHT,
     PALETTE_SEARCH_MARGIN_X, PALETTE_SEARCH_MARGIN_Y, PALETTE_SEARCH_PROMPT_LEFT_SPACE,
     PALETTE_SEARCH_PROMPT_RIGHT_SPACE, PALETTE_SEARCH_PROMPT_SIZE, PALETTE_SEARCH_RADIUS,
-    PALETTE_TEXTBOX_CURSOR, PALETTE_TEXTBOX_HINT, PALETTE_TEXTBOX_TEXT, PALETTE_TEXT_MUTED,
-    PALETTE_TEXT_PRIMARY, PALETTE_TEXT_SELECTED, PALETTE_WIDTH, ROW_HEIGHT,
-    SETTINGS_DIVIDER_HEIGHT,
+    PALETTE_WIDTH, ROW_HEIGHT, SETTINGS_DIVIDER_HEIGHT,
 };
 use crate::ui::settings::{show_settings_viewport, SettingsBootstrap, SettingsState};
 use eframe::egui;
@@ -198,40 +195,7 @@ impl App {
         visibility: SharedUiVisibility,
         settings_bootstrap: SettingsBootstrap,
     ) -> Self {
-        let mut visuals = egui::Visuals::dark();
-        visuals.panel_fill = egui::Color32::TRANSPARENT;
-        visuals.window_fill = egui::Color32::TRANSPARENT;
-        visuals.extreme_bg_color = PALETTE_SEARCH_BG;
-        visuals.faint_bg_color = PALETTE_CARD_BG;
-        visuals.override_text_color = Some(PALETTE_TEXT_PRIMARY);
-        visuals.widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
-        visuals.widgets.inactive.bg_fill = PALETTE_SEARCH_BG;
-        visuals.widgets.inactive.weak_bg_fill = PALETTE_SEARCH_BG;
-        visuals.widgets.inactive.bg_stroke =
-            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_SEARCH_BORDER);
-        visuals.widgets.inactive.fg_stroke.color = PALETTE_TEXT_PRIMARY;
-        visuals.widgets.hovered.bg_fill = PALETTE_ROW_HOVER;
-        visuals.widgets.hovered.weak_bg_fill = PALETTE_ROW_HOVER;
-        visuals.widgets.hovered.bg_stroke =
-            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_SEARCH_BORDER);
-        visuals.widgets.hovered.fg_stroke.color = PALETTE_TEXT_PRIMARY;
-        visuals.widgets.active.bg_fill = PALETTE_ROW_SELECTED;
-        visuals.widgets.active.weak_bg_fill = PALETTE_ROW_SELECTED;
-        visuals.widgets.active.bg_stroke =
-            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_ROW_SELECTED_BORDER);
-        visuals.widgets.active.fg_stroke.color = PALETTE_TEXT_SELECTED;
-        visuals.widgets.open.bg_fill = PALETTE_ROW_SELECTED;
-        visuals.widgets.open.weak_bg_fill = PALETTE_ROW_SELECTED;
-        visuals.widgets.open.bg_stroke =
-            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_ROW_SELECTED_BORDER);
-        visuals.widgets.open.fg_stroke.color = PALETTE_TEXT_SELECTED;
-        cc.egui_ctx.set_visuals(visuals);
-
-        let mut style = (*cc.egui_ctx.global_style()).clone();
-        style.spacing.item_spacing = egui::vec2(0.0, 6.0);
-        style.spacing.button_padding = egui::vec2(10.0, 8.0);
-        style.spacing.window_margin = egui::Margin::same(0);
-        cc.egui_ctx.set_global_style(style);
+        apply_app_theme(&cc.egui_ctx, settings_bootstrap.config.appearance.theme);
         let _ = shared_context.set(cc.egui_ctx.clone());
         visibility.store(false, Ordering::Relaxed);
         let command_behavior = settings_bootstrap.config.command_behavior;
@@ -327,6 +291,11 @@ impl App {
             UiSignal::RunGuidedAction => self.run_guided_action(ctx),
             UiSignal::CancelGuide => self.end_guide(ctx, true),
             UiSignal::RuntimeConfigSaved { config, result } => {
+                let saved = result.is_ok();
+                let theme = config.appearance.theme;
+                if saved {
+                    apply_app_theme(ctx, theme);
+                }
                 if let Ok(mut settings) = self.settings.lock() {
                     settings.config_saved(config, result);
                 }
@@ -524,7 +493,7 @@ impl App {
         if visible_command_count == 0 {
             empty_command_list_height()
         } else {
-            visible_command_count as f32 * ESTIMATED_VISIBLE_ROW_HEIGHT
+            command_list_height_for_visible_count(visible_command_count)
         }
     }
 
@@ -653,12 +622,12 @@ impl eframe::App for App {
         let selectable_count = command_count + FIXED_PALETTE_ACTIONS.len();
         self.handle_list_navigation_keys(ctx, selectable_count);
 
-        if selectable_count > 0 {
-            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                self.execute_selected(ctx);
-                return;
-            }
+        if selectable_count > 0 && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            self.execute_selected(ctx);
+            return;
         }
+
+        let palette_theme = current_app_theme(ctx).palette;
 
         egui::Area::new(egui::Id::new("command_palette_area"))
             .order(egui::Order::Foreground)
@@ -666,19 +635,24 @@ impl eframe::App for App {
             .movable(false)
             .interactable(true)
             .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing =
+                    palette_layout_item_spacing(ui.spacing().item_spacing);
                 ui.set_width(PALETTE_WIDTH);
 
                 egui::Frame::new()
-                    .fill(PALETTE_CARD_BG)
-                    .stroke(egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_BORDER))
+                    .fill(palette_theme.card_bg)
+                    .stroke(egui::Stroke::new(
+                        PALETTE_BORDER_WIDTH,
+                        palette_theme.border,
+                    ))
                     .corner_radius(egui::CornerRadius::same(PALETTE_FRAME_RADIUS))
                     .inner_margin(egui::Margin::same(PALETTE_FRAME_MARGIN))
                     .show(ui, |ui| {
                         egui::Frame::new()
-                            .fill(PALETTE_SEARCH_BG)
+                            .fill(palette_theme.search_bg)
                             .stroke(egui::Stroke::new(
                                 PALETTE_BORDER_WIDTH,
-                                PALETTE_SEARCH_BORDER,
+                                palette_theme.search_border,
                             ))
                             .corner_radius(egui::CornerRadius::same(PALETTE_SEARCH_RADIUS))
                             .inner_margin(egui::Margin {
@@ -690,15 +664,15 @@ impl eframe::App for App {
                             .show(ui, |ui| {
                                 ui.scope(|ui| {
                                     ui.visuals_mut().override_text_color =
-                                        Some(PALETTE_TEXTBOX_TEXT);
-                                    ui.visuals_mut().selection.bg_fill = PALETTE_ROW_SELECTED;
+                                        Some(palette_theme.textbox_text);
+                                    ui.visuals_mut().selection.bg_fill = palette_theme.row_selected;
                                     ui.visuals_mut().selection.stroke = egui::Stroke::new(
                                         PALETTE_BORDER_WIDTH,
-                                        PALETTE_ROW_SELECTED_BORDER,
+                                        palette_theme.row_selected_border,
                                     );
                                     ui.visuals_mut().text_cursor.stroke = egui::Stroke::new(
                                         PALETTE_CURSOR_WIDTH,
-                                        PALETTE_TEXTBOX_CURSOR,
+                                        palette_theme.textbox_cursor,
                                     );
 
                                     ui.horizontal(|ui| {
@@ -706,7 +680,7 @@ impl eframe::App for App {
                                         ui.label(
                                             egui::RichText::new(">")
                                                 .size(PALETTE_SEARCH_PROMPT_SIZE)
-                                                .color(PALETTE_TEXTBOX_HINT),
+                                                .color(palette_theme.textbox_hint),
                                         );
                                         ui.add_space(PALETTE_SEARCH_PROMPT_RIGHT_SPACE);
 
@@ -717,7 +691,7 @@ impl eframe::App for App {
                                             )
                                             .hint_text(
                                                 egui::RichText::new("Type a command")
-                                                    .color(PALETTE_TEXTBOX_HINT)
+                                                    .color(palette_theme.textbox_hint)
                                                     .size(16.0),
                                             )
                                             .font(egui::TextStyle::Heading)
@@ -837,8 +811,9 @@ pub fn run_with_shared_state(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_platform_action, empty_command_list_height, should_hide_for_app_switch,
-        PlatformUiAction, PlatformWindowToken, UiEvent,
+        apply_platform_action, command_list_height_for_visible_count, empty_command_list_height,
+        palette_layout_item_spacing, should_hide_for_app_switch, PlatformUiAction,
+        PlatformWindowToken, UiEvent,
     };
     use crate::config::runtime::RuntimeConfig;
     use crate::core::extensions::install::InstalledState;
@@ -964,13 +939,35 @@ mod tests {
     fn empty_command_list_height_matches_standard_command_row_height() {
         assert_eq!(empty_command_list_height(), ROW_HEIGHT);
     }
+
+    #[test]
+    fn command_list_height_matches_actual_visible_row_heights() {
+        assert_eq!(command_list_height_for_visible_count(9), ROW_HEIGHT * 9.0);
+    }
+
+    #[test]
+    fn palette_layout_uses_explicit_vertical_spacing() {
+        assert_eq!(
+            palette_layout_item_spacing(egui::vec2(8.0, 6.0)),
+            egui::Vec2::ZERO
+        );
+    }
 }
 
 fn empty_command_list_height() -> f32 {
     ROW_HEIGHT
 }
 
+fn command_list_height_for_visible_count(visible_command_count: usize) -> f32 {
+    visible_command_count as f32 * ROW_HEIGHT
+}
+
+fn palette_layout_item_spacing(_item_spacing: egui::Vec2) -> egui::Vec2 {
+    egui::Vec2::ZERO
+}
+
 fn draw_empty_command_row(ui: &mut egui::Ui) {
+    let theme = current_app_theme(ui.ctx()).palette;
     let desired_size = egui::vec2(ui.available_width(), ROW_HEIGHT);
     let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
@@ -980,7 +977,7 @@ fn draw_empty_command_row(ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new("No matching commands")
                     .size(PALETTE_EMPTY_TEXT_SIZE)
-                    .color(PALETTE_TEXT_MUTED),
+                    .color(theme.text_muted),
             );
         });
     });

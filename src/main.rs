@@ -58,6 +58,7 @@ mod config;
 mod core;
 mod domain;
 mod platform;
+mod theme;
 mod ui;
 
 const BUNDLED_EXTENSIONS_ROOT: &str = "./extensions/bundled";

@@ -3,6 +3,7 @@ use crate::core::command_filter::{
 };
 use crate::core::search::MatchRange;
 use crate::domain::action::{CommandPriority, FocusState};
+use crate::theme::{current_app_theme, PaletteTheme};
 use crate::ui::app::Command;
 use eframe::egui;
 use eframe::egui::text::LayoutJob;
@@ -13,7 +14,6 @@ pub(crate) const MAX_VISIBLE_COMMAND_ROWS: usize = 10;
 pub(crate) const ROW_HEIGHT: f32 = 38.0;
 pub(crate) const SETTINGS_DIVIDER_HEIGHT: f32 = 13.0;
 pub(crate) const FIXED_ACTION_ROW_HEIGHT: f32 = 30.0;
-pub(crate) const ESTIMATED_VISIBLE_ROW_HEIGHT: f32 = 31.0;
 pub(crate) const PALETTE_FRAME_RADIUS: u8 = 8;
 pub(crate) const PALETTE_FRAME_MARGIN: i8 = 10;
 pub(crate) const PALETTE_SEARCH_RADIUS: u8 = 6;
@@ -37,26 +37,8 @@ const PALETTE_DIVIDER_MARGIN_X: f32 = 8.0;
 pub(crate) const PALETTE_BORDER_WIDTH: f32 = 1.0;
 pub(crate) const PALETTE_CURSOR_WIDTH: f32 = 2.0;
 
-pub(crate) const PALETTE_CARD_BG: egui::Color32 = egui::Color32::from_rgb(37, 37, 38);
-pub(crate) const PALETTE_BORDER: egui::Color32 = egui::Color32::from_rgb(69, 69, 69);
-pub(crate) const PALETTE_SEARCH_BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
-pub(crate) const PALETTE_SEARCH_BORDER: egui::Color32 = egui::Color32::from_rgb(82, 82, 82);
-pub(crate) const PALETTE_ROW_HOVER: egui::Color32 = egui::Color32::from_rgb(43, 43, 43);
-pub(crate) const PALETTE_ROW_SELECTED: egui::Color32 = egui::Color32::from_rgb(9, 71, 113);
-pub(crate) const PALETTE_ROW_SELECTED_BORDER: egui::Color32 = egui::Color32::from_rgb(55, 148, 255);
-pub(crate) const PALETTE_TEXT_PRIMARY: egui::Color32 = egui::Color32::from_rgb(204, 204, 204);
-pub(crate) const PALETTE_TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(150, 150, 150);
-pub(crate) const PALETTE_TEXT_SELECTED: egui::Color32 = egui::Color32::WHITE;
-pub(crate) const PALETTE_TEXTBOX_TEXT: egui::Color32 = egui::Color32::from_rgb(230, 230, 230);
-pub(crate) const PALETTE_TEXTBOX_HINT: egui::Color32 = egui::Color32::from_rgb(120, 120, 120);
-pub(crate) const PALETTE_TEXTBOX_CURSOR: egui::Color32 = egui::Color32::from_rgb(0, 122, 204);
-const PALETTE_TEXT_MATCH: egui::Color32 = egui::Color32::from_rgb(255, 213, 122);
-const PALETTE_TEXT_MATCH_SELECTED: egui::Color32 = egui::Color32::from_rgb(255, 238, 180);
-const PALETTE_SHORTCUT_SELECTED: egui::Color32 = egui::Color32::from_rgb(180, 200, 230);
 const PALETTE_FAVORITE_ICON: &str = "\u{2665}";
 const PALETTE_FAVORITE_SIZE: f32 = 12.0;
-const PALETTE_FAVORITE_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 106, 148);
-const PALETTE_FAVORITE_SELECTED: egui::Color32 = egui::Color32::from_rgb(255, 190, 214);
 
 pub(crate) const FIXED_PALETTE_ACTIONS: [FixedPaletteAction; 2] = [
     FixedPaletteAction::RefreshExtensions,
@@ -102,6 +84,7 @@ impl CommandPaletteApp {
         let label = &self.all_commands[orig_idx].label;
         let shortcut_text = &self.all_commands[orig_idx].shortcut_text;
         let is_favorite = self.all_commands[orig_idx].favorite;
+        let theme = current_app_theme(ui.ctx()).palette;
         let desired_size = egui::vec2(ui.available_width(), ROW_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
@@ -110,15 +93,15 @@ impl CommandPaletteApp {
         }
 
         let fill = if is_selected {
-            PALETTE_ROW_SELECTED
+            theme.row_selected
         } else if response.hovered() {
-            PALETTE_ROW_HOVER
+            theme.row_hover
         } else {
             egui::Color32::TRANSPARENT
         };
 
         let stroke = if is_selected {
-            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_ROW_SELECTED_BORDER)
+            egui::Stroke::new(PALETTE_BORDER_WIDTH, theme.row_selected_border)
         } else {
             egui::Stroke::NONE
         };
@@ -142,6 +125,7 @@ impl CommandPaletteApp {
                             label,
                             &row.label_matches,
                             is_selected,
+                            theme,
                         ));
 
                         if is_favorite {
@@ -150,9 +134,9 @@ impl CommandPaletteApp {
                                 egui::RichText::new(PALETTE_FAVORITE_ICON)
                                     .size(PALETTE_FAVORITE_SIZE)
                                     .color(if is_selected {
-                                        PALETTE_FAVORITE_SELECTED
+                                        theme.favorite_selected
                                     } else {
-                                        PALETTE_FAVORITE_COLOR
+                                        theme.favorite
                                     }),
                             );
                         }
@@ -163,9 +147,9 @@ impl CommandPaletteApp {
                                     egui::RichText::new(shortcut_text)
                                         .size(PALETTE_SHORTCUT_SIZE)
                                         .color(if is_selected {
-                                            PALETTE_SHORTCUT_SELECTED
+                                            theme.shortcut_selected
                                         } else {
-                                            PALETTE_TEXT_MUTED
+                                            theme.text_muted
                                         }),
                                 );
                             }
@@ -197,6 +181,7 @@ impl CommandPaletteApp {
     }
 
     pub(crate) fn draw_settings_divider(ui: &mut egui::Ui) {
+        let theme = current_app_theme(ui.ctx()).palette;
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(width, SETTINGS_DIVIDER_HEIGHT),
@@ -208,7 +193,7 @@ impl CommandPaletteApp {
                 egui::pos2(rect.left() + PALETTE_DIVIDER_MARGIN_X, y),
                 egui::pos2(rect.right() - PALETTE_DIVIDER_MARGIN_X, y),
             ],
-            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_BORDER),
+            egui::Stroke::new(PALETTE_BORDER_WIDTH, theme.border),
         );
     }
 
@@ -220,6 +205,7 @@ impl CommandPaletteApp {
         keyboard_nav: &mut bool,
     ) -> bool {
         let is_selected = idx == self.selected_index;
+        let theme = current_app_theme(ui.ctx()).palette;
         let desired_size = egui::vec2(ui.available_width(), FIXED_ACTION_ROW_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
@@ -228,15 +214,15 @@ impl CommandPaletteApp {
         }
 
         let fill = if is_selected {
-            PALETTE_ROW_SELECTED
+            theme.row_selected
         } else if response.hovered() {
-            PALETTE_ROW_HOVER
+            theme.row_hover
         } else {
             egui::Color32::TRANSPARENT
         };
 
         let stroke = if is_selected {
-            egui::Stroke::new(PALETTE_BORDER_WIDTH, PALETTE_ROW_SELECTED_BORDER)
+            egui::Stroke::new(PALETTE_BORDER_WIDTH, theme.row_selected_border)
         } else {
             egui::Stroke::NONE
         };
@@ -256,9 +242,9 @@ impl CommandPaletteApp {
                     egui::RichText::new(action.label())
                         .size(PALETTE_ROW_LABEL_SIZE)
                         .color(if is_selected {
-                            PALETTE_TEXT_SELECTED
+                            theme.text_selected
                         } else {
-                            PALETTE_TEXT_PRIMARY
+                            theme.text_primary
                         }),
                 );
             });
@@ -313,17 +299,22 @@ impl FilterableCommand for Command {
     }
 }
 
-fn highlighted_label_job(label: &str, ranges: &[MatchRange], is_selected: bool) -> LayoutJob {
+fn highlighted_label_job(
+    label: &str,
+    ranges: &[MatchRange],
+    is_selected: bool,
+    theme: PaletteTheme,
+) -> LayoutJob {
     let mut job = LayoutJob::default();
     let normal_color = if is_selected {
-        PALETTE_TEXT_SELECTED
+        theme.text_selected
     } else {
-        PALETTE_TEXT_PRIMARY
+        theme.text_primary
     };
     let highlight_color = if is_selected {
-        PALETTE_TEXT_MATCH_SELECTED
+        theme.text_match_selected
     } else {
-        PALETTE_TEXT_MATCH
+        theme.text_match
     };
     let normal_format = egui::TextFormat {
         font_id: egui::FontId::proportional(PALETTE_ROW_LABEL_SIZE),
