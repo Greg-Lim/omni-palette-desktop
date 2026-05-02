@@ -10,6 +10,7 @@ use std::{
 use zip::{write::SimpleFileOptions, ZipWriter};
 
 const PACKAGES_DIR: &str = "extensions/registry/packages";
+const BUNDLED_PLUGINS_DIR: &str = "extensions/bundled/plugins";
 const CATALOG_PATH: &str = "extensions/registry/catalog.v1.json";
 const OUTPUT_DIR: &str = "target/extensions";
 const DEFAULT_REPOSITORY_URL: &str = "https://github.com/Greg-Lim/omni-palette-desktop";
@@ -40,6 +41,14 @@ fn run(args: Vec<String>) -> Result<(), String> {
             println!("sha256={}", result.sha256);
             println!("size_bytes={}", result.size_bytes);
             println!("package_url={}", result.package_url);
+            Ok(())
+        }
+        "prepare-bundled-plugins" => {
+            let options = PrepareBundledPluginsOptions::parse(rest)?;
+            let plugins = prepare_bundled_plugins(&options)?;
+            for plugin in plugins {
+                println!("prepared={} wasm={}", plugin.id, plugin.wasm_path.display());
+            }
             Ok(())
         }
         _ => Err(usage(format!("unknown command: {command}"))),
@@ -130,6 +139,33 @@ impl PackageOptions {
     }
 }
 
+#[derive(Debug)]
+struct PrepareBundledPluginsOptions {
+    plugins_dir: PathBuf,
+}
+
+impl PrepareBundledPluginsOptions {
+    fn parse(args: &[String]) -> Result<Self, String> {
+        let mut plugins_dir = PathBuf::from(BUNDLED_PLUGINS_DIR);
+
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "--plugins-dir" => {
+                    plugins_dir = PathBuf::from(next_value(&mut iter, "--plugins-dir")?)
+                }
+                _ => {
+                    return Err(usage(format!(
+                        "unknown prepare-bundled-plugins option: {arg}"
+                    )))
+                }
+            }
+        }
+
+        Ok(Self { plugins_dir })
+    }
+}
+
 fn next_value<'a>(
     iter: &mut impl Iterator<Item = &'a String>,
     option: &str,
@@ -141,9 +177,118 @@ fn next_value<'a>(
 
 fn usage(message: impl AsRef<str>) -> String {
     format!(
-        "{}\n\nusage:\n  cargo run -p xtask -- detect-changed [--base <sha> --head <sha>] [--extension-id <id>] [--force-all]\n  cargo run -p xtask -- package-extension --package-root <path> [--update-catalog]",
+        "{}\n\nusage:\n  cargo run -p xtask -- detect-changed [--base <sha> --head <sha>] [--extension-id <id>] [--force-all]\n  cargo run -p xtask -- package-extension --package-root <path> [--update-catalog]\n  cargo run -p xtask -- prepare-bundled-plugins [--plugins-dir <path>]",
         message.as_ref()
     )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RustBundledPlugin {
+    id: String,
+    root: PathBuf,
+    package_name: String,
+    wasm_path: PathBuf,
+}
+
+impl RustBundledPlugin {
+    fn release_wasm_path(&self) -> PathBuf {
+        self.root
+            .join("target")
+            .join("wasm32-unknown-unknown")
+            .join("release")
+            .join(format!("{}.wasm", self.package_name.replace('-', "_")))
+    }
+}
+
+fn prepare_bundled_plugins(
+    options: &PrepareBundledPluginsOptions,
+) -> Result<Vec<RustBundledPlugin>, String> {
+    let plugins = discover_rust_bundled_plugins(&options.plugins_dir)?;
+    for plugin in &plugins {
+        build_rust_bundled_plugin(plugin)?;
+        let source = plugin.release_wasm_path();
+        if !source.is_file() {
+            return Err(format!(
+                "missing built wasm for {}: {}",
+                plugin.id,
+                source.display()
+            ));
+        }
+        fs::copy(&source, &plugin.wasm_path).map_err(|err| {
+            format!(
+                "failed to copy {} to {}: {err}",
+                source.display(),
+                plugin.wasm_path.display()
+            )
+        })?;
+    }
+
+    Ok(plugins)
+}
+
+fn discover_rust_bundled_plugins(plugins_dir: &Path) -> Result<Vec<RustBundledPlugin>, String> {
+    let mut plugins = Vec::new();
+    for entry in read_dir_sorted(plugins_dir)? {
+        if !entry.file_type().map_err(|err| err.to_string())?.is_dir() {
+            continue;
+        }
+
+        let root = entry.path();
+        let plugin_toml_path = root.join("plugin.toml");
+        if !plugin_toml_path.is_file() {
+            continue;
+        }
+
+        let manifest: BundledPluginManifest = toml::from_str(
+            &fs::read_to_string(&plugin_toml_path)
+                .map_err(|err| format!("failed to read {}: {err}", plugin_toml_path.display()))?,
+        )
+        .map_err(|err| format!("failed to parse {}: {err}", plugin_toml_path.display()))?;
+
+        let cargo_toml_path = root.join("Cargo.toml");
+        if !cargo_toml_path.is_file() {
+            continue;
+        }
+
+        let cargo_manifest: CargoManifest = toml::from_str(
+            &fs::read_to_string(&cargo_toml_path)
+                .map_err(|err| format!("failed to read {}: {err}", cargo_toml_path.display()))?,
+        )
+        .map_err(|err| format!("failed to parse {}: {err}", cargo_toml_path.display()))?;
+
+        plugins.push(RustBundledPlugin {
+            id: manifest.id,
+            root: root.clone(),
+            package_name: cargo_manifest.package.name,
+            wasm_path: root.join(manifest.wasm),
+        });
+    }
+
+    Ok(plugins)
+}
+
+fn build_rust_bundled_plugin(plugin: &RustBundledPlugin) -> Result<(), String> {
+    let manifest_path = plugin.root.join("Cargo.toml");
+    let output = Command::new("cargo")
+        .args([
+            "build",
+            "--manifest-path",
+            manifest_path
+                .to_str()
+                .ok_or_else(|| format!("invalid path: {}", manifest_path.display()))?,
+            "--target",
+            "wasm32-unknown-unknown",
+            "--release",
+        ])
+        .output()
+        .map_err(|err| format!("failed to run cargo build for {}: {err}", plugin.id))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("failed to build {}:\n{}", plugin.id, stderr.trim()));
+    }
+
+    Ok(())
 }
 
 fn detect_changed_package_roots(options: &DetectOptions) -> Result<Vec<PathBuf>, String> {
@@ -671,6 +816,22 @@ struct PackageManifest {
 }
 
 #[derive(Debug, Deserialize)]
+struct BundledPluginManifest {
+    id: String,
+    wasm: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoManifest {
+    package: CargoPackage,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoPackage {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StaticConfig {
     version: u32,
@@ -1062,6 +1223,69 @@ cmd = { mods = ["ctrl"], key = "KeyT" }
         assert_eq!(catalog.entries[0].platform, "windows");
         assert_eq!(catalog.entries[0].keywords, vec!["windows", "shortcuts"]);
         assert_eq!(catalog.entries[0].size_bytes, Some(123));
+    }
+
+    #[test]
+    fn discovers_only_rust_bundled_plugins() {
+        let root = tempfile_dir();
+        let plugins_dir = root.join("extensions/bundled/plugins");
+        let rust_plugin = plugins_dir.join("ahk_agent");
+        let wat_plugin = plugins_dir.join("auto_typer");
+        fs::create_dir_all(&rust_plugin).unwrap();
+        fs::create_dir_all(&wat_plugin).unwrap();
+        fs::write(
+            rust_plugin.join("plugin.toml"),
+            r#"id = "ahk_agent"
+name = "AHK"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wasm"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            rust_plugin.join("Cargo.toml"),
+            r#"[package]
+name = "ahk_agent_wasm"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            wat_plugin.join("plugin.toml"),
+            r#"id = "auto_typer"
+name = "Auto Typer"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wat"
+"#,
+        )
+        .unwrap();
+
+        let plugins = discover_rust_bundled_plugins(&plugins_dir).unwrap();
+
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].id, "ahk_agent");
+        assert_eq!(plugins[0].package_name, "ahk_agent_wasm");
+        assert_eq!(plugins[0].wasm_path, rust_plugin.join("plugin.wasm"));
+    }
+
+    #[test]
+    fn rust_bundled_plugin_output_path_uses_manifest_package_name() {
+        let plugin = RustBundledPlugin {
+            id: "ahk_agent".to_string(),
+            root: PathBuf::from("extensions/bundled/plugins/ahk_agent"),
+            package_name: "ahk_agent_wasm".to_string(),
+            wasm_path: PathBuf::from("extensions/bundled/plugins/ahk_agent/plugin.wasm"),
+        };
+
+        assert_eq!(
+            plugin.release_wasm_path(),
+            PathBuf::from(
+                "extensions/bundled/plugins/ahk_agent/target/wasm32-unknown-unknown/release/ahk_agent_wasm.wasm"
+            )
+        );
     }
 
     fn root_with_package(
