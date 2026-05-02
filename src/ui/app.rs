@@ -23,7 +23,9 @@ use crate::ui::palette::{
     PALETTE_SEARCH_PROMPT_RIGHT_SPACE, PALETTE_SEARCH_PROMPT_SIZE, PALETTE_SEARCH_RADIUS,
     PALETTE_WIDTH, ROW_HEIGHT, SETTINGS_DIVIDER_HEIGHT,
 };
-use crate::ui::settings::{show_settings_viewport, SettingsBootstrap, SettingsState};
+use crate::ui::settings::{
+    settings_viewport_id, show_settings_viewport, SettingsBootstrap, SettingsState,
+};
 use eframe::egui;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -533,6 +535,9 @@ fn apply_platform_action(
             if let Ok(mut settings) = settings.lock() {
                 settings.open();
             }
+            let settings_viewport_id = settings_viewport_id();
+            ctx.send_viewport_cmd_to(settings_viewport_id, egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd_to(settings_viewport_id, egui::ViewportCommand::Focus);
             ctx.request_repaint();
         }
         PlatformUiAction::ReloadExtensions => {

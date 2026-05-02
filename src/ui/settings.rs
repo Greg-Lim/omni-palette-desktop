@@ -41,6 +41,10 @@ const EXTENSION_STATUS_LABEL_WIDTH: f32 = 66.0;
 const EXTENSION_ACTION_SLOT_WIDTH: f32 = 188.0;
 const STATUS_TOAST_DURATION: Duration = Duration::from_secs(3);
 
+pub fn settings_viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of(SETTINGS_VIEWPORT_ID)
+}
+
 #[derive(Debug, Clone)]
 pub struct SettingsBootstrap {
     pub config: RuntimeConfig,
@@ -92,6 +96,7 @@ impl ExtensionSettingsPanelState {
 #[derive(Debug)]
 pub struct SettingsState {
     pub open: bool,
+    focus_requested: bool,
     tab: SettingsTab,
     config_path: Option<PathBuf>,
     config_error: Option<String>,
@@ -121,6 +126,7 @@ impl SettingsState {
     pub fn new(bootstrap: SettingsBootstrap) -> Self {
         Self {
             open: false,
+            focus_requested: false,
             tab: SettingsTab::General,
             config_path: bootstrap.config_path,
             config_error: bootstrap.config_error,
@@ -149,6 +155,13 @@ impl SettingsState {
 
     pub fn open(&mut self) {
         self.open = true;
+        self.focus_requested = true;
+    }
+
+    fn take_focus_request(&mut self) -> bool {
+        let requested = self.focus_requested;
+        self.focus_requested = false;
+        requested
     }
 
     fn set_status(&mut self, message: impl Into<String>) {
@@ -1283,7 +1296,7 @@ pub fn show_settings_viewport(
     event_tx: Sender<UiEvent>,
 ) {
     ctx.show_viewport_deferred(
-        egui::ViewportId::from_hash_of(SETTINGS_VIEWPORT_ID),
+        settings_viewport_id(),
         egui::ViewportBuilder::default()
             .with_title("Omni Palette Settings")
             .with_inner_size([SETTINGS_WIDTH, SETTINGS_HEIGHT])
@@ -1291,6 +1304,11 @@ pub fn show_settings_viewport(
             .with_resizable(true),
         move |ui, _class| {
             if let Ok(mut settings) = settings.lock() {
+                if settings.take_focus_request() {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
                 settings.draw(ui, &event_tx);
             }
         },
@@ -2426,6 +2444,26 @@ mod tests {
             installed_state: InstalledState::default(),
             installed_state_error: None,
         })
+    }
+
+    #[test]
+    fn opening_settings_requests_viewport_focus_once_per_open_request() {
+        let mut state = settings_state(RuntimeConfig::default());
+
+        assert!(!state.open);
+        assert!(!state.take_focus_request());
+
+        state.open();
+
+        assert!(state.open);
+        assert!(state.take_focus_request());
+        assert!(!state.take_focus_request());
+
+        state.open();
+
+        assert!(state.open);
+        assert!(state.take_focus_request());
+        assert!(!state.take_focus_request());
     }
 
     #[test]
