@@ -22,6 +22,7 @@ on:
       - master
     paths:
       - "extensions/registry/packages/**"
+      - "xtask/**"
 
 permissions:
   contents: write
@@ -49,8 +50,8 @@ jobs:
           cargo test -p xtask
           cargo test core::extensions::package::tests
 
-      - name: Prepare bundled plugins
-        run: cargo run -p xtask -- prepare-bundled-plugins
+      - name: Prepare WASM plugins
+        run: cargo run -p xtask -- prepare-wasm-plugins
 
       - name: Detect changed packages
         id: detect

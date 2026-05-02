@@ -85,9 +85,6 @@ impl ExtensionInstallService {
                 actual: entry.platform,
             });
         }
-        if entry.kind != ExtensionKind::Static {
-            return Err(InstallError::UnsupportedKind(entry.kind));
-        }
         if !package_url_allowed(source, &entry.package_url) {
             return Err(InstallError::PackageUrlNotAllowed(
                 entry.package_url.clone(),
@@ -101,7 +98,12 @@ impl ExtensionInstallService {
         download_file(&entry.package_url, &package_path, MAX_PACKAGE_BYTES)?;
 
         let package = validate_package_file(&package_path, &entry.package_sha256, current_os)?;
-        let installed_path = package.install_static(&self.install_root, current_os)?;
+        let installed_path = match entry.kind {
+            ExtensionKind::Static => package.install_static(&self.install_root, current_os)?,
+            ExtensionKind::WasmPlugin => {
+                package.install_wasm_plugin(&self.install_root, current_os)?
+            }
+        };
         let installed = InstalledExtension {
             id: entry.id.clone(),
             version: entry.version.clone(),
@@ -200,7 +202,6 @@ pub enum InstallError {
     Catalog(crate::core::extensions::catalog::CatalogError),
     Package(PackageError),
     DisabledSource(String),
-    UnsupportedKind(ExtensionKind),
     PlatformMismatch { expected: Os, actual: Os },
     PackageUrlNotAllowed(String),
     DownloadTooLarge { url: String, max_bytes: usize },
@@ -240,9 +241,6 @@ impl std::fmt::Display for InstallError {
             InstallError::Package(err) => write!(f, "Extension package error: {err}"),
             InstallError::DisabledSource(source_id) => {
                 write!(f, "Extension source is disabled: {source_id}")
-            }
-            InstallError::UnsupportedKind(kind) => {
-                write!(f, "Unsupported extension kind for install: {kind:?}")
             }
             InstallError::PlatformMismatch { expected, actual } => {
                 write!(
@@ -354,10 +352,22 @@ pub fn uninstall_installed_extension(
     })?;
 
     let installed_path = resolve_installed_file_path(install_root, &extension.installed_path)?;
-    match fs::remove_file(&installed_path) {
-        Ok(()) => {}
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => return Err(InstallError::Io(err)),
+    match extension.kind {
+        ExtensionKind::Static => match fs::remove_file(&installed_path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(InstallError::Io(err)),
+        },
+        ExtensionKind::WasmPlugin => {
+            let plugin_dir = installed_path
+                .parent()
+                .ok_or_else(|| InstallError::UnsafeInstalledPath(installed_path.clone()))?;
+            match fs::remove_dir_all(plugin_dir) {
+                Ok(()) => {}
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                Err(err) => return Err(InstallError::Io(err)),
+            }
+        }
     }
     let metadata_path = install_root.join("metadata").join(extension_id);
     if metadata_path.exists() {
@@ -550,6 +560,40 @@ mod tests {
         assert!(state.extensions.is_empty());
         assert!(!installed_path.exists());
         assert!(!metadata_dir.exists());
+        assert!(load_installed_state(root.path())
+            .expect("state should reload")
+            .extensions
+            .is_empty());
+    }
+
+    #[test]
+    fn uninstall_removes_wasm_plugin_directory_and_state_entry() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let plugin_dir = root.path().join("plugins").join("ahk_agent");
+        fs::create_dir_all(&plugin_dir).expect("plugin dir should be created");
+        fs::write(plugin_dir.join("plugin.toml"), "").expect("plugin manifest should be written");
+        fs::write(plugin_dir.join("plugin.wasm"), "").expect("plugin wasm should be written");
+        fs::write(plugin_dir.join("OmniPaletteAgent.ahk"), "")
+            .expect("plugin helper should be written");
+
+        let mut state = InstalledState::default();
+        state.upsert(InstalledExtension {
+            id: "ahk_agent".to_string(),
+            version: "0.1.0".to_string(),
+            platform: Os::Windows,
+            kind: ExtensionKind::WasmPlugin,
+            source_id: GITHUB_SOURCE_ID.to_string(),
+            package_sha256: "a".repeat(64),
+            enabled: true,
+            installed_path: PathBuf::from("plugins/ahk_agent/plugin.toml"),
+        });
+        save_installed_state(root.path(), &state).expect("state should be saved");
+
+        let state = uninstall_installed_extension(root.path(), "ahk_agent", GITHUB_SOURCE_ID)
+            .expect("plugin should uninstall");
+
+        assert!(state.extensions.is_empty());
+        assert!(!plugin_dir.exists());
         assert!(load_installed_state(root.path())
             .expect("state should reload")
             .extensions

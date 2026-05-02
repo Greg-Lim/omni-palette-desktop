@@ -14,6 +14,7 @@ use crate::{
         ActionsMetadataConfig, PackageManifestConfig, PlatformImplementationConfig,
     },
     core::extensions::catalog::{validate_extension_id, validate_sha256_hex, ExtensionKind},
+    core::plugins::manifest::PluginManifest,
     domain::action::Os,
 };
 
@@ -121,6 +122,40 @@ impl ValidatedPackage {
         )?;
 
         Ok(destination_path)
+    }
+
+    pub fn install_wasm_plugin(
+        self,
+        install_root: &Path,
+        current_os: Os,
+    ) -> Result<PathBuf, PackageError> {
+        if self.manifest.kind != ExtensionKind::WasmPlugin {
+            return Err(PackageError::UnsupportedKind(self.manifest.kind));
+        }
+        if self.platform != current_os {
+            return Err(PackageError::PlatformMismatch {
+                expected: current_os,
+                actual: self.platform,
+            });
+        }
+
+        let source_plugin_dir = self.temp_dir.path().join("plugins").join(&self.manifest.id);
+        let destination_plugins_dir = install_root.join("plugins");
+        let destination_plugin_dir = destination_plugins_dir.join(&self.manifest.id);
+        let staging_plugin_dir =
+            destination_plugins_dir.join(format!("{}.installing", self.manifest.id));
+
+        if staging_plugin_dir.exists() {
+            fs::remove_dir_all(&staging_plugin_dir)?;
+        }
+        fs::create_dir_all(&destination_plugins_dir)?;
+        copy_dir_all(&source_plugin_dir, &staging_plugin_dir)?;
+        if destination_plugin_dir.exists() {
+            fs::remove_dir_all(&destination_plugin_dir)?;
+        }
+        fs::rename(&staging_plugin_dir, &destination_plugin_dir)?;
+
+        Ok(destination_plugin_dir.join("plugin.toml"))
     }
 }
 
@@ -263,6 +298,8 @@ pub fn extract_and_validate(
             ));
         }
         validate_split_package_files(&manifest, &actions_path, &static_path, current_os)?;
+    } else if manifest.kind == ExtensionKind::WasmPlugin {
+        validate_wasm_plugin_package(&manifest, temp_dir.path(), current_os)?;
     }
 
     Ok(ValidatedPackage {
@@ -270,6 +307,78 @@ pub fn extract_and_validate(
         platform: current_os,
         temp_dir,
     })
+}
+
+fn validate_wasm_plugin_package(
+    manifest: &ExtensionPackageManifest,
+    package_root: &Path,
+    current_os: Os,
+) -> Result<(), PackageError> {
+    let plugin_dir = package_root.join("plugins").join(&manifest.id);
+    let plugin_manifest_path = plugin_dir.join("plugin.toml");
+    if !plugin_manifest_path.is_file() {
+        return Err(PackageError::InvalidManifest(format!(
+            "wasm plugin package is missing plugins/{}/plugin.toml",
+            manifest.id
+        )));
+    }
+
+    let plugin_manifest =
+        PluginManifest::load(&plugin_manifest_path).map_err(PackageError::InvalidManifest)?;
+    if plugin_manifest.id != manifest.id {
+        return Err(PackageError::InvalidManifest(format!(
+            "plugin manifest id {} does not match package id {}",
+            plugin_manifest.id, manifest.id
+        )));
+    }
+    if plugin_manifest.version != manifest.version {
+        return Err(PackageError::InvalidManifest(format!(
+            "plugin manifest version {} does not match package version {}",
+            plugin_manifest.version, manifest.version
+        )));
+    }
+    if plugin_manifest.platform != current_os {
+        return Err(PackageError::PlatformMismatch {
+            expected: current_os,
+            actual: plugin_manifest.platform,
+        });
+    }
+    if plugin_manifest.wasm.is_absolute()
+        || plugin_manifest
+            .wasm
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(PackageError::InvalidManifest(format!(
+            "plugin wasm path must be a relative file name: {}",
+            plugin_manifest.wasm.display()
+        )));
+    }
+
+    let wasm_path = plugin_dir.join(&plugin_manifest.wasm);
+    if !wasm_path.is_file() {
+        return Err(PackageError::InvalidManifest(format!(
+            "wasm plugin package is missing {}",
+            wasm_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+fn copy_dir_all(source: &Path, destination: &Path) -> Result<(), PackageError> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&source_path, &destination_path)?;
+        } else {
+            fs::copy(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn sha256_file(path: &Path) -> Result<String, PackageError> {
@@ -445,6 +554,108 @@ cmd = { mods = ["ctrl"], key = "T" }
     }
 
     #[test]
+    fn validates_and_installs_wasm_plugin_package() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let package_path = root.path().join("ahk_agent-0.1.0-windows.gpext");
+        let file = fs::File::create(&package_path).expect("package should be created");
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+
+        zip.start_file(PACKAGE_MANIFEST_NAME, options)
+            .expect("manifest should start");
+        zip.write_all(
+            br#"schema_version = 1
+id = "ahk_agent"
+name = "AHK"
+version = "0.1.0"
+kind = "wasm_plugin"
+description = "AHK script command discovery."
+repository = "https://github.com/Greg-Lim/omni-palette-desktop"
+permissions = ["read_storage", "read_settings", "write_text"]
+"#,
+        )
+        .expect("manifest should be written");
+        zip.start_file("plugins/ahk_agent/plugin.toml", options)
+            .expect("plugin manifest should start");
+        zip.write_all(
+            br#"id = "ahk_agent"
+name = "AHK"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wasm"
+permissions = ["read_storage", "read_settings", "write_text"]
+"#,
+        )
+        .expect("plugin manifest should be written");
+        zip.start_file("plugins/ahk_agent/plugin.wasm", options)
+            .expect("wasm should start");
+        zip.write_all(b"\0asm").expect("wasm should be written");
+        zip.start_file("plugins/ahk_agent/OmniPaletteAgent.ahk", options)
+            .expect("helper should start");
+        zip.write_all(b"#Requires AutoHotkey v2.0")
+            .expect("helper should be written");
+        zip.finish().expect("zip should finish");
+
+        let hash = sha256_file(&package_path).expect("package hash should compute");
+        let package = validate_package_file(&package_path, &hash, Os::Windows)
+            .expect("wasm plugin package should validate");
+        let installed_path = package
+            .install_wasm_plugin(root.path(), Os::Windows)
+            .expect("wasm plugin package should install");
+
+        assert_eq!(
+            installed_path,
+            root.path().join("plugins/ahk_agent/plugin.toml")
+        );
+        assert!(root.path().join("plugins/ahk_agent/plugin.wasm").is_file());
+        assert!(root
+            .path()
+            .join("plugins/ahk_agent/OmniPaletteAgent.ahk")
+            .is_file());
+    }
+
+    #[test]
+    fn wasm_plugin_package_rejects_missing_wasm() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let package_path = root.path().join("ahk_agent-0.1.0-windows.gpext");
+        let file = fs::File::create(&package_path).expect("package should be created");
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+
+        zip.start_file(PACKAGE_MANIFEST_NAME, options)
+            .expect("manifest should start");
+        zip.write_all(
+            br#"schema_version = 1
+id = "ahk_agent"
+name = "AHK"
+version = "0.1.0"
+kind = "wasm_plugin"
+description = "AHK script command discovery."
+repository = "https://github.com/Greg-Lim/omni-palette-desktop"
+"#,
+        )
+        .expect("manifest should be written");
+        zip.start_file("plugins/ahk_agent/plugin.toml", options)
+            .expect("plugin manifest should start");
+        zip.write_all(
+            br#"id = "ahk_agent"
+name = "AHK"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wasm"
+"#,
+        )
+        .expect("plugin manifest should be written");
+        zip.finish().expect("zip should finish");
+
+        let hash = sha256_file(&package_path).expect("package hash should compute");
+        let err = validate_package_file(&package_path, &hash, Os::Windows)
+            .expect_err("missing wasm should fail validation");
+
+        assert!(err.to_string().contains("plugin.wasm"));
+    }
+
+    #[test]
     fn registry_package_sources_match_static_configs() {
         for package_id in ["chrome", "file_explorer", "powerpoint", "windows"] {
             let extension_root = Path::new("extensions")
@@ -487,12 +698,6 @@ cmd = { mods = ["ctrl"], key = "T" }
             .expect("catalog should be readable"),
         )
         .expect("catalog should parse");
-        let catalog_ids = catalog
-            .entries
-            .iter()
-            .map(|entry| entry.id.as_str())
-            .collect::<Vec<_>>();
-
         for entry in &catalog.entries {
             let manifest_path = Path::new("extensions")
                 .join("registry")

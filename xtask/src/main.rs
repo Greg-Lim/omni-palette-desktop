@@ -51,6 +51,14 @@ fn run(args: Vec<String>) -> Result<(), String> {
             }
             Ok(())
         }
+        "prepare-wasm-plugins" => {
+            let options = PrepareWasmPluginsOptions::parse(rest)?;
+            let plugins = prepare_wasm_plugins(&options)?;
+            for plugin in plugins {
+                println!("prepared={} wasm={}", plugin.id, plugin.wasm_path.display());
+            }
+            Ok(())
+        }
         _ => Err(usage(format!("unknown command: {command}"))),
     }
 }
@@ -166,6 +174,29 @@ impl PrepareBundledPluginsOptions {
     }
 }
 
+#[derive(Debug)]
+struct PrepareWasmPluginsOptions {
+    packages_dir: PathBuf,
+}
+
+impl PrepareWasmPluginsOptions {
+    fn parse(args: &[String]) -> Result<Self, String> {
+        let mut packages_dir = PathBuf::from(PACKAGES_DIR);
+
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "--packages-dir" => {
+                    packages_dir = PathBuf::from(next_value(&mut iter, "--packages-dir")?)
+                }
+                _ => return Err(usage(format!("unknown prepare-wasm-plugins option: {arg}"))),
+            }
+        }
+
+        Ok(Self { packages_dir })
+    }
+}
+
 fn next_value<'a>(
     iter: &mut impl Iterator<Item = &'a String>,
     option: &str,
@@ -177,7 +208,7 @@ fn next_value<'a>(
 
 fn usage(message: impl AsRef<str>) -> String {
     format!(
-        "{}\n\nusage:\n  cargo run -p xtask -- detect-changed [--base <sha> --head <sha>] [--extension-id <id>] [--force-all]\n  cargo run -p xtask -- package-extension --package-root <path> [--update-catalog]\n  cargo run -p xtask -- prepare-bundled-plugins [--plugins-dir <path>]",
+        "{}\n\nusage:\n  cargo run -p xtask -- detect-changed [--base <sha> --head <sha>] [--extension-id <id>] [--force-all]\n  cargo run -p xtask -- package-extension --package-root <path> [--update-catalog]\n  cargo run -p xtask -- prepare-bundled-plugins [--plugins-dir <path>]\n  cargo run -p xtask -- prepare-wasm-plugins [--packages-dir <path>]",
         message.as_ref()
     )
 }
@@ -193,6 +224,25 @@ struct RustBundledPlugin {
 impl RustBundledPlugin {
     fn release_wasm_path(&self) -> PathBuf {
         self.root
+            .join("target")
+            .join("wasm32-unknown-unknown")
+            .join("release")
+            .join(format!("{}.wasm", self.package_name.replace('-', "_")))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RustWasmPluginPackage {
+    id: String,
+    root: PathBuf,
+    package_name: String,
+    wasm_path: PathBuf,
+}
+
+impl RustWasmPluginPackage {
+    fn release_wasm_path(&self) -> PathBuf {
+        self.root
+            .join("source")
             .join("target")
             .join("wasm32-unknown-unknown")
             .join("release")
@@ -269,6 +319,114 @@ fn discover_rust_bundled_plugins(plugins_dir: &Path) -> Result<Vec<RustBundledPl
 
 fn build_rust_bundled_plugin(plugin: &RustBundledPlugin) -> Result<(), String> {
     let manifest_path = plugin.root.join("Cargo.toml");
+    let output = Command::new("cargo")
+        .args([
+            "build",
+            "--manifest-path",
+            manifest_path
+                .to_str()
+                .ok_or_else(|| format!("invalid path: {}", manifest_path.display()))?,
+            "--target",
+            "wasm32-unknown-unknown",
+            "--release",
+        ])
+        .output()
+        .map_err(|err| format!("failed to run cargo build for {}: {err}", plugin.id))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("failed to build {}:\n{}", plugin.id, stderr.trim()));
+    }
+
+    Ok(())
+}
+
+fn prepare_wasm_plugins(
+    options: &PrepareWasmPluginsOptions,
+) -> Result<Vec<RustWasmPluginPackage>, String> {
+    let plugins = discover_rust_wasm_plugin_packages(&options.packages_dir)?;
+    for plugin in &plugins {
+        build_rust_wasm_plugin_package(plugin)?;
+        let source = plugin.release_wasm_path();
+        if !source.is_file() {
+            return Err(format!(
+                "missing built wasm for {}: {}",
+                plugin.id,
+                source.display()
+            ));
+        }
+        fs::copy(&source, &plugin.wasm_path).map_err(|err| {
+            format!(
+                "failed to copy {} to {}: {err}",
+                source.display(),
+                plugin.wasm_path.display()
+            )
+        })?;
+    }
+
+    Ok(plugins)
+}
+
+fn discover_rust_wasm_plugin_packages(
+    packages_dir: &Path,
+) -> Result<Vec<RustWasmPluginPackage>, String> {
+    let mut plugins = Vec::new();
+    for entry in read_dir_sorted(packages_dir)? {
+        if !entry.file_type().map_err(|err| err.to_string())?.is_dir() {
+            continue;
+        }
+
+        let root = entry.path();
+        let manifest_path = root.join("manifest.toml");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let manifest: PackageManifest = toml::from_str(
+            &fs::read_to_string(&manifest_path)
+                .map_err(|err| format!("failed to read {}: {err}", manifest_path.display()))?,
+        )
+        .map_err(|err| format!("failed to parse {}: {err}", manifest_path.display()))?;
+        if manifest.kind != "wasm_plugin" {
+            continue;
+        }
+
+        let cargo_toml_path = root.join("source").join("Cargo.toml");
+        if !cargo_toml_path.is_file() {
+            continue;
+        }
+        let plugin_toml_path = root
+            .join("windows")
+            .join("plugins")
+            .join(&manifest.id)
+            .join("plugin.toml");
+        let plugin_manifest = read_plugin_manifest(&plugin_toml_path)?;
+        let cargo_manifest: CargoManifest = toml::from_str(
+            &fs::read_to_string(&cargo_toml_path)
+                .map_err(|err| format!("failed to read {}: {err}", cargo_toml_path.display()))?,
+        )
+        .map_err(|err| format!("failed to parse {}: {err}", cargo_toml_path.display()))?;
+
+        plugins.push(RustWasmPluginPackage {
+            id: manifest.id.clone(),
+            root: root.clone(),
+            package_name: cargo_manifest.package.name,
+            wasm_path: plugin_toml_path
+                .parent()
+                .ok_or_else(|| {
+                    format!(
+                        "invalid plugin manifest path: {}",
+                        plugin_toml_path.display()
+                    )
+                })?
+                .join(plugin_manifest.wasm),
+        });
+    }
+
+    Ok(plugins)
+}
+
+fn build_rust_wasm_plugin_package(plugin: &RustWasmPluginPackage) -> Result<(), String> {
+    let manifest_path = plugin.root.join("source").join("Cargo.toml");
     let output = Command::new("cargo")
         .args([
             "build",
@@ -453,15 +611,8 @@ fn package_extension(options: &PackageOptions) -> Result<PackageResult, String> 
         .and_then(|value| value.to_str())
         .ok_or_else(|| format!("invalid package root: {}", package_root.display()))?;
     let manifest_path = extension_root.join("manifest.toml");
-    let actions_path = extension_root.join("actions.toml");
     if !manifest_path.is_file() {
         return Err(format!("missing manifest: {}", manifest_path.display()));
-    }
-    if !actions_path.is_file() {
-        return Err(format!(
-            "missing actions metadata: {}",
-            actions_path.display()
-        ));
     }
 
     let manifest: PackageManifest = toml::from_str(
@@ -536,6 +687,9 @@ fn validate_package_root(
         ));
     }
     if manifest.kind != "static" {
+        if manifest.kind == "wasm_plugin" {
+            return validate_wasm_plugin_package_root(package_root, manifest, platform);
+        }
         return Err(format!("unsupported package kind: {}", manifest.kind));
     }
     if manifest
@@ -592,12 +746,71 @@ fn validate_package_root(
         .parent()
         .ok_or_else(|| format!("invalid package root: {}", package_root.display()))?
         .join("actions.toml");
+    if !actions_path.is_file() {
+        return Err(format!(
+            "missing actions metadata: {}",
+            actions_path.display()
+        ));
+    }
     let actions_config: ActionsConfig = toml::from_str(
         &fs::read_to_string(&actions_path)
             .map_err(|err| format!("failed to read {}: {err}", actions_path.display()))?,
     )
     .map_err(|err| format!("failed to parse {}: {err}", actions_path.display()))?;
     validate_action_mapping(&actions_config, &static_config)?;
+
+    Ok(())
+}
+
+fn validate_wasm_plugin_package_root(
+    package_root: &Path,
+    manifest: &PackageManifest,
+    platform: &str,
+) -> Result<(), String> {
+    let plugin_dir = package_root.join("plugins").join(&manifest.id);
+    let plugin_manifest_path = plugin_dir.join("plugin.toml");
+    if !plugin_manifest_path.is_file() {
+        return Err(format!(
+            "missing plugin manifest: {}",
+            plugin_manifest_path.display()
+        ));
+    }
+
+    let plugin_manifest = read_plugin_manifest(&plugin_manifest_path)?;
+    if plugin_manifest.id != manifest.id {
+        return Err(format!(
+            "plugin manifest id {} does not match package id {}",
+            plugin_manifest.id, manifest.id
+        ));
+    }
+    if plugin_manifest.version.as_deref() != Some(manifest.version.as_str()) {
+        return Err(format!(
+            "plugin manifest version {:?} does not match package version {}",
+            plugin_manifest.version, manifest.version
+        ));
+    }
+    if plugin_manifest.platform.as_deref() != Some(platform) {
+        return Err(format!(
+            "plugin platform {:?} does not match folder platform {}",
+            plugin_manifest.platform, platform
+        ));
+    }
+    if plugin_manifest.wasm.is_absolute()
+        || plugin_manifest
+            .wasm
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!(
+            "plugin wasm path must be a relative file name: {}",
+            plugin_manifest.wasm.display()
+        ));
+    }
+
+    let wasm_path = plugin_dir.join(plugin_manifest.wasm);
+    if !wasm_path.is_file() {
+        return Err(format!("missing plugin wasm: {}", wasm_path.display()));
+    }
 
     Ok(())
 }
@@ -689,21 +902,52 @@ fn package_files(package_root: &Path) -> Result<Vec<(PathBuf, String)>, String> 
             .map_err(|err| format!("failed to read manifest: {err}"))?,
     )
     .map_err(|err| format!("failed to parse manifest: {err}"))?;
-    let static_path = package_root
-        .join("static")
-        .join(format!("{}.toml", manifest.id));
-    let mut files = vec![
-        (
-            extension_root.join("manifest.toml"),
-            "manifest.toml".to_string(),
-        ),
-        (
-            extension_root.join("actions.toml"),
-            "actions.toml".to_string(),
-        ),
-        (static_path, format!("static/{}.toml", manifest.id)),
-    ];
+    let mut files = vec![(
+        extension_root.join("manifest.toml"),
+        "manifest.toml".to_string(),
+    )];
+
+    match manifest.kind.as_str() {
+        "static" => {
+            files.push((
+                extension_root.join("actions.toml"),
+                "actions.toml".to_string(),
+            ));
+            files.push((
+                package_root
+                    .join("static")
+                    .join(format!("{}.toml", manifest.id)),
+                format!("static/{}.toml", manifest.id),
+            ));
+        }
+        "wasm_plugin" => {
+            let plugin_root = package_root.join("plugins").join(&manifest.id);
+            for file_path in files_in_tree(&plugin_root)? {
+                let relative_path = file_path
+                    .strip_prefix(package_root)
+                    .map_err(|err| err.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                files.push((file_path, relative_path));
+            }
+        }
+        _ => return Err(format!("unsupported package kind: {}", manifest.kind)),
+    }
+
     files.sort_by(|left, right| left.1.cmp(&right.1));
+    Ok(files)
+}
+
+fn files_in_tree(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    for entry in read_dir_sorted(root)? {
+        let path = entry.path();
+        if entry.file_type().map_err(|err| err.to_string())?.is_dir() {
+            files.extend(files_in_tree(&path)?);
+        } else {
+            files.push(path);
+        }
+    }
     Ok(files)
 }
 
@@ -818,7 +1062,17 @@ struct PackageManifest {
 #[derive(Debug, Deserialize)]
 struct BundledPluginManifest {
     id: String,
+    version: Option<String>,
+    platform: Option<String>,
     wasm: PathBuf,
+}
+
+fn read_plugin_manifest(path: &Path) -> Result<BundledPluginManifest, String> {
+    toml::from_str(
+        &fs::read_to_string(path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?,
+    )
+    .map_err(|err| format!("failed to parse {}: {err}", path.display()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1286,6 +1540,102 @@ wasm = "plugin.wat"
                 "extensions/bundled/plugins/ahk_agent/target/wasm32-unknown-unknown/release/ahk_agent_wasm.wasm"
             )
         );
+    }
+
+    #[test]
+    fn wasm_plugin_package_files_include_runtime_files_only() {
+        let root = tempfile_dir();
+        let package_root = root.join("extensions/registry/packages/ahk_agent/windows");
+        let runtime_root = package_root.join("plugins/ahk_agent");
+        let source_root = package_root.parent().unwrap().join("source");
+        fs::create_dir_all(&runtime_root).unwrap();
+        fs::create_dir_all(source_root.join("src")).unwrap();
+        fs::write(
+            package_root.parent().unwrap().join("manifest.toml"),
+            r#"schema_version = 1
+id = "ahk_agent"
+name = "AHK"
+version = "0.1.0"
+kind = "wasm_plugin"
+description = "AHK."
+repository = "https://github.com/Greg-Lim/omni-palette-desktop"
+"#,
+        )
+        .unwrap();
+        fs::write(runtime_root.join("plugin.toml"), "id = \"ahk_agent\"").unwrap();
+        fs::write(runtime_root.join("plugin.wasm"), "wasm").unwrap();
+        fs::write(runtime_root.join("OmniPaletteAgent.ahk"), "helper").unwrap();
+        fs::write(
+            source_root.join("Cargo.toml"),
+            "[package]\nname = \"ahk_agent_wasm\"",
+        )
+        .unwrap();
+        fs::write(source_root.join("src/lib.rs"), "").unwrap();
+
+        let files = package_files(&package_root).unwrap();
+        let archive_paths = files
+            .into_iter()
+            .map(|(_, archive_path)| archive_path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            archive_paths,
+            vec![
+                "manifest.toml",
+                "plugins/ahk_agent/OmniPaletteAgent.ahk",
+                "plugins/ahk_agent/plugin.toml",
+                "plugins/ahk_agent/plugin.wasm",
+            ]
+        );
+    }
+
+    #[test]
+    fn discovers_rust_wasm_plugin_packages() {
+        let root = tempfile_dir();
+        let extension_root = root.join("extensions/registry/packages/ahk_agent");
+        let runtime_root = extension_root.join("windows/plugins/ahk_agent");
+        let source_root = extension_root.join("source");
+        fs::create_dir_all(&runtime_root).unwrap();
+        fs::create_dir_all(&source_root).unwrap();
+        fs::write(
+            extension_root.join("manifest.toml"),
+            r#"schema_version = 1
+id = "ahk_agent"
+name = "AHK"
+version = "0.1.0"
+kind = "wasm_plugin"
+description = "AHK."
+repository = "https://github.com/Greg-Lim/omni-palette-desktop"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            runtime_root.join("plugin.toml"),
+            r#"id = "ahk_agent"
+name = "AHK"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wasm"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            source_root.join("Cargo.toml"),
+            r#"[package]
+name = "ahk_agent_wasm"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+
+        let plugins =
+            discover_rust_wasm_plugin_packages(&root.join("extensions/registry/packages")).unwrap();
+
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].id, "ahk_agent");
+        assert_eq!(plugins[0].package_name, "ahk_agent_wasm");
+        assert_eq!(plugins[0].wasm_path, runtime_root.join("plugin.wasm"));
     }
 
     fn root_with_package(

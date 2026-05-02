@@ -305,6 +305,11 @@ mod tests {
         ExtensionDiscovery::new("./extensions/bundled").plugin_manifest_paths()
     }
 
+    fn ahk_plugin_manifests() -> Vec<PathBuf> {
+        ExtensionDiscovery::new("./extensions/registry/packages/ahk_agent/windows")
+            .plugin_manifest_paths()
+    }
+
     fn sample_auto_typer_plugin_path() -> PathBuf {
         Path::new("extensions")
             .join("bundled")
@@ -703,7 +708,7 @@ default_focus_state = "global"
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
-            real_plugin_manifests(),
+            ahk_plugin_manifests(),
             Os::Windows,
             typed,
             read_time_requests,
@@ -730,7 +735,7 @@ default_focus_state = "global"
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
-            real_plugin_manifests(),
+            ahk_plugin_manifests(),
             Os::Windows,
             typed,
             read_time_requests,
@@ -757,7 +762,7 @@ default_focus_state = "global"
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
-            real_plugin_manifests(),
+            ahk_plugin_manifests(),
             Os::Windows,
             Arc::clone(&typed),
             read_time_requests,
@@ -789,7 +794,7 @@ default_focus_state = "global"
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let script_text = concat!(
             "#NoEnv\n",
-            "#Include \"C:\\Users\\limgr\\Documents\\GitHub\\global_palette\\extensions\\bundled\\plugins\\ahk_agent\\OmniPaletteAgent.ahk\"\n",
+            "#Include \"C:\\Users\\limgr\\Documents\\GitHub\\global_palette\\extensions\\registry\\packages\\ahk_agent\\windows\\plugins\\ahk_agent\\OmniPaletteAgent.ahk\"\n",
             "SendMode Input\n",
             "SetWorkingDir %A_ScriptDir%\n",
             "#SingleInstance Force\n",
@@ -799,7 +804,7 @@ default_focus_state = "global"
             ":?*:?;::\u{2753}\n",
         );
         let registry = PluginRegistry::load_with_host_recorders(
-            real_plugin_manifests(),
+            ahk_plugin_manifests(),
             Os::Windows,
             typed,
             read_time_requests,
@@ -842,7 +847,7 @@ default_focus_state = "global"
         }
         let script_text = script_lines.join("\n");
         let registry = PluginRegistry::load_with_host_recorders(
-            real_plugin_manifests(),
+            ahk_plugin_manifests(),
             Os::Windows,
             typed,
             read_time_requests,
