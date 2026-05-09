@@ -10,7 +10,7 @@ use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
     capabilities::{
         register_capabilities, PluginHostContext, PluginStoreState, ReadSettingsTextFn,
-        ReadTimeTextFn, ResolvePluginStorageRootFn, WriteTextFn,
+        ReadTimeJsonFn, ReadTimeTextFn, ResolvePluginStorageRootFn, WriteTextFn,
     },
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::{PluginManifest, PluginSettingsSource},
@@ -36,6 +36,7 @@ impl LoadedPlugin {
         current_os: Os,
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
+        read_time_json: ReadTimeJsonFn,
         resolve_storage_root: ResolvePluginStorageRootFn,
         read_settings_text: ReadSettingsTextFn,
         #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
@@ -57,6 +58,7 @@ impl LoadedPlugin {
         let host_context = PluginHostContext {
             write_text,
             read_time_text,
+            read_time_json,
             resolve_storage_root,
             read_settings_text,
             #[cfg(debug_assertions)]
@@ -83,6 +85,7 @@ impl LoadedPlugin {
         current_os: Os,
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
+        read_time_json: ReadTimeJsonFn,
         resolve_storage_root: ResolvePluginStorageRootFn,
         read_settings_text: ReadSettingsTextFn,
         #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
@@ -103,6 +106,7 @@ impl LoadedPlugin {
         let host_context = PluginHostContext {
             write_text,
             read_time_text,
+            read_time_json,
             resolve_storage_root,
             read_settings_text,
             #[cfg(debug_assertions)]

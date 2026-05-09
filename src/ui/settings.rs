@@ -1504,11 +1504,20 @@ fn rendered_settings_categories(schema: &ExtensionSettingsSchema) -> Vec<Rendere
 }
 
 fn default_extension_settings_values(schema: &ExtensionSettingsSchema) -> ExtensionSettingsValues {
-    schema
-        .items
-        .iter()
-        .map(|item| (item.key.clone(), item.default))
-        .collect()
+    let mut values = ExtensionSettingsValues::default();
+    for item in &schema.items {
+        match item.kind {
+            crate::core::extensions::settings::ExtensionSettingKind::Toggle => {
+                values.toggles.insert(item.key.clone(), item.default);
+            }
+            crate::core::extensions::settings::ExtensionSettingKind::EntryList => {
+                values
+                    .lists
+                    .insert(item.key.clone(), item.default_entries.clone());
+            }
+        }
+    }
+    values
 }
 
 fn draw_settings_category(
@@ -1594,7 +1603,7 @@ fn draw_settings_category(
                 if !child_items.is_empty() {
                     ui.add_space(10.0);
                     for item in child_items {
-                        draw_toggle_setting_row(ui, panel, item);
+                        draw_extension_setting_row(ui, panel, item);
                     }
                 }
             }
@@ -1616,6 +1625,7 @@ fn draw_category_header_toggle(
     let theme = settings_theme(ui);
     let value = panel
         .draft_values
+        .toggles
         .entry(item.key.clone())
         .or_insert(item.default);
 
@@ -1626,6 +1636,21 @@ fn draw_category_header_toggle(
     );
 }
 
+fn draw_extension_setting_row(
+    ui: &mut egui::Ui,
+    panel: &mut ExtensionSettingsPanelState,
+    item: ExtensionSettingItem,
+) {
+    match item.kind {
+        crate::core::extensions::settings::ExtensionSettingKind::Toggle => {
+            draw_toggle_setting_row(ui, panel, item);
+        }
+        crate::core::extensions::settings::ExtensionSettingKind::EntryList => {
+            draw_entry_list_setting(ui, panel, item);
+        }
+    }
+}
+
 fn draw_toggle_setting_row(
     ui: &mut egui::Ui,
     panel: &mut ExtensionSettingsPanelState,
@@ -1634,6 +1659,7 @@ fn draw_toggle_setting_row(
     let theme = settings_theme(ui);
     let value = panel
         .draft_values
+        .toggles
         .entry(item.key.clone())
         .or_insert(item.default);
 
@@ -1668,6 +1694,81 @@ fn draw_toggle_setting_row(
                 });
             });
         });
+    ui.add_space(8.0);
+}
+
+fn draw_entry_list_setting(
+    ui: &mut egui::Ui,
+    panel: &mut ExtensionSettingsPanelState,
+    item: ExtensionSettingItem,
+) {
+    let theme = settings_theme(ui);
+    let entries = panel
+        .draft_values
+        .lists
+        .entry(item.key.clone())
+        .or_insert_with(|| item.default_entries.clone());
+    let mut remove_index = None;
+
+    egui::Frame::new()
+        .fill(theme.input_bg)
+        .stroke(egui::Stroke::new(1.0, theme.border_soft))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin {
+            left: 12,
+            right: 12,
+            top: 10,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            selectable_label(
+                ui,
+                settings_text(theme, &item.label, SettingsTextTone::Primary),
+            );
+            if let Some(description) = &item.description {
+                ui.add_space(4.0);
+                selectable_label(
+                    ui,
+                    settings_text(theme, description, SettingsTextTone::Muted).size(12.0),
+                );
+            }
+            ui.add_space(8.0);
+
+            for (index, entry) in entries.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add(toggle_switch::toggle(&mut entry.enabled));
+                    ui.add_sized(
+                        [160.0, 26.0],
+                        egui::TextEdit::singleline(&mut entry.name).hint_text("Name"),
+                    );
+                    ui.add_sized(
+                        [220.0, 26.0],
+                        egui::TextEdit::singleline(&mut entry.format).hint_text("Format"),
+                    );
+                    if ui.button("Remove").clicked() {
+                        remove_index = Some(index);
+                    }
+                });
+            }
+
+            ui.add_space(6.0);
+            if ui.button("Add Entry").clicked() {
+                let next_index = entries.len() + 1;
+                entries.push(
+                    crate::core::extensions::settings::ExtensionSettingListEntry {
+                        id: format!("custom_{next_index}"),
+                        name: format!("Entry {next_index}"),
+                        format: "{D} {MMM} {YYYY}".to_string(),
+                        enabled: true,
+                    },
+                );
+            }
+        });
+
+    if let Some(index) = remove_index {
+        entries.remove(index);
+    }
     ui.add_space(8.0);
 }
 
@@ -2726,6 +2827,7 @@ mod tests {
                     category: None,
                     kind: ExtensionSettingKind::Toggle,
                     default: true,
+                    default_entries: Vec::new(),
                 },
                 ExtensionSettingItem {
                     key: "script.toggle".to_string(),
@@ -2734,6 +2836,7 @@ mod tests {
                     category: Some("script".to_string()),
                     kind: ExtensionSettingKind::Toggle,
                     default: false,
+                    default_entries: Vec::new(),
                 },
             ],
         });

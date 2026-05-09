@@ -170,6 +170,19 @@ struct ParsedKey {
 
 type PersistedSettings = BTreeMap<String, bool>;
 
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+struct PersistedSettingsFile {
+    #[serde(default)]
+    toggles: PersistedSettings,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+enum PersistedSettingsPayload {
+    Typed(PersistedSettingsFile),
+    Flat(PersistedSettings),
+}
+
 #[no_mangle]
 pub extern "C" fn register_commands_json() -> i32 {
     let json = build_commands_json_from_host().unwrap_or_else(|_| "[]".to_string());
@@ -406,7 +419,12 @@ fn read_settings_from_host() -> Result<PersistedSettings, String> {
         MAX_HOST_BUFFER_CAPACITY,
         host::read_settings_json,
     )?;
-    serde_json::from_str(&json).map_err(|err| format!("Could not parse settings JSON: {err}"))
+    match serde_json::from_str::<PersistedSettingsPayload>(&json)
+        .map_err(|err| format!("Could not parse settings JSON: {err}"))?
+    {
+        PersistedSettingsPayload::Typed(file) => Ok(file.toggles),
+        PersistedSettingsPayload::Flat(settings) => Ok(settings),
+    }
 }
 
 fn execute_registered_command(

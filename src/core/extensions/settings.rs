@@ -82,20 +82,50 @@ pub struct ExtensionSettingItem {
     pub kind: ExtensionSettingKind,
     #[serde(default)]
     pub default: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub default_entries: Vec<ExtensionSettingListEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionSettingKind {
     Toggle,
+    EntryList,
 }
 
-pub type ExtensionSettingsValues = BTreeMap<String, bool>;
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingsValues {
+    #[serde(default)]
+    pub toggles: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub lists: BTreeMap<String, Vec<ExtensionSettingListEntry>>,
+}
+
+impl ExtensionSettingsValues {
+    pub fn is_empty(&self) -> bool {
+        self.toggles.is_empty() && self.lists.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingListEntry {
+    pub id: String,
+    pub name: String,
+    pub format: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct ExtensionSettingsFile {
     #[serde(default)]
-    toggles: ExtensionSettingsValues,
+    toggles: BTreeMap<String, bool>,
+    #[serde(default)]
+    lists: BTreeMap<String, Vec<ExtensionSettingListEntry>>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub fn extension_settings_key(extension_id: &str, source_id: &str) -> String {
@@ -185,6 +215,45 @@ pub fn validate_extension_settings_schema(
                 ));
             }
         }
+        match item.kind {
+            ExtensionSettingKind::Toggle => {
+                if !item.default_entries.is_empty() {
+                    return Err(format!(
+                        "Toggle setting '{}' must not define default_entries",
+                        item.key
+                    ));
+                }
+            }
+            ExtensionSettingKind::EntryList => {
+                let mut seen_entry_ids = HashSet::new();
+                for entry in &item.default_entries {
+                    if entry.id.trim().is_empty() {
+                        return Err(format!(
+                            "Entry list setting '{}' has a default entry with an empty id",
+                            item.key
+                        ));
+                    }
+                    if entry.name.trim().is_empty() {
+                        return Err(format!(
+                            "Entry list setting '{}' has a default entry with an empty name",
+                            item.key
+                        ));
+                    }
+                    if entry.format.trim().is_empty() {
+                        return Err(format!(
+                            "Entry list setting '{}' has a default entry with an empty format",
+                            item.key
+                        ));
+                    }
+                    if !seen_entry_ids.insert(entry.id.clone()) {
+                        return Err(format!(
+                            "Entry list setting '{}' has duplicate default entry id '{}'",
+                            item.key, entry.id
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     for category in &schema.categories {
@@ -236,7 +305,10 @@ pub fn load_extension_settings_values(
             path.display()
         )
     })?;
-    Ok(settings_file.toggles)
+    Ok(ExtensionSettingsValues {
+        toggles: settings_file.toggles,
+        lists: settings_file.lists,
+    })
 }
 
 pub fn save_extension_settings_values(
@@ -255,7 +327,8 @@ pub fn save_extension_settings_values(
     let file_path = extension_settings_file_path(install_root, extension_id);
     let staging_path = settings_root.join(format!("{extension_id}.toml.settings"));
     let file = ExtensionSettingsFile {
-        toggles: values.clone(),
+        toggles: values.toggles.clone(),
+        lists: values.lists.clone(),
     };
     let content = toml::to_string_pretty(&file)
         .map_err(|err| format!("Could not serialize extension settings: {err}"))?;
@@ -279,19 +352,32 @@ pub fn resolved_extension_settings_values(
     schema: &ExtensionSettingsSchema,
     stored_values: &ExtensionSettingsValues,
 ) -> ExtensionSettingsValues {
-    schema
-        .items
-        .iter()
-        .map(|item| {
-            (
-                item.key.clone(),
-                stored_values
-                    .get(&item.key)
-                    .copied()
-                    .unwrap_or(item.default),
-            )
-        })
-        .collect()
+    let mut values = ExtensionSettingsValues::default();
+    for item in &schema.items {
+        match item.kind {
+            ExtensionSettingKind::Toggle => {
+                values.toggles.insert(
+                    item.key.clone(),
+                    stored_values
+                        .toggles
+                        .get(&item.key)
+                        .copied()
+                        .unwrap_or(item.default),
+                );
+            }
+            ExtensionSettingKind::EntryList => {
+                values.lists.insert(
+                    item.key.clone(),
+                    stored_values
+                        .lists
+                        .get(&item.key)
+                        .cloned()
+                        .unwrap_or_else(|| item.default_entries.clone()),
+                );
+            }
+        }
+    }
+    values
 }
 
 pub fn extension_settings_json(install_root: &Path, extension_id: &str) -> Result<String, String> {
@@ -310,6 +396,7 @@ fn extension_setting_item_from_config(config: &ExtensionSettingConfig) -> Extens
             ExtensionSettingTypeConfig::Toggle => ExtensionSettingKind::Toggle,
         },
         default: config.default,
+        default_entries: Vec::new(),
     }
 }
 
@@ -421,10 +508,13 @@ mod tests {
     #[test]
     fn saves_and_loads_extension_settings_values() {
         let temp = tempfile::tempdir().expect("temp dir should be created");
-        let values = ExtensionSettingsValues::from([
-            ("script_enabled".to_string(), true),
-            ("command_enabled".to_string(), false),
-        ]);
+        let values = ExtensionSettingsValues {
+            toggles: BTreeMap::from([
+                ("script_enabled".to_string(), true),
+                ("command_enabled".to_string(), false),
+            ]),
+            lists: BTreeMap::new(),
+        };
 
         save_extension_settings_values(temp.path(), "ahk_agent", &values)
             .expect("settings should save");
@@ -446,6 +536,7 @@ mod tests {
                     category: None,
                     kind: ExtensionSettingKind::Toggle,
                     default: true,
+                    default_entries: Vec::new(),
                 },
                 ExtensionSettingItem {
                     key: "beta".to_string(),
@@ -454,22 +545,23 @@ mod tests {
                     category: None,
                     kind: ExtensionSettingKind::Toggle,
                     default: false,
+                    default_entries: Vec::new(),
                 },
             ],
         };
-        let stored = ExtensionSettingsValues::from([
-            ("beta".to_string(), true),
-            ("orphan".to_string(), false),
-        ]);
+        let stored = ExtensionSettingsValues {
+            toggles: BTreeMap::from([("beta".to_string(), true), ("orphan".to_string(), false)]),
+            lists: BTreeMap::new(),
+        };
 
         let resolved = resolved_extension_settings_values(&schema, &stored);
 
         assert_eq!(
             resolved,
-            ExtensionSettingsValues::from([
-                ("alpha".to_string(), true),
-                ("beta".to_string(), true),
-            ])
+            ExtensionSettingsValues {
+                toggles: BTreeMap::from([("alpha".to_string(), true), ("beta".to_string(), true),]),
+                lists: BTreeMap::new(),
+            }
         );
     }
 
@@ -485,6 +577,7 @@ mod tests {
                     category: None,
                     kind: ExtensionSettingKind::Toggle,
                     default: true,
+                    default_entries: Vec::new(),
                 },
                 ExtensionSettingItem {
                     key: "duplicate".to_string(),
@@ -493,6 +586,7 @@ mod tests {
                     category: None,
                     kind: ExtensionSettingKind::Toggle,
                     default: false,
+                    default_entries: Vec::new(),
                 },
             ],
         })
@@ -560,6 +654,7 @@ mod tests {
                 category: Some("missing".to_string()),
                 kind: ExtensionSettingKind::Toggle,
                 default: true,
+                default_entries: Vec::new(),
             }],
         })
         .expect_err("missing category references should fail validation");
@@ -584,10 +679,106 @@ mod tests {
                 category: None,
                 kind: ExtensionSettingKind::Toggle,
                 default: true,
+                default_entries: Vec::new(),
             }],
         })
         .expect_err("category toggle keys outside the category should fail");
 
         assert!(err.contains("same category"));
+    }
+
+    #[test]
+    fn saves_and_loads_mixed_toggle_and_entry_list_values() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let values = ExtensionSettingsValues {
+            toggles: BTreeMap::from([("enabled".to_string(), true)]),
+            lists: BTreeMap::from([(
+                "entries".to_string(),
+                vec![ExtensionSettingListEntry {
+                    id: "short_date".to_string(),
+                    name: "Print date short".to_string(),
+                    format: "{D} {MMM}".to_string(),
+                    enabled: true,
+                }],
+            )]),
+        };
+
+        save_extension_settings_values(temp.path(), "datetime_typer", &values)
+            .expect("settings should save");
+        let reloaded = load_extension_settings_values(temp.path(), "datetime_typer")
+            .expect("settings should reload");
+
+        assert_eq!(reloaded, values);
+    }
+
+    #[test]
+    fn resolves_entry_list_defaults_and_ignores_orphaned_lists() {
+        let default_entry = ExtensionSettingListEntry {
+            id: "long_date".to_string(),
+            name: "Print date long".to_string(),
+            format: "{D} {MMMM} {YYYY}".to_string(),
+            enabled: true,
+        };
+        let schema = ExtensionSettingsSchema {
+            categories: vec![],
+            items: vec![ExtensionSettingItem {
+                key: "entries".to_string(),
+                label: "Entries".to_string(),
+                description: None,
+                category: None,
+                kind: ExtensionSettingKind::EntryList,
+                default: false,
+                default_entries: vec![default_entry.clone()],
+            }],
+        };
+        let stored = ExtensionSettingsValues {
+            toggles: BTreeMap::new(),
+            lists: BTreeMap::from([(
+                "orphan".to_string(),
+                vec![ExtensionSettingListEntry {
+                    id: "ignored".to_string(),
+                    name: "Ignored".to_string(),
+                    format: "{YYYY}".to_string(),
+                    enabled: true,
+                }],
+            )]),
+        };
+
+        let resolved = resolved_extension_settings_values(&schema, &stored);
+
+        assert_eq!(resolved.lists.get("entries"), Some(&vec![default_entry]));
+        assert!(!resolved.lists.contains_key("orphan"));
+    }
+
+    #[test]
+    fn validates_duplicate_default_entry_ids() {
+        let err = validate_extension_settings_schema(ExtensionSettingsSchema {
+            categories: vec![],
+            items: vec![ExtensionSettingItem {
+                key: "entries".to_string(),
+                label: "Entries".to_string(),
+                description: None,
+                category: None,
+                kind: ExtensionSettingKind::EntryList,
+                default: false,
+                default_entries: vec![
+                    ExtensionSettingListEntry {
+                        id: "duplicate".to_string(),
+                        name: "One".to_string(),
+                        format: "{D}".to_string(),
+                        enabled: true,
+                    },
+                    ExtensionSettingListEntry {
+                        id: "duplicate".to_string(),
+                        name: "Two".to_string(),
+                        format: "{YYYY}".to_string(),
+                        enabled: true,
+                    },
+                ],
+            }],
+        })
+        .expect_err("duplicate default entry ids should fail");
+
+        assert!(err.contains("duplicate default entry id"));
     }
 }

@@ -1,0 +1,13 @@
+id = "datetime_typer"
+name = "DateTime Typer"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wasm"
+permissions = ["write_text", "read_time", "read_settings"]
+
+[app]
+default_focus_state = "global"
+default_tags = ["date", "time", "typing"]
+
+[settings]
+source = "wasm"

@@ -21,7 +21,9 @@ use std::{
 #[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
-    capabilities::{ReadSettingsTextFn, ReadTimeTextFn, ResolvePluginStorageRootFn, WriteTextFn},
+    capabilities::{
+        ReadSettingsTextFn, ReadTimeJsonFn, ReadTimeTextFn, ResolvePluginStorageRootFn, WriteTextFn,
+    },
     command::PluginApplication,
     runtime::LoadedPlugin,
 };
@@ -65,6 +67,7 @@ impl PluginRegistry {
         current_os: Os,
         write_text: WriteTextFn,
         read_time_text: ReadTimeTextFn,
+        read_time_json: ReadTimeJsonFn,
         resolve_storage_root: ResolvePluginStorageRootFn,
         read_settings_text: ReadSettingsTextFn,
         #[cfg(debug_assertions)] write_performance_log: LogPerformanceSnapshotFn,
@@ -78,6 +81,7 @@ impl PluginRegistry {
                 current_os,
                 Arc::clone(&write_text),
                 Arc::clone(&read_time_text),
+                Arc::clone(&read_time_json),
                 Arc::clone(&resolve_storage_root),
                 Arc::clone(&read_settings_text),
                 #[cfg(debug_assertions)]
@@ -149,6 +153,9 @@ impl PluginRegistry {
                     .expect("read time lock poisoned")
                     .push("read_time".to_string());
                 Ok("6 Apr".to_string())
+            }),
+            Arc::new(|| {
+                Ok(r#"{"year":2026,"month":4,"day":6,"hour":7,"minute":8,"second":9,"weekday":1}"#.to_string())
             }),
             Arc::new(move |plugin_id| Ok(storage_base_root.join(plugin_id))),
             Arc::new(move |plugin_id| {
@@ -405,6 +412,59 @@ mod tests {
                 .expect("read time lock poisoned")
                 .as_slice(),
             ["read_time"]
+        );
+    }
+
+    #[test]
+    fn datetime_typer_registers_configured_entries_and_types_formatted_time() {
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let settings_json = serde_json::json!({
+            "lists": {
+                "datetime_typer.entries": [
+                    {
+                        "id": "custom_date_time",
+                        "name": "Custom date time",
+                        "format": "{D} {MMM} {YYYY} {HH}:{mm}",
+                        "enabled": true
+                    },
+                    {
+                        "id": "disabled",
+                        "name": "Disabled",
+                        "format": "{YYYY}",
+                        "enabled": false
+                    }
+                ]
+            }
+        })
+        .to_string();
+        let registry = PluginRegistry::load_with_host_recorders(
+            real_plugin_manifests(),
+            Os::Windows,
+            Arc::clone(&typed),
+            Arc::clone(&read_time_requests),
+            Vec::new(),
+            vec![("datetime_typer".to_string(), settings_json)],
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        let app = registry
+            .applications()
+            .iter()
+            .find(|app| app.plugin_id == "datetime_typer")
+            .expect("datetime typer plugin should load");
+
+        assert_eq!(app.name, "DateTime Typer");
+        assert_eq!(app.commands.len(), 1);
+        assert_eq!(app.commands[0].id, "datetime_typer_custom_date_time");
+        assert_eq!(app.commands[0].name, "Custom date time");
+
+        registry
+            .execute("datetime_typer", "datetime_typer_custom_date_time")
+            .expect("datetime typer command should execute");
+
+        assert_eq!(
+            typed.lock().expect("typed text lock poisoned").as_slice(),
+            ["6 Apr 2026 07:08"]
         );
     }
 

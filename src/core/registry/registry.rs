@@ -65,6 +65,7 @@ impl MasterRegistry {
             current_os,
             Arc::new(send_text),
             Arc::new(current_date_text),
+            Arc::new(current_time_json),
             Arc::new(plugin_storage_root),
             Arc::new(plugin_settings_text),
             #[cfg(debug_assertions)]
@@ -466,6 +467,23 @@ fn current_date_text() -> Result<String, String> {
     Ok(format!("{} {}", system_time.wDay, month))
 }
 
+fn current_time_json() -> Result<String, String> {
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+
+    let system_time = unsafe { GetLocalTime() };
+
+    Ok(serde_json::json!({
+        "year": system_time.wYear,
+        "month": system_time.wMonth,
+        "day": system_time.wDay,
+        "hour": system_time.wHour,
+        "minute": system_time.wMinute,
+        "second": system_time.wSecond,
+        "weekday": system_time.wDayOfWeek,
+    })
+    .to_string())
+}
+
 fn plugin_storage_root(plugin_id: &str) -> Result<PathBuf, String> {
     let local_app_data = std::env::var_os("LOCALAPPDATA")
         .ok_or_else(|| "LOCALAPPDATA is not available".to_string())?;
@@ -493,6 +511,23 @@ mod tests {
         },
     };
     use std::fs;
+
+    #[test]
+    fn current_time_json_contains_only_raw_time_fields() {
+        let json = current_time_json().expect("time JSON should serialize");
+        let value: serde_json::Value =
+            serde_json::from_str(&json).expect("time JSON should parse");
+        let object = value.as_object().expect("time JSON should be an object");
+
+        assert!(object.get("year").and_then(|value| value.as_u64()).is_some());
+        assert!(object.get("month").and_then(|value| value.as_u64()).is_some());
+        assert!(object.get("day").and_then(|value| value.as_u64()).is_some());
+        assert!(object.get("hour").and_then(|value| value.as_u64()).is_some());
+        assert!(object.get("minute").and_then(|value| value.as_u64()).is_some());
+        assert!(object.get("second").and_then(|value| value.as_u64()).is_some());
+        assert!(object.get("weekday").and_then(|value| value.as_u64()).is_some());
+        assert_eq!(object.len(), 7);
+    }
 
     #[test]
     fn strict_build_rejects_invalid_static_extension() {
