@@ -64,7 +64,6 @@ impl MasterRegistry {
             extension_discovery.plugin_manifest_paths(),
             current_os,
             Arc::new(send_text),
-            Arc::new(current_date_text),
             Arc::new(current_time_json),
             Arc::new(plugin_storage_root),
             Arc::new(plugin_settings_text),
@@ -451,22 +450,6 @@ fn modifiers_from_config(mods: &[Modifier]) -> HotkeyModifiers {
     }
 }
 
-fn current_date_text() -> Result<String, String> {
-    use windows::Win32::System::SystemInformation::GetLocalTime;
-
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-
-    let system_time = unsafe { GetLocalTime() };
-    let month_index = usize::from(system_time.wMonth.saturating_sub(1));
-    let month = MONTHS
-        .get(month_index)
-        .ok_or_else(|| format!("Invalid local month value: {}", system_time.wMonth))?;
-
-    Ok(format!("{} {}", system_time.wDay, month))
-}
-
 fn current_time_json() -> Result<String, String> {
     use windows::Win32::System::SystemInformation::GetLocalTime;
 
@@ -515,17 +498,34 @@ mod tests {
     #[test]
     fn current_time_json_contains_only_raw_time_fields() {
         let json = current_time_json().expect("time JSON should serialize");
-        let value: serde_json::Value =
-            serde_json::from_str(&json).expect("time JSON should parse");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("time JSON should parse");
         let object = value.as_object().expect("time JSON should be an object");
 
-        assert!(object.get("year").and_then(|value| value.as_u64()).is_some());
-        assert!(object.get("month").and_then(|value| value.as_u64()).is_some());
+        assert!(object
+            .get("year")
+            .and_then(|value| value.as_u64())
+            .is_some());
+        assert!(object
+            .get("month")
+            .and_then(|value| value.as_u64())
+            .is_some());
         assert!(object.get("day").and_then(|value| value.as_u64()).is_some());
-        assert!(object.get("hour").and_then(|value| value.as_u64()).is_some());
-        assert!(object.get("minute").and_then(|value| value.as_u64()).is_some());
-        assert!(object.get("second").and_then(|value| value.as_u64()).is_some());
-        assert!(object.get("weekday").and_then(|value| value.as_u64()).is_some());
+        assert!(object
+            .get("hour")
+            .and_then(|value| value.as_u64())
+            .is_some());
+        assert!(object
+            .get("minute")
+            .and_then(|value| value.as_u64())
+            .is_some());
+        assert!(object
+            .get("second")
+            .and_then(|value| value.as_u64())
+            .is_some());
+        assert!(object
+            .get("weekday")
+            .and_then(|value| value.as_u64())
+            .is_some());
         assert_eq!(object.len(), 7);
     }
 

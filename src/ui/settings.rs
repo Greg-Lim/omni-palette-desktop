@@ -1708,6 +1708,8 @@ fn draw_entry_list_setting(
         .lists
         .entry(item.key.clone())
         .or_insert_with(|| item.default_entries.clone());
+    let format_hint = entry_list_format_hint(&item);
+    let default_format = entry_list_default_format(&item);
     let mut remove_index = None;
 
     egui::Frame::new()
@@ -1744,7 +1746,7 @@ fn draw_entry_list_setting(
                     );
                     ui.add_sized(
                         [220.0, 26.0],
-                        egui::TextEdit::singleline(&mut entry.format).hint_text("Format"),
+                        egui::TextEdit::singleline(&mut entry.format).hint_text(format_hint),
                     );
                     if ui.button("Remove").clicked() {
                         remove_index = Some(index);
@@ -1759,7 +1761,7 @@ fn draw_entry_list_setting(
                     crate::core::extensions::settings::ExtensionSettingListEntry {
                         id: format!("custom_{next_index}"),
                         name: format!("Entry {next_index}"),
-                        format: "{D} {MMM} {YYYY}".to_string(),
+                        format: default_format.to_string(),
                         enabled: true,
                     },
                 );
@@ -1770,6 +1772,16 @@ fn draw_entry_list_setting(
         entries.remove(index);
     }
     ui.add_space(8.0);
+}
+
+fn entry_list_format_hint(item: &ExtensionSettingItem) -> &str {
+    item.entry_list_format_hint.as_deref().unwrap_or("Format")
+}
+
+fn entry_list_default_format(item: &ExtensionSettingItem) -> &str {
+    item.entry_list_default_format
+        .as_deref()
+        .unwrap_or("{D} {MMM} {YYYY}")
 }
 
 fn setting_row(ui: &mut egui::Ui, label: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
@@ -2497,14 +2509,14 @@ fn map_egui_key(key: egui::Key) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_expanded_categories, extension_action_area_width_for_toggle,
-        extension_source_status_row, filter_catalog_entries, installed_versions_by_id,
-        radio_option_row, rendered_settings_categories, setting_help_icon_rect,
-        setting_help_icon_visuals, setting_row_with_help, settings_text_color,
-        validate_catalog_source, SettingsBootstrap, SettingsState, SettingsTextTone,
-        ACTION_BUTTON_SPACING, EXTENSION_ACTION_SLOT_WIDTH, EXTENSION_SOURCE_ROW_SPACING,
-        EXTENSION_STATUS_LABEL_WIDTH, HELP_ICON_DIAMETER, HELP_ICON_GAP, RADIO_OPTION_SPACING,
-        ROW_LABEL_WIDTH, SETTING_ROW_HEIGHT,
+        default_expanded_categories, entry_list_default_format, entry_list_format_hint,
+        extension_action_area_width_for_toggle, extension_source_status_row,
+        filter_catalog_entries, installed_versions_by_id, radio_option_row,
+        rendered_settings_categories, setting_help_icon_rect, setting_help_icon_visuals,
+        setting_row_with_help, settings_text_color, validate_catalog_source, SettingsBootstrap,
+        SettingsState, SettingsTextTone, ACTION_BUTTON_SPACING, EXTENSION_ACTION_SLOT_WIDTH,
+        EXTENSION_SOURCE_ROW_SPACING, EXTENSION_STATUS_LABEL_WIDTH, HELP_ICON_DIAMETER,
+        HELP_ICON_GAP, RADIO_OPTION_SPACING, ROW_LABEL_WIDTH, SETTING_ROW_HEIGHT,
     };
     use crate::config::runtime::{GitHubExtensionSource, RuntimeConfig};
     use crate::core::extensions::catalog::{CatalogEntry, ExtensionKind};
@@ -2828,6 +2840,8 @@ mod tests {
                     kind: ExtensionSettingKind::Toggle,
                     default: true,
                     default_entries: Vec::new(),
+                    entry_list_format_hint: None,
+                    entry_list_default_format: None,
                 },
                 ExtensionSettingItem {
                     key: "script.toggle".to_string(),
@@ -2837,6 +2851,8 @@ mod tests {
                     kind: ExtensionSettingKind::Toggle,
                     default: false,
                     default_entries: Vec::new(),
+                    entry_list_format_hint: None,
+                    entry_list_default_format: None,
                 },
             ],
         });
@@ -2872,6 +2888,31 @@ mod tests {
 
         assert!(expanded.contains("open"));
         assert!(!expanded.contains("closed"));
+    }
+
+    #[test]
+    fn entry_list_labels_default_to_format_and_allow_text_override() {
+        let default_item = ExtensionSettingItem {
+            key: "datetime_typer.entries".to_string(),
+            label: "Date and time entries".to_string(),
+            description: None,
+            category: None,
+            kind: ExtensionSettingKind::EntryList,
+            default: false,
+            default_entries: Vec::new(),
+            entry_list_format_hint: None,
+            entry_list_default_format: None,
+        };
+        let text_item = ExtensionSettingItem {
+            entry_list_format_hint: Some("Text".to_string()),
+            entry_list_default_format: Some("Text to type".to_string()),
+            ..default_item.clone()
+        };
+
+        assert_eq!(entry_list_format_hint(&default_item), "Format");
+        assert_eq!(entry_list_default_format(&default_item), "{D} {MMM} {YYYY}");
+        assert_eq!(entry_list_format_hint(&text_item), "Text");
+        assert_eq!(entry_list_default_format(&text_item), "Text to type");
     }
 
     #[test]

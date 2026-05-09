@@ -560,22 +560,6 @@ fn extension_install_root() -> Result<std::path::PathBuf, String> {
     })
 }
 
-fn plugin_host_current_date_text() -> Result<String, String> {
-    use windows::Win32::System::SystemInformation::GetLocalTime;
-
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-
-    let system_time = unsafe { GetLocalTime() };
-    let month_index = usize::from(system_time.wMonth.saturating_sub(1));
-    let month = MONTHS
-        .get(month_index)
-        .ok_or_else(|| format!("Invalid local month value: {}", system_time.wMonth))?;
-
-    Ok(format!("{} {}", system_time.wDay, month))
-}
-
 fn plugin_host_current_time_json() -> Result<String, String> {
     use windows::Win32::System::SystemInformation::GetLocalTime;
 
@@ -1300,7 +1284,6 @@ fn load_extension_settings_schema(
             &target.installed_path,
             current_os,
             Arc::new(|_text| {}),
-            Arc::new(plugin_host_current_date_text),
             Arc::new(plugin_host_current_time_json),
             Arc::new(plugin_host_storage_root),
             Arc::new(plugin_host_settings_text),

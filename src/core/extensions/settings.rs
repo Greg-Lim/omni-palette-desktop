@@ -84,6 +84,10 @@ pub struct ExtensionSettingItem {
     pub default: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub default_entries: Vec<ExtensionSettingListEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_list_format_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_list_default_format: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -397,6 +401,8 @@ fn extension_setting_item_from_config(config: &ExtensionSettingConfig) -> Extens
         },
         default: config.default,
         default_entries: Vec::new(),
+        entry_list_format_hint: None,
+        entry_list_default_format: None,
     }
 }
 
@@ -537,6 +543,8 @@ mod tests {
                     kind: ExtensionSettingKind::Toggle,
                     default: true,
                     default_entries: Vec::new(),
+                    entry_list_format_hint: None,
+                    entry_list_default_format: None,
                 },
                 ExtensionSettingItem {
                     key: "beta".to_string(),
@@ -546,6 +554,8 @@ mod tests {
                     kind: ExtensionSettingKind::Toggle,
                     default: false,
                     default_entries: Vec::new(),
+                    entry_list_format_hint: None,
+                    entry_list_default_format: None,
                 },
             ],
         };
@@ -578,6 +588,8 @@ mod tests {
                     kind: ExtensionSettingKind::Toggle,
                     default: true,
                     default_entries: Vec::new(),
+                    entry_list_format_hint: None,
+                    entry_list_default_format: None,
                 },
                 ExtensionSettingItem {
                     key: "duplicate".to_string(),
@@ -587,6 +599,8 @@ mod tests {
                     kind: ExtensionSettingKind::Toggle,
                     default: false,
                     default_entries: Vec::new(),
+                    entry_list_format_hint: None,
+                    entry_list_default_format: None,
                 },
             ],
         })
@@ -655,6 +669,8 @@ mod tests {
                 kind: ExtensionSettingKind::Toggle,
                 default: true,
                 default_entries: Vec::new(),
+                entry_list_format_hint: None,
+                entry_list_default_format: None,
             }],
         })
         .expect_err("missing category references should fail validation");
@@ -680,6 +696,8 @@ mod tests {
                 kind: ExtensionSettingKind::Toggle,
                 default: true,
                 default_entries: Vec::new(),
+                entry_list_format_hint: None,
+                entry_list_default_format: None,
             }],
         })
         .expect_err("category toggle keys outside the category should fail");
@@ -729,6 +747,8 @@ mod tests {
                 kind: ExtensionSettingKind::EntryList,
                 default: false,
                 default_entries: vec![default_entry.clone()],
+                entry_list_format_hint: Some("Text".to_string()),
+                entry_list_default_format: Some("New text".to_string()),
             }],
         };
         let stored = ExtensionSettingsValues {
@@ -775,10 +795,35 @@ mod tests {
                         enabled: true,
                     },
                 ],
+                entry_list_format_hint: None,
+                entry_list_default_format: None,
             }],
         })
         .expect_err("duplicate default entry ids should fail");
 
         assert!(err.contains("duplicate default entry id"));
+    }
+
+    #[test]
+    fn deserializes_entry_list_ui_labels() {
+        let schema: ExtensionSettingsSchema = serde_json::from_value(serde_json::json!({
+            "items": [{
+                "key": "auto_typer.entries",
+                "label": "Text entries",
+                "type": "entry_list",
+                "entry_list_format_hint": "Text",
+                "entry_list_default_format": "Text to type"
+            }]
+        }))
+        .expect("schema should deserialize");
+
+        assert_eq!(
+            schema.items[0].entry_list_format_hint.as_deref(),
+            Some("Text")
+        );
+        assert_eq!(
+            schema.items[0].entry_list_default_format.as_deref(),
+            Some("Text to type")
+        );
     }
 }

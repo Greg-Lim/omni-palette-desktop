@@ -2,9 +2,12 @@ id = "auto_typer"
 name = "Auto Typer"
 platform = "windows"
 version = "0.1.0"
-wasm = "plugin.wat"
-permissions = ["write_text", "read_time"]
+wasm = "plugin.wasm"
+permissions = ["write_text", "read_settings"]
 
 [app]
 default_focus_state = "global"
-default_tags = ["wasm", "demo", "typing"]
+default_tags = ["text", "typing"]
+
+[settings]
+source = "wasm"

@@ -10,7 +10,6 @@ mod read;
 mod write;
 
 pub(crate) type WriteTextFn = Arc<dyn Fn(&str) + Send + Sync>;
-pub(crate) type ReadTimeTextFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
 pub(crate) type ReadTimeJsonFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
 pub(crate) type ResolvePluginStorageRootFn =
     Arc<dyn Fn(&str) -> Result<PathBuf, String> + Send + Sync>;
@@ -30,7 +29,6 @@ pub(crate) enum PluginPermission {
 #[derive(Clone)]
 pub(crate) struct PluginHostContext {
     pub(crate) write_text: WriteTextFn,
-    pub(crate) read_time_text: ReadTimeTextFn,
     pub(crate) read_time_json: ReadTimeJsonFn,
     pub(crate) resolve_storage_root: ResolvePluginStorageRootFn,
     pub(crate) read_settings_text: ReadSettingsTextFn,
