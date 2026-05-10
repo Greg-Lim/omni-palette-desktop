@@ -37,7 +37,7 @@ const CATALOG_MIN_HEIGHT: f32 = CATALOG_ROW_HEIGHT * CATALOG_MIN_VISIBLE_ROWS;
 const CATALOG_MAX_HEIGHT: f32 = 300.0;
 const ACTION_BUTTON_SPACING: f32 = 12.0;
 const EXTENSION_SOURCE_ROW_SPACING: f32 = 12.0;
-const EXTENSION_STATUS_LABEL_WIDTH: f32 = 66.0;
+const EXTENSION_STATUS_BADGE_WIDTH: f32 = 66.0;
 const EXTENSION_ACTION_SLOT_WIDTH: f32 = 188.0;
 const STATUS_TOAST_DURATION: Duration = Duration::from_secs(3);
 
@@ -1940,11 +1940,7 @@ fn extension_source_status_row(
             let label = ui.label(
                 egui::RichText::new("Enable remote extension catalog").color(theme.text_primary),
             );
-            let state = if *enabled {
-                ("Enabled", theme.success)
-            } else {
-                ("Disabled", theme.text_muted)
-            };
+            let state = extension_status_badge_state(*enabled, theme);
             let badge = badge(ui, state.0, state.1);
 
             layout = Some((toggle, label.rect, badge.rect));
@@ -2084,6 +2080,17 @@ fn extension_enabled_label(enabled: bool) -> &'static str {
     }
 }
 
+fn extension_status_badge_state(
+    enabled: bool,
+    theme: SettingsTheme,
+) -> (&'static str, egui::Color32) {
+    if enabled {
+        (extension_enabled_label(enabled), theme.success)
+    } else {
+        (extension_enabled_label(enabled), theme.text_muted)
+    }
+}
+
 fn extension_kind_badge(kind: ExtensionKind) -> &'static str {
     match kind {
         ExtensionKind::Static => "Static",
@@ -2136,13 +2143,11 @@ fn extension_enabled_actions(
             |ui| {
                 ui.spacing_mut().item_spacing.x = ACTION_BUTTON_SPACING;
                 ui.allocate_ui_with_layout(
-                    egui::vec2(EXTENSION_STATUS_LABEL_WIDTH, SETTING_ROW_HEIGHT),
+                    egui::vec2(EXTENSION_STATUS_BADGE_WIDTH, SETTING_ROW_HEIGHT),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        ui.label(
-                            egui::RichText::new(extension_enabled_label(saved_enabled))
-                                .color(theme.text_primary),
-                        );
+                        let state = extension_status_badge_state(saved_enabled, theme);
+                        badge(ui, state.0, state.1);
                     },
                 );
                 ui.add_enabled_ui(controls_enabled, |ui| {
@@ -2166,7 +2171,7 @@ fn extension_action_area_width(ui: &egui::Ui) -> f32 {
 }
 
 fn extension_action_area_width_for_toggle(toggle_width: f32) -> f32 {
-    EXTENSION_STATUS_LABEL_WIDTH
+    EXTENSION_STATUS_BADGE_WIDTH
         + toggle_width
         + EXTENSION_ACTION_SLOT_WIDTH
         + (ACTION_BUTTON_SPACING * 2.0)
@@ -2537,12 +2542,13 @@ mod tests {
     use super::{
         default_expanded_categories, entry_list_default_format, entry_list_format_hint,
         extension_action_area_width_for_toggle, extension_source_status_row,
-        filter_catalog_entries, installed_versions_by_id, radio_option_row,
-        rendered_settings_categories, setting_help_icon_rect, setting_help_icon_visuals,
-        setting_row_with_help, settings_text_color, validate_catalog_source, SettingsBootstrap,
-        SettingsState, SettingsTextTone, ACTION_BUTTON_SPACING, EXTENSION_ACTION_SLOT_WIDTH,
-        EXTENSION_SOURCE_ROW_SPACING, EXTENSION_STATUS_LABEL_WIDTH, HELP_ICON_DIAMETER,
-        HELP_ICON_GAP, RADIO_OPTION_SPACING, ROW_LABEL_WIDTH, SETTING_ROW_HEIGHT,
+        extension_status_badge_state, filter_catalog_entries, installed_versions_by_id,
+        radio_option_row, rendered_settings_categories, setting_help_icon_rect,
+        setting_help_icon_visuals, setting_row_with_help, settings_text_color,
+        validate_catalog_source, SettingsBootstrap, SettingsState, SettingsTextTone,
+        ACTION_BUTTON_SPACING, EXTENSION_ACTION_SLOT_WIDTH, EXTENSION_SOURCE_ROW_SPACING,
+        EXTENSION_STATUS_BADGE_WIDTH, HELP_ICON_DIAMETER, HELP_ICON_GAP, RADIO_OPTION_SPACING,
+        ROW_LABEL_WIDTH, SETTING_ROW_HEIGHT,
     };
     use crate::config::runtime::{GitHubExtensionSource, RuntimeConfig};
     use crate::core::extensions::catalog::{CatalogEntry, ExtensionKind};
@@ -2828,7 +2834,7 @@ mod tests {
     #[test]
     fn extension_action_area_reserves_a_fixed_trailing_action_slot() {
         let toggle_width = 40.0;
-        let expected_width = EXTENSION_STATUS_LABEL_WIDTH
+        let expected_width = EXTENSION_STATUS_BADGE_WIDTH
             + ACTION_BUTTON_SPACING
             + toggle_width
             + ACTION_BUTTON_SPACING
@@ -2837,6 +2843,20 @@ mod tests {
         assert_eq!(
             extension_action_area_width_for_toggle(toggle_width),
             expected_width
+        );
+    }
+
+    #[test]
+    fn extension_status_badge_state_matches_catalog_source_status() {
+        let theme = crate::theme::AppTheme::for_egui_theme(egui::Theme::Light).settings;
+
+        assert_eq!(
+            extension_status_badge_state(true, theme),
+            ("Enabled", theme.success)
+        );
+        assert_eq!(
+            extension_status_badge_state(false, theme),
+            ("Disabled", theme.text_muted)
         );
     }
 

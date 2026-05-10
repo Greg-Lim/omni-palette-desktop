@@ -9,8 +9,8 @@ use crate::core::extensions::settings::{
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
     capabilities::{
-        register_capabilities, PluginHostContext, PluginStoreState, ReadSettingsTextFn,
-        InsertTextFn, ReadTimeJsonFn, ResolvePluginStorageRootFn, TypeTextFn,
+        register_capabilities, InsertTextFn, PluginHostContext, PluginStoreState,
+        ReadSettingsTextFn, ReadTimeJsonFn, ResolvePluginStorageRootFn, TypeTextFn,
     },
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::{PluginManifest, PluginSettingsSource},

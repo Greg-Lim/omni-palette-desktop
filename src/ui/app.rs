@@ -193,6 +193,7 @@ struct App {
     command_behavior: CommandBehavior,
     activation_hint: String,
     debugger_open: bool,
+    debugger_needs_position: bool,
     latest_debug_snapshot: Option<DebugSnapshot>,
     guide: Option<ActiveGuide>,
     visibility: SharedUiVisibility,
@@ -228,6 +229,7 @@ impl App {
             command_behavior,
             activation_hint,
             debugger_open: false,
+            debugger_needs_position: false,
             latest_debug_snapshot: None,
             guide: None,
             visibility,
@@ -342,9 +344,11 @@ impl App {
             }
             UiSignal::OpenDebugger => {
                 self.debugger_open = true;
+                self.debugger_needs_position = true;
             }
             UiSignal::CloseDebugger => {
                 self.debugger_open = false;
+                self.debugger_needs_position = false;
                 self.latest_debug_snapshot = None;
                 close_debug_overlay(ctx);
             }
@@ -422,19 +426,22 @@ impl App {
         let _ = self.event_tx.send(UiEvent::ActionExecuted);
     }
 
-    fn refresh_debug_overlay(&self, ctx: &egui::Context) {
+    fn refresh_debug_overlay(&mut self, ctx: &egui::Context) {
         if !self.debugger_open {
             close_debug_overlay(ctx);
             return;
         }
 
         if let Some(snapshot) = self.latest_debug_snapshot.clone() {
+            let position_window = self.debugger_needs_position;
             show_debug_overlay(
                 ctx,
                 snapshot,
                 self.debug_palette_state(),
                 self.event_tx.clone(),
+                position_window,
             );
+            self.debugger_needs_position = false;
         }
     }
 

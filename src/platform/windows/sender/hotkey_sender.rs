@@ -279,7 +279,10 @@ fn read_clipboard_text() -> Result<Option<String>, String> {
     let size_bytes = unsafe { GlobalSize(hglobal) };
     let max_units = size_bytes / std::mem::size_of::<u16>();
     let units = unsafe { std::slice::from_raw_parts(ptr, max_units) };
-    let len = units.iter().position(|unit| *unit == 0).unwrap_or(max_units);
+    let len = units
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(max_units);
     let text = String::from_utf16_lossy(&units[..len]);
     let _ = unsafe { GlobalUnlock(hglobal) };
     Ok(Some(text))

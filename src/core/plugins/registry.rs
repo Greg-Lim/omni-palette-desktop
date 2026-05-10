@@ -623,8 +623,12 @@ default_focus_state = "global"
 
     #[test]
     fn read_context_capability_returns_active_interaction_tags() {
-        let root =
-            write_context_reader_plugin("context_reader", r#""insert_text", "read_context""#, 512, "host_insert_text");
+        let root = write_context_reader_plugin(
+            "context_reader",
+            r#""insert_text", "read_context""#,
+            512,
+            "host_insert_text",
+        );
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_text_recorders(
@@ -654,8 +658,12 @@ default_focus_state = "global"
 
     #[test]
     fn read_context_capability_requires_permission() {
-        let root =
-            write_context_reader_plugin("context_reader_no_permission", r#""insert_text""#, 512, "host_insert_text");
+        let root = write_context_reader_plugin(
+            "context_reader_no_permission",
+            r#""insert_text""#,
+            512,
+            "host_insert_text",
+        );
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_type_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),

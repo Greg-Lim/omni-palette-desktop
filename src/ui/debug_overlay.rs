@@ -22,29 +22,6 @@ pub(crate) struct DebugWindowSummary {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DebugWindowRole {
-    Foreground,
-    Background,
-}
-
-impl DebugWindowRole {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Foreground => "foreground",
-            Self::Background => "background",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DebugRawWindow {
-    pub(crate) role: DebugWindowRole,
-    pub(crate) process_name: Option<String>,
-    pub(crate) hwnd: Option<isize>,
-    pub(crate) tags: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DebugCommandCandidate {
     pub(crate) focus_state: FocusState,
     pub(crate) priority: CommandPriority,
@@ -95,7 +72,6 @@ pub(crate) struct DebugSnapshot {
     pub(crate) foreground_window: Option<DebugWindowSummary>,
     pub(crate) background_windows: Vec<DebugWindowSummary>,
     pub(crate) background_total: usize,
-    pub(crate) raw_windows: Vec<DebugRawWindow>,
     pub(crate) active_tags: Vec<String>,
     pub(crate) text_input_active: bool,
     pub(crate) ignored_process_name: Option<String>,
@@ -113,22 +89,6 @@ impl DebugSnapshot {
         command_summary: DebugCommandSummary,
     ) -> Self {
         let background_total = background_windows.len();
-        let mut raw_windows = Vec::new();
-        if let Some(window) = &foreground_window {
-            raw_windows.push(DebugRawWindow {
-                role: DebugWindowRole::Foreground,
-                process_name: window.process_name.clone(),
-                hwnd: window.hwnd,
-                tags: active_interaction.tags.clone(),
-            });
-        }
-        raw_windows.extend(background_windows.iter().map(|window| DebugRawWindow {
-            role: DebugWindowRole::Background,
-            process_name: window.process_name.clone(),
-            hwnd: window.hwnd,
-            tags: Vec::new(),
-        }));
-
         Self {
             foreground_window,
             background_windows: background_windows
@@ -136,7 +96,6 @@ impl DebugSnapshot {
                 .take(MAX_DEBUG_BACKGROUND_WINDOWS)
                 .collect(),
             background_total,
-            raw_windows,
             text_input_active: active_interaction.has_tag("ui.text_input"),
             active_tags: active_interaction.tags,
             ignored_process_name,
@@ -171,20 +130,6 @@ pub(crate) fn snapshot_from_context(
 ) -> DebugSnapshot {
     let foreground_window = context_root.get_active().copied().map(window_summary);
     let background_total = context_root.bg_context.len();
-    let foreground_tags = context_root.active_interaction.tags.clone();
-    let mut raw_windows: Vec<DebugRawWindow> = context_root
-        .fg_context
-        .iter()
-        .copied()
-        .map(|handle| raw_window(handle, DebugWindowRole::Foreground, foreground_tags.clone()))
-        .collect();
-    raw_windows.extend(
-        context_root
-            .bg_context
-            .iter()
-            .copied()
-            .map(|handle| raw_window(handle, DebugWindowRole::Background, Vec::new())),
-    );
     let background_windows = context_root
         .bg_context
         .iter()
@@ -205,7 +150,6 @@ pub(crate) fn snapshot_from_context(
         foreground_window,
         background_windows,
         background_total,
-        raw_windows,
         text_input_active: active_interaction.has_tag("ui.text_input"),
         active_tags: active_interaction.tags,
         ignored_process_name,
@@ -222,16 +166,6 @@ fn window_summary(handle: RawWindowHandle) -> DebugWindowSummary {
     }
 }
 
-fn raw_window(handle: RawWindowHandle, role: DebugWindowRole, tags: Vec<String>) -> DebugRawWindow {
-    let summary = window_summary(handle);
-    DebugRawWindow {
-        role,
-        process_name: summary.process_name,
-        hwnd: summary.hwnd,
-        tags,
-    }
-}
-
 pub(crate) fn close_debug_overlay(ctx: &egui::Context) {
     ctx.send_viewport_cmd_to(
         egui::ViewportId::from_hash_of(DEBUG_OVERLAY_VIEWPORT_ID),
@@ -244,19 +178,25 @@ pub(crate) fn show_debug_overlay(
     snapshot: DebugSnapshot,
     palette_state: Option<DebugPaletteState>,
     event_tx: Sender<UiEvent>,
+    position_window: bool,
 ) {
     let (position, height) = debug_overlay_geometry(ctx, snapshot.work_area);
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Omni Palette Debug")
+        .with_inner_size([DEBUG_OVERLAY_WIDTH, height])
+        .with_decorations(true)
+        .with_transparent(false)
+        .with_always_on_top()
+        .with_resizable(true)
+        .with_active(false);
+
+    if position_window {
+        viewport = viewport.with_position(position);
+    }
+
     ctx.show_viewport_deferred(
         egui::ViewportId::from_hash_of(DEBUG_OVERLAY_VIEWPORT_ID),
-        egui::ViewportBuilder::default()
-            .with_title("Omni Palette Debug")
-            .with_inner_size([DEBUG_OVERLAY_WIDTH, height])
-            .with_position(position)
-            .with_decorations(true)
-            .with_transparent(false)
-            .with_always_on_top()
-            .with_resizable(true)
-            .with_active(false),
+        viewport,
         move |ui, _class| {
             if ui.ctx().input(|input| input.viewport().close_requested()) {
                 let _ = event_tx.send(UiEvent::DebuggerClosed);
@@ -314,14 +254,12 @@ fn draw_debug_overlay(
 
     egui::Frame::new()
         .fill(egui::Color32::from_rgba_premultiplied(14, 18, 24, 218))
-        .stroke(egui::Stroke::new(
-            1.0,
-            egui::Color32::from_rgba_premultiplied(255, 255, 255, 34),
-        ))
-        .corner_radius(egui::CornerRadius::same(8))
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(egui::CornerRadius::same(0))
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
-            ui.set_width(DEBUG_OVERLAY_WIDTH - 24.0);
+            ui.set_min_size(ui.available_size());
+            ui.set_width(ui.available_width());
             ui.label(
                 egui::RichText::new("Debug Context")
                     .size(18.0)
@@ -434,17 +372,6 @@ fn draw_debug_overlay(
             for window in &snapshot.background_windows {
                 window_line(ui, Some(window), text, muted);
             }
-            ui.add_space(10.0);
-
-            section_label(ui, "Raw Window Data", accent);
-            egui::ScrollArea::vertical()
-                .max_height(220.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    for window in &snapshot.raw_windows {
-                        raw_window_line(ui, window, muted);
-                    }
-                });
         });
 }
 
@@ -486,36 +413,11 @@ fn window_line(
     }
 }
 
-fn raw_window_line(ui: &mut egui::Ui, window: &DebugRawWindow, color: egui::Color32) {
-    let process = window.process_name.as_deref().unwrap_or("unknown-process");
-    let hwnd = window
-        .hwnd
-        .map(|hwnd| hwnd.to_string())
-        .unwrap_or_else(|| "unknown-hwnd".to_string());
-    let tags = if window.tags.is_empty() {
-        "[]".to_string()
-    } else {
-        format!("[{}]", window.tags.join(", "))
-    };
-    ui.label(
-        egui::RichText::new(format!(
-            "{} hwnd={} process={} tags={}",
-            window.role.label(),
-            hwnd,
-            process,
-            tags
-        ))
-        .size(11.0)
-        .monospace()
-        .color(color),
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        DebugCommandCandidate, DebugCommandSummary, DebugSnapshot, DebugWindowRole,
-        DebugWindowSummary, MAX_DEBUG_BACKGROUND_WINDOWS,
+        DebugCommandCandidate, DebugCommandSummary, DebugSnapshot, DebugWindowSummary,
+        MAX_DEBUG_BACKGROUND_WINDOWS,
     };
     use crate::domain::action::{CommandPriority, FocusState, InteractionContext};
 
@@ -596,31 +498,5 @@ mod tests {
                 .and_then(|window| window.process_name.as_deref()),
             Some("app-11.exe")
         );
-    }
-
-    #[test]
-    fn snapshot_includes_raw_window_data_with_active_tags_attached_to_foreground() {
-        let snapshot = DebugSnapshot::from_parts(
-            Some(DebugWindowSummary {
-                process_name: Some("active.exe".to_string()),
-                hwnd: Some(100),
-            }),
-            vec![DebugWindowSummary {
-                process_name: Some("background.exe".to_string()),
-                hwnd: Some(200),
-            }],
-            InteractionContext::from_tags(["ui.text_input".to_string(), "ui.edit".to_string()]),
-            None,
-            DebugCommandSummary::default(),
-        );
-
-        assert_eq!(snapshot.raw_windows.len(), 2);
-        assert_eq!(snapshot.raw_windows[0].role, DebugWindowRole::Foreground);
-        assert_eq!(
-            snapshot.raw_windows[0].tags,
-            vec!["ui.edit".to_string(), "ui.text_input".to_string()]
-        );
-        assert_eq!(snapshot.raw_windows[1].role, DebugWindowRole::Background);
-        assert!(snapshot.raw_windows[1].tags.is_empty());
     }
 }
