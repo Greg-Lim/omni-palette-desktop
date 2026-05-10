@@ -1337,7 +1337,8 @@ fn load_extension_settings_schema(
         ExtensionKind::WasmPlugin => LoadedPlugin::load_settings_schema_from_manifest(
             &target.installed_path,
             current_os,
-            Arc::new(|_text| {}),
+            Arc::new(|_text| Ok(())),
+            Arc::new(|_text| Ok(())),
             Arc::new(plugin_host_current_time_json),
             Arc::new(plugin_host_storage_root),
             Arc::new(plugin_host_settings_text),

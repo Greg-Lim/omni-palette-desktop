@@ -30,7 +30,7 @@ use crate::{
         hotkey::{HotkeyModifiers, KeyboardShortcut},
     },
     platform::platform_interface::RawWindowHandleExt,
-    platform::windows::sender::hotkey_sender::send_text,
+    platform::windows::sender::hotkey_sender::{insert_text, type_text},
 };
 
 #[derive(Default, Debug)]
@@ -63,7 +63,8 @@ impl MasterRegistry {
         let plugin_registry = Arc::new(PluginRegistry::load(
             extension_discovery.plugin_manifest_paths(),
             current_os,
-            Arc::new(send_text),
+            Arc::new(type_text),
+            Arc::new(insert_text),
             Arc::new(current_time_json),
             Arc::new(plugin_storage_root),
             Arc::new(plugin_settings_text),

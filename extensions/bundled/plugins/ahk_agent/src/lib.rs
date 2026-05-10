@@ -19,7 +19,7 @@ mod host {
         fn host_list_storage_entries_json(ptr: i32, capacity: i32) -> i32;
         fn host_read_storage_text(path_ptr: i32, path_len: i32, ptr: i32, capacity: i32) -> i32;
         fn host_read_settings_json(ptr: i32, capacity: i32) -> i32;
-        fn host_write_text(ptr: i32, len: i32) -> i32;
+        fn host_type_text(ptr: i32, len: i32) -> i32;
     }
 
     pub(crate) fn list_storage_entries_json(buffer: &mut [u8]) -> i32 {
@@ -41,8 +41,8 @@ mod host {
         unsafe { host_read_settings_json(buffer.as_mut_ptr() as i32, buffer.len() as i32) }
     }
 
-    pub(crate) fn write_text(text: &str) -> i32 {
-        unsafe { host_write_text(text.as_ptr() as i32, text.len() as i32) }
+    pub(crate) fn type_text(text: &str) -> i32 {
+        unsafe { host_type_text(text.as_ptr() as i32, text.len() as i32) }
     }
 }
 
@@ -60,7 +60,7 @@ mod host {
         -100
     }
 
-    pub(crate) fn write_text(_text: &str) -> i32 {
+    pub(crate) fn type_text(_text: &str) -> i32 {
         100
     }
 }
@@ -208,7 +208,7 @@ pub extern "C" fn execute(command_id_ptr: i32, command_id_len: i32) -> i32 {
         Err(_) => return 4,
     };
 
-    match execute_registered_command(&commands, &command_id, write_text_to_host) {
+    match execute_registered_command(&commands, &command_id, type_text_to_host) {
         Ok(()) => 0,
         Err(_) => 5,
     }
@@ -795,12 +795,12 @@ fn fnv1a_update(mut hash: u64, bytes: &[u8]) -> u64 {
     hash
 }
 
-fn write_text_to_host(text: &str) -> Result<(), String> {
-    let exit_code = host::write_text(text);
+fn type_text_to_host(text: &str) -> Result<(), String> {
+    let exit_code = host::type_text(text);
     if exit_code == 0 {
         Ok(())
     } else {
-        Err(format!("host_write_text failed with code {exit_code}"))
+        Err(format!("host_type_text failed with code {exit_code}"))
     }
 }
 

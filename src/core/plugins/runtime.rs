@@ -10,7 +10,7 @@ use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
     capabilities::{
         register_capabilities, PluginHostContext, PluginStoreState, ReadSettingsTextFn,
-        ReadTimeJsonFn, ResolvePluginStorageRootFn, WriteTextFn,
+        InsertTextFn, ReadTimeJsonFn, ResolvePluginStorageRootFn, TypeTextFn,
     },
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::{PluginManifest, PluginSettingsSource},
@@ -34,7 +34,8 @@ impl LoadedPlugin {
     pub(crate) fn load(
         manifest_path: &Path,
         current_os: Os,
-        write_text: WriteTextFn,
+        type_text: TypeTextFn,
+        insert_text: InsertTextFn,
         read_time_json: ReadTimeJsonFn,
         resolve_storage_root: ResolvePluginStorageRootFn,
         read_settings_text: ReadSettingsTextFn,
@@ -55,7 +56,8 @@ impl LoadedPlugin {
 
         let (engine, module) = load_engine_and_module(&wasm_path)?;
         let host_context = PluginHostContext {
-            write_text,
+            type_text,
+            insert_text,
             read_time_json,
             resolve_storage_root,
             read_settings_text,
@@ -81,7 +83,8 @@ impl LoadedPlugin {
     pub(crate) fn load_settings_schema_from_manifest(
         manifest_path: &Path,
         current_os: Os,
-        write_text: WriteTextFn,
+        type_text: TypeTextFn,
+        insert_text: InsertTextFn,
         read_time_json: ReadTimeJsonFn,
         resolve_storage_root: ResolvePluginStorageRootFn,
         read_settings_text: ReadSettingsTextFn,
@@ -101,7 +104,8 @@ impl LoadedPlugin {
         let wasm_path = plugin_dir.join(&manifest.wasm);
         let (engine, module) = load_engine_and_module(&wasm_path)?;
         let host_context = PluginHostContext {
-            write_text,
+            type_text,
+            insert_text,
             read_time_json,
             resolve_storage_root,
             read_settings_text,

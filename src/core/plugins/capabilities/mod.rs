@@ -10,7 +10,9 @@ use crate::domain::action::InteractionContext;
 mod read;
 mod write;
 
-pub(crate) type WriteTextFn = Arc<dyn Fn(&str) + Send + Sync>;
+pub(crate) type TextEffectFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+pub(crate) type TypeTextFn = TextEffectFn;
+pub(crate) type InsertTextFn = TextEffectFn;
 pub(crate) type ReadTimeJsonFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
 pub(crate) type ResolvePluginStorageRootFn =
     Arc<dyn Fn(&str) -> Result<PathBuf, String> + Send + Sync>;
@@ -19,7 +21,8 @@ pub(crate) type ReadSettingsTextFn = Arc<dyn Fn(&str) -> Result<String, String> 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PluginPermission {
-    WriteText,
+    TypeText,
+    InsertText,
     ReadTime,
     ReadStorage,
     ReadSettings,
@@ -30,7 +33,8 @@ pub(crate) enum PluginPermission {
 
 #[derive(Clone)]
 pub(crate) struct PluginHostContext {
-    pub(crate) write_text: WriteTextFn,
+    pub(crate) type_text: TypeTextFn,
+    pub(crate) insert_text: InsertTextFn,
     pub(crate) read_time_json: ReadTimeJsonFn,
     pub(crate) resolve_storage_root: ResolvePluginStorageRootFn,
     pub(crate) read_settings_text: ReadSettingsTextFn,

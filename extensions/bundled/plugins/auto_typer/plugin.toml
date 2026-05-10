@@ -3,7 +3,7 @@ name = "Auto Typer"
 platform = "windows"
 version = "0.1.0"
 wasm = "plugin.wasm"
-permissions = ["write_text", "read_settings"]
+permissions = ["insert_text", "read_settings"]
 
 [app]
 default_focus_state = "global"

@@ -15,7 +15,7 @@ mod host {
     unsafe extern "C" {
         fn host_read_settings_json(ptr: i32, capacity: i32) -> i32;
         fn host_read_time_json(ptr: i32, capacity: i32) -> i32;
-        fn host_write_text(ptr: i32, len: i32) -> i32;
+        fn host_insert_text(ptr: i32, len: i32) -> i32;
     }
 
     pub(crate) fn read_settings_json(buffer: &mut [u8]) -> i32 {
@@ -26,8 +26,8 @@ mod host {
         unsafe { host_read_time_json(buffer.as_mut_ptr() as i32, buffer.len() as i32) }
     }
 
-    pub(crate) fn write_text(text: &str) -> i32 {
-        unsafe { host_write_text(text.as_ptr() as i32, text.len() as i32) }
+    pub(crate) fn insert_text(text: &str) -> i32 {
+        unsafe { host_insert_text(text.as_ptr() as i32, text.len() as i32) }
     }
 }
 
@@ -41,7 +41,7 @@ mod host {
         -100
     }
 
-    pub(crate) fn write_text(_text: &str) -> i32 {
+    pub(crate) fn insert_text(_text: &str) -> i32 {
         0
     }
 }
@@ -162,7 +162,7 @@ pub extern "C" fn execute(command_id_ptr: i32, command_id_len: i32) -> i32 {
         Err(_) => return 4,
     };
     let text = format_datetime(&entry.format, &snapshot);
-    if host::write_text(&text) == 0 {
+    if host::insert_text(&text) == 0 {
         0
     } else {
         5
@@ -182,7 +182,7 @@ fn settings_schema() -> SettingsSchemaDescriptor {
             key: SETTINGS_KEY.to_string(),
             label: "Date and time entries".to_string(),
             description: Some(
-                "Each enabled entry becomes a command that types the formatted current local time."
+                "Each enabled entry becomes a command that inserts the formatted current local time."
                     .to_string(),
             ),
             category: Some(SHORTCUTS_CATEGORY_KEY.to_string()),

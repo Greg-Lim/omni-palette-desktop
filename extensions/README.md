@@ -52,7 +52,7 @@ name = "Auto Typer"
 platform = "windows"
 version = "0.1.0"
 wasm = "plugin.wat"
-permissions = ["write_text", "read_time"]
+permissions = ["insert_text", "read_time"]
 
 [app]
 default_focus_state = "global"
@@ -61,7 +61,8 @@ default_tags = ["wasm", "demo", "typing"]
 
 Supported plugin permissions are:
 
-- `write_text`: type text into the active app.
+- `type_text`: type text into the active app with Unicode keyboard input.
+- `insert_text`: insert text into the active app by temporarily using the clipboard and paste.
 - `read_time`: read host-provided time text.
 - `read_storage`: list and read text files under the plugin-owned storage root.
 - `read_settings`: read persisted extension setting toggles for the current plugin.

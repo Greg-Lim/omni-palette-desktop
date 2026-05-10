@@ -4,15 +4,24 @@ use crate::domain::{
 };
 use crate::platform::windows::mapper::hotkey_mapper::map_key;
 use std::time::{Duration, Instant};
+use windows::Win32::Foundation::{HANDLE, HGLOBAL};
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+};
+use windows::Win32::System::Memory::{
+    GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_TYPE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT,
-    VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
+    VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_V,
 };
 
 const MODIFIER_RELEASE_TIMEOUT: Duration = Duration::from_millis(750);
 const MODIFIER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const SYNTHETIC_INPUT_SETTLE_DELAY: Duration = Duration::from_millis(20);
+const CLIPBOARD_PASTE_SETTLE_DELAY: Duration = Duration::from_millis(100);
+const CF_UNICODETEXT_FORMAT: u32 = 13;
 
 // Helper function to create a keyboard press/release event
 fn make_key_event(vk: VIRTUAL_KEY, is_release: bool) -> INPUT {
@@ -209,15 +218,115 @@ fn make_unicode_key_event(unit: u16, is_release: bool) -> INPUT {
     }
 }
 
-pub fn send_text(text: &str) {
+pub fn type_text(text: &str) -> Result<(), String> {
     let mut inputs = Vec::new();
     for unit in text.encode_utf16() {
         inputs.push(make_unicode_key_event(unit, false));
         inputs.push(make_unicode_key_event(unit, true));
     }
+    send_input_events(&inputs, "type text")
+}
 
+pub fn insert_text(text: &str) -> Result<(), String> {
+    let previous_text = read_clipboard_text()?;
+    write_clipboard_text(Some(text))?;
+    let paste_result = send_paste_shortcut();
+    std::thread::sleep(CLIPBOARD_PASTE_SETTLE_DELAY);
+    let restore_result = write_clipboard_text(previous_text.as_deref());
+    paste_result?;
+    restore_result?;
+    Ok(())
+}
+
+fn send_paste_shortcut() -> Result<(), String> {
+    prepare_synthetic_shortcut_input();
+    let inputs = [
+        make_key_event(VK_CONTROL, false),
+        make_key_event(VK_V, false),
+        make_key_event(VK_V, true),
+        make_key_event(VK_CONTROL, true),
+    ];
+    send_input_events(&inputs, "paste clipboard text")
+}
+
+fn send_input_events(inputs: &[INPUT], action_name: &str) -> Result<(), String> {
+    if inputs.is_empty() {
+        return Ok(());
+    }
+    let sent = unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent == inputs.len() as u32 {
+        Ok(())
+    } else {
+        Err(format!(
+            "SendInput sent {sent} of {} events while trying to {action_name}",
+            inputs.len()
+        ))
+    }
+}
+
+fn read_clipboard_text() -> Result<Option<String>, String> {
+    let _clipboard = ClipboardGuard::open()?;
+    let handle = match unsafe { GetClipboardData(CF_UNICODETEXT_FORMAT) } {
+        Ok(handle) => handle,
+        Err(_) => return Ok(None),
+    };
+    let hglobal = HGLOBAL(handle.0);
+    let ptr = unsafe { GlobalLock(hglobal) } as *const u16;
+    if ptr.is_null() {
+        return Ok(None);
+    }
+
+    let size_bytes = unsafe { GlobalSize(hglobal) };
+    let max_units = size_bytes / std::mem::size_of::<u16>();
+    let units = unsafe { std::slice::from_raw_parts(ptr, max_units) };
+    let len = units.iter().position(|unit| *unit == 0).unwrap_or(max_units);
+    let text = String::from_utf16_lossy(&units[..len]);
+    let _ = unsafe { GlobalUnlock(hglobal) };
+    Ok(Some(text))
+}
+
+fn write_clipboard_text(text: Option<&str>) -> Result<(), String> {
+    let _clipboard = ClipboardGuard::open()?;
+    unsafe { EmptyClipboard() }.map_err(|err| format!("EmptyClipboard failed: {err}"))?;
+    let Some(text) = text else {
+        return Ok(());
+    };
+
+    let payload = unicode_clipboard_payload(text);
+    let byte_len = payload.len() * std::mem::size_of::<u16>();
+    let hglobal = unsafe { GlobalAlloc(GMEM_MOVEABLE, byte_len) }
+        .map_err(|err| format!("GlobalAlloc failed: {err}"))?;
+    let ptr = unsafe { GlobalLock(hglobal) } as *mut u16;
+    if ptr.is_null() {
+        return Err("GlobalLock failed for clipboard text".to_string());
+    }
     unsafe {
-        let _result = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        std::ptr::copy_nonoverlapping(payload.as_ptr(), ptr, payload.len());
+    }
+    let _ = unsafe { GlobalUnlock(hglobal) };
+
+    unsafe { SetClipboardData(CF_UNICODETEXT_FORMAT, Some(HANDLE(hglobal.0))) }
+        .map(|_| ())
+        .map_err(|err| format!("SetClipboardData failed: {err}"))
+}
+
+fn unicode_clipboard_payload(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+struct ClipboardGuard;
+
+impl ClipboardGuard {
+    fn open() -> Result<Self, String> {
+        unsafe { OpenClipboard(None) }
+            .map(|_| Self)
+            .map_err(|err| format!("OpenClipboard failed: {err}"))
+    }
+}
+
+impl Drop for ClipboardGuard {
+    fn drop(&mut self) {
+        let _ = unsafe { CloseClipboard() };
     }
 }
 
@@ -270,5 +379,21 @@ mod tests {
             println!("{result:?}");
             println!("{:?}", GetLastError());
         }
+    }
+
+    #[test]
+    fn unicode_clipboard_payload_is_utf16_with_trailing_nul() {
+        assert_eq!(
+            unicode_clipboard_payload("Hi"),
+            vec!['H' as u16, 'i' as u16, 0]
+        );
+    }
+
+    #[test]
+    fn unicode_clipboard_payload_preserves_multiline_text() {
+        assert_eq!(
+            unicode_clipboard_payload("A\r\nB"),
+            vec!['A' as u16, '\r' as u16, '\n' as u16, 'B' as u16, 0]
+        );
     }
 }

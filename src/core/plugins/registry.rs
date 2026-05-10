@@ -21,7 +21,9 @@ use std::{
 #[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
 use crate::core::plugins::{
-    capabilities::{ReadSettingsTextFn, ReadTimeJsonFn, ResolvePluginStorageRootFn, WriteTextFn},
+    capabilities::{
+        InsertTextFn, ReadSettingsTextFn, ReadTimeJsonFn, ResolvePluginStorageRootFn, TypeTextFn,
+    },
     command::PluginApplication,
     runtime::LoadedPlugin,
 };
@@ -63,7 +65,8 @@ impl PluginRegistry {
     pub fn load(
         manifest_paths: impl IntoIterator<Item = PathBuf>,
         current_os: Os,
-        write_text: WriteTextFn,
+        type_text: TypeTextFn,
+        insert_text: InsertTextFn,
         read_time_json: ReadTimeJsonFn,
         resolve_storage_root: ResolvePluginStorageRootFn,
         read_settings_text: ReadSettingsTextFn,
@@ -76,7 +79,8 @@ impl PluginRegistry {
             match LoadedPlugin::load(
                 &manifest_path,
                 current_os,
-                Arc::clone(&write_text),
+                Arc::clone(&type_text),
+                Arc::clone(&insert_text),
                 Arc::clone(&read_time_json),
                 Arc::clone(&resolve_storage_root),
                 Arc::clone(&read_settings_text),
@@ -102,15 +106,31 @@ impl PluginRegistry {
     }
 
     #[cfg(test)]
-    pub fn load_with_write_text_recorder(
+    pub fn load_with_type_text_recorder(
         manifest_paths: impl IntoIterator<Item = PathBuf>,
         current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
+    ) -> Self {
+        Self::load_with_text_recorders(
+            manifest_paths,
+            current_os,
+            typed_text,
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        )
+    }
+
+    #[cfg(test)]
+    pub fn load_with_text_recorders(
+        manifest_paths: impl IntoIterator<Item = PathBuf>,
+        current_os: Os,
+        typed_text: Arc<std::sync::Mutex<Vec<String>>>,
+        inserted_text: Arc<std::sync::Mutex<Vec<String>>>,
     ) -> Self {
         Self::load_with_host_recorders(
             manifest_paths,
             current_os,
             typed_text,
+            inserted_text,
             Arc::new(std::sync::Mutex::new(Vec::new())),
             Vec::new(),
             Vec::new(),
@@ -123,6 +143,7 @@ impl PluginRegistry {
         manifest_paths: impl IntoIterator<Item = PathBuf>,
         current_os: Os,
         typed_text: Arc<std::sync::Mutex<Vec<String>>>,
+        inserted_text: Arc<std::sync::Mutex<Vec<String>>>,
         read_time_requests: Arc<std::sync::Mutex<Vec<String>>>,
         storage_files: Vec<(String, String, String)>,
         settings_json_by_plugin: Vec<(String, String)>,
@@ -142,6 +163,14 @@ impl PluginRegistry {
                     .lock()
                     .expect("typed text lock poisoned")
                     .push(text.to_string());
+                Ok(())
+            }),
+            Arc::new(move |text| {
+                inserted_text
+                    .lock()
+                    .expect("inserted text lock poisoned")
+                    .push(text.to_string());
+                Ok(())
             }),
             Arc::new(move || {
                 read_time_requests
@@ -352,11 +381,11 @@ mod tests {
         )]
     }
 
-    fn context_reader_plugin_wat(buffer_capacity: i32) -> String {
+    fn context_reader_plugin_wat(buffer_capacity: i32, host_import: &str) -> String {
         format!(
             r#"(module
   (import "env" "host_read_context_json" (func $host_read_context_json (param i32 i32) (result i32)))
-  (import "env" "host_write_text" (func $host_write_text (param i32 i32) (result i32)))
+  (import "env" "{host_import}" (func $host_text (param i32 i32) (result i32)))
   (memory (export "memory") 1)
   (data (i32.const 1024) "[{{\"id\":\"read_context\",\"name\":\"Read context\",\"priority\":\"medium\",\"focus_state\":\"global\",\"tags\":[\"test\"],\"shortcut_text\":\"WASM\"}}]\00")
   (func (export "register_commands_json") (result i32)
@@ -381,7 +410,7 @@ mod tests {
     end
     i32.const 4096
     local.get $command_id_len
-    call $host_write_text
+    call $host_text
     return)
 )"#
         )
@@ -391,6 +420,7 @@ mod tests {
         root_name: &str,
         permissions: &str,
         buffer_capacity: i32,
+        host_import: &str,
     ) -> PathBuf {
         let root = Path::new("target").join("plugin-tests").join(root_name);
         let plugin_dir = root.join("plugins").join(root_name);
@@ -400,7 +430,7 @@ mod tests {
         fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
         fs::write(
             plugin_dir.join("plugin.wat"),
-            context_reader_plugin_wat(buffer_capacity),
+            context_reader_plugin_wat(buffer_capacity, host_import),
         )
         .expect("should write context reader plugin");
         fs::write(
@@ -425,7 +455,7 @@ default_focus_state = "global"
     #[test]
     fn loads_auto_typer_plugin_and_registers_command() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_write_text_recorder(
+        let registry = PluginRegistry::load_with_type_text_recorder(
             real_plugin_manifests(),
             Os::Windows,
             typed,
@@ -444,20 +474,26 @@ default_focus_state = "global"
     }
 
     #[test]
-    fn executes_auto_typer_plugin_through_host_write_text() {
+    fn executes_auto_typer_plugin_through_host_insert_text() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_write_text_recorder(
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_text_recorders(
             real_plugin_manifests(),
             Os::Windows,
             Arc::clone(&typed),
+            Arc::clone(&inserted),
         );
 
         registry
             .execute("auto_typer", "type_hello_world")
             .expect("auto typer command should execute");
 
+        assert!(typed.lock().expect("typed text lock poisoned").is_empty());
         assert_eq!(
-            typed.lock().expect("typed text lock poisoned").as_slice(),
+            inserted
+                .lock()
+                .expect("inserted text lock poisoned")
+                .as_slice(),
             ["hello world"]
         );
     }
@@ -485,10 +521,12 @@ default_focus_state = "global"
             }
         })
         .to_string();
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             Arc::clone(&typed),
+            Arc::clone(&inserted),
             Arc::clone(&read_time_requests),
             Vec::new(),
             vec![("auto_typer".to_string(), settings_json)],
@@ -509,8 +547,12 @@ default_focus_state = "global"
             .execute("auto_typer", "auto_typer_email_signoff")
             .expect("auto typer text command should execute");
 
+        assert!(typed.lock().expect("typed text lock poisoned").is_empty());
         assert_eq!(
-            typed.lock().expect("typed text lock poisoned").as_slice(),
+            inserted
+                .lock()
+                .expect("inserted text lock poisoned")
+                .as_slice(),
             ["Thanks,\nGreg"]
         );
         assert!(read_time_requests
@@ -542,10 +584,12 @@ default_focus_state = "global"
             }
         })
         .to_string();
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             Arc::clone(&typed),
+            Arc::clone(&inserted),
             Arc::clone(&read_time_requests),
             Vec::new(),
             vec![("datetime_typer".to_string(), settings_json)],
@@ -567,8 +611,12 @@ default_focus_state = "global"
             .execute("datetime_typer", "datetime_typer_custom_date_time")
             .expect("datetime typer command should execute");
 
+        assert!(typed.lock().expect("typed text lock poisoned").is_empty());
         assert_eq!(
-            typed.lock().expect("typed text lock poisoned").as_slice(),
+            inserted
+                .lock()
+                .expect("inserted text lock poisoned")
+                .as_slice(),
             ["6 Apr 2026 07:08"]
         );
     }
@@ -576,12 +624,14 @@ default_focus_state = "global"
     #[test]
     fn read_context_capability_returns_active_interaction_tags() {
         let root =
-            write_context_reader_plugin("context_reader", r#""write_text", "read_context""#, 512);
+            write_context_reader_plugin("context_reader", r#""insert_text", "read_context""#, 512, "host_insert_text");
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_write_text_recorder(
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_text_recorders(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             Arc::clone(&typed),
+            Arc::clone(&inserted),
         );
 
         registry
@@ -593,17 +643,21 @@ default_focus_state = "global"
             .expect("context reader should execute");
 
         assert_eq!(
-            typed.lock().expect("typed text lock poisoned").as_slice(),
+            inserted
+                .lock()
+                .expect("inserted text lock poisoned")
+                .as_slice(),
             [r#"{"tags":["ui.text_input"]}"#]
         );
+        assert!(typed.lock().expect("typed text lock poisoned").is_empty());
     }
 
     #[test]
     fn read_context_capability_requires_permission() {
         let root =
-            write_context_reader_plugin("context_reader_no_permission", r#""write_text""#, 512);
+            write_context_reader_plugin("context_reader_no_permission", r#""insert_text""#, 512, "host_insert_text");
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_write_text_recorder(
+        let registry = PluginRegistry::load_with_type_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             Arc::clone(&typed),
@@ -625,11 +679,12 @@ default_focus_state = "global"
     fn read_context_capability_reports_buffer_too_small() {
         let root = write_context_reader_plugin(
             "context_reader_small_buffer",
-            r#""write_text", "read_context""#,
+            r#""insert_text", "read_context""#,
             4,
+            "host_insert_text",
         );
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_write_text_recorder(
+        let registry = PluginRegistry::load_with_type_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             Arc::clone(&typed),
@@ -650,12 +705,14 @@ default_focus_state = "global"
     #[cfg(debug_assertions)]
     fn loads_performance_tracker_plugin_and_registers_command() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             typed,
+            inserted,
             read_time_requests,
             Vec::new(),
             Vec::new(),
@@ -677,12 +734,14 @@ default_focus_state = "global"
     #[cfg(debug_assertions)]
     fn executes_performance_tracker_through_host_logger() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             typed,
+            inserted,
             read_time_requests,
             Vec::new(),
             Vec::new(),
@@ -703,7 +762,7 @@ default_focus_state = "global"
     }
 
     #[test]
-    fn rejects_write_text_when_permission_is_missing() {
+    fn rejects_insert_text_when_permission_is_missing() {
         let root = Path::new("target")
             .join("plugin-tests")
             .join("no-permission");
@@ -733,7 +792,7 @@ default_focus_state = "global"
         .expect("should write test manifest");
 
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_write_text_recorder(
+        let registry = PluginRegistry::load_with_type_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             Arc::clone(&typed),
@@ -741,10 +800,43 @@ default_focus_state = "global"
 
         let err = registry
             .execute("no_permission", "type_hello_world")
-            .expect_err("write_text should require permission");
+            .expect_err("insert_text should require permission");
 
         assert!(err.contains("non-zero exit code"));
         assert!(typed.lock().expect("typed text lock poisoned").is_empty());
+    }
+
+    #[test]
+    fn rejects_type_text_when_permission_is_missing() {
+        let root = write_context_reader_plugin(
+            "type_text_no_permission",
+            r#""insert_text", "read_context""#,
+            512,
+            "host_type_text",
+        );
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_text_recorders(
+            ExtensionDiscovery::new(&root).plugin_manifest_paths(),
+            Os::Windows,
+            Arc::clone(&typed),
+            Arc::clone(&inserted),
+        );
+
+        let err = registry
+            .execute_with_context(
+                "type_text_no_permission",
+                "read_context",
+                InteractionContext::from_tags(["ui.text_input".to_string()]),
+            )
+            .expect_err("type_text should require permission");
+
+        assert!(err.contains("non-zero exit code"));
+        assert!(typed.lock().expect("typed text lock poisoned").is_empty());
+        assert!(inserted
+            .lock()
+            .expect("inserted text lock poisoned")
+            .is_empty());
     }
 
     #[test]
@@ -779,12 +871,14 @@ default_focus_state = "global"
         .expect("should write test manifest");
 
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let performance_logs = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             typed,
+            inserted,
             read_time_requests,
             Vec::new(),
             Vec::new(),
@@ -833,7 +927,7 @@ default_focus_state = "global"
         .expect("should write test manifest");
 
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_write_text_recorder(
+        let registry = PluginRegistry::load_with_type_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             typed,
@@ -864,7 +958,7 @@ name = "Wrong Platform"
 platform = "macos"
 version = "0.1.0"
 wasm = "plugin.wasm"
-permissions = ["write_text"]
+permissions = ["insert_text"]
 
 [app]
 default_focus_state = "global"
@@ -873,7 +967,7 @@ default_focus_state = "global"
         .expect("should write test manifest");
 
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registry = PluginRegistry::load_with_write_text_recorder(
+        let registry = PluginRegistry::load_with_type_text_recorder(
             ExtensionDiscovery::new(&root).plugin_manifest_paths(),
             Os::Windows,
             typed,
@@ -885,11 +979,13 @@ default_focus_state = "global"
     #[test]
     fn ahk_plugin_registers_direct_shortcut_commands_from_snapshots() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             typed,
+            inserted,
             read_time_requests,
             ahk_storage_files("^h::MsgBox \"hi\""),
             Vec::new(),
@@ -912,11 +1008,13 @@ default_focus_state = "global"
     #[test]
     fn ahk_plugin_registers_hotstring_commands_from_snapshots() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             typed,
+            inserted,
             read_time_requests,
             ahk_storage_files(":?*:up;::\u{2B06}\u{FE0F}"),
             Vec::new(),
@@ -939,11 +1037,13 @@ default_focus_state = "global"
     #[test]
     fn ahk_plugin_executes_hotstring_commands_by_typing_trigger_text() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             Arc::clone(&typed),
+            Arc::clone(&inserted),
             read_time_requests,
             ahk_storage_files(":?*:up;::\u{2B06}\u{FE0F}"),
             Vec::new(),
@@ -965,6 +1065,10 @@ default_focus_state = "global"
             typed.lock().expect("typed text lock poisoned").as_slice(),
             ["up;"]
         );
+        assert!(inserted
+            .lock()
+            .expect("inserted text lock poisoned")
+            .is_empty());
     }
 
     #[test]
@@ -982,10 +1086,12 @@ default_focus_state = "global"
             ":?*:down;::\u{2B07}\u{FE0F}\n",
             ":?*:?;::\u{2753}\n",
         );
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let registry = PluginRegistry::load_with_host_recorders(
             real_plugin_manifests(),
             Os::Windows,
             typed,
+            inserted,
             read_time_requests,
             ahk_storage_files(script_text),
             Vec::new(),
@@ -1015,6 +1121,7 @@ default_focus_state = "global"
     #[test]
     fn ahk_plugin_loads_large_hotstring_sets() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inserted = Arc::new(std::sync::Mutex::new(Vec::new()));
         let read_time_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut script_lines = vec![
             "#Requires AutoHotkey v2.0".to_string(),
@@ -1029,6 +1136,7 @@ default_focus_state = "global"
             real_plugin_manifests(),
             Os::Windows,
             typed,
+            inserted,
             read_time_requests,
             ahk_storage_files(&script_text),
             Vec::new(),
