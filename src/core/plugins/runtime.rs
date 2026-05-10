@@ -15,7 +15,7 @@ use crate::core::plugins::{
     command::{PluginApplication, PluginCommand, RawCommandDescriptor},
     manifest::{PluginManifest, PluginSettingsSource},
 };
-use crate::domain::action::Os;
+use crate::domain::action::{InteractionContext, Os};
 
 const COMMAND_ID_OFFSET: usize = 4096;
 const PLUGIN_FUEL_BUDGET: u64 = 10_000_000;
@@ -125,8 +125,12 @@ impl LoadedPlugin {
         }
     }
 
-    pub(crate) fn execute_sync(&self, command_id: &str) -> Result<(), String> {
-        let (mut store, instance) = self.instantiate(true)?;
+    pub(crate) fn execute_sync(
+        &self,
+        command_id: &str,
+        active_interaction: InteractionContext,
+    ) -> Result<(), String> {
+        let (mut store, instance) = self.instantiate(true, active_interaction)?;
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| "Plugin does not export memory".to_string())?;
@@ -158,7 +162,7 @@ impl LoadedPlugin {
     }
 
     fn register_commands(&self) -> Result<Vec<PluginCommand>, String> {
-        let (mut store, instance) = self.instantiate(false)?;
+        let (mut store, instance) = self.instantiate(false, InteractionContext::default())?;
         let register = instance
             .get_typed_func::<(), i32>(&mut store, "register_commands_json")
             .map_err(|err| format!("Missing register_commands_json export: {err}"))?;
@@ -172,12 +176,13 @@ impl LoadedPlugin {
         Ok(raw_commands
             .into_iter()
             .map(|command| command.into_plugin_command(self.manifest.app.as_ref()))
-            .collect())
+            .collect::<Result<Vec<_>, _>>()?)
     }
 
     fn instantiate(
         &self,
         allow_host_effects: bool,
+        active_interaction: InteractionContext,
     ) -> Result<(Store<PluginStoreState>, wasmtime::Instance), String> {
         instantiate_plugin(
             &self.engine,
@@ -186,6 +191,7 @@ impl LoadedPlugin {
                 plugin_id: self.id.clone(),
                 permissions: self.manifest.permissions.iter().cloned().collect(),
                 host_context: self.host_context.clone(),
+                active_interaction,
                 allow_host_reads: true,
                 allow_host_effects,
             },
@@ -221,6 +227,7 @@ fn load_plugin_settings_schema_internal(
                     plugin_id: manifest.id.clone(),
                     permissions: manifest.permissions.iter().cloned().collect(),
                     host_context: host_context.clone(),
+                    active_interaction: InteractionContext::default(),
                     allow_host_reads: true,
                     allow_host_effects: false,
                 },

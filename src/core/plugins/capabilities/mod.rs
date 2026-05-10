@@ -5,6 +5,7 @@ use wasmtime::Linker;
 
 #[cfg(debug_assertions)]
 use crate::core::performance::LogPerformanceSnapshotFn;
+use crate::domain::action::InteractionContext;
 
 mod read;
 mod write;
@@ -22,6 +23,7 @@ pub(crate) enum PluginPermission {
     ReadTime,
     ReadStorage,
     ReadSettings,
+    ReadContext,
     #[cfg(debug_assertions)]
     WritePerformanceLog,
 }
@@ -40,6 +42,7 @@ pub(crate) struct PluginStoreState {
     pub(crate) plugin_id: String,
     pub(crate) permissions: HashSet<PluginPermission>,
     pub(crate) host_context: PluginHostContext,
+    pub(crate) active_interaction: InteractionContext,
     pub(crate) allow_host_reads: bool,
     pub(crate) allow_host_effects: bool,
 }

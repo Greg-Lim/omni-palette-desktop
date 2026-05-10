@@ -992,6 +992,7 @@ fn show_palette(
         registry_read.get_actions(context_root),
         registry_read.plugin_registry(),
         active_hwnd,
+        context_root.active_interaction.clone(),
     );
     drop(registry_read);
 
@@ -1400,12 +1401,18 @@ fn commands_from_unit_actions(
     unit_actions: Vec<UnitAction>,
     plugin_registry: Arc<PluginRegistry>,
     active_hwnd_val: Option<isize>,
+    active_interaction: crate::domain::action::InteractionContext,
 ) -> Vec<Command> {
     unit_actions
         .into_iter()
         .enumerate()
         .map(|unit_action| {
-            command_from_unit_action(unit_action, Arc::clone(&plugin_registry), active_hwnd_val)
+            command_from_unit_action(
+                unit_action,
+                Arc::clone(&plugin_registry),
+                active_hwnd_val,
+                active_interaction.clone(),
+            )
         })
         .collect()
 }
@@ -1414,6 +1421,7 @@ fn command_from_unit_action(
     (original_order, unit_action): (usize, UnitAction),
     plugin_registry: Arc<PluginRegistry>,
     active_hwnd_val: Option<isize>,
+    active_interaction: crate::domain::action::InteractionContext,
 ) -> Command {
     let execution = unit_action.execution;
     let target_hwnd_val = unit_action
@@ -1457,7 +1465,11 @@ fn command_from_unit_action(
                     focus_window(HWND(val as *mut _));
                     std::thread::sleep(Duration::from_millis(75));
                 }
-                if let Err(err) = plugin_registry.execute(plugin_id, command_id) {
+                if let Err(err) = plugin_registry.execute_with_context(
+                    plugin_id,
+                    command_id,
+                    active_interaction.clone(),
+                ) {
                     log::error!("Failed to execute WASM plugin command: {err}");
                 }
             }

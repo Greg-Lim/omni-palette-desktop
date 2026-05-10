@@ -8,6 +8,7 @@ permissions = ["write_text", "read_settings"]
 [app]
 default_focus_state = "global"
 default_tags = ["text", "typing"]
+default_when = { any = ["ui.text_input"] }
 
 [settings]
 source = "wasm"

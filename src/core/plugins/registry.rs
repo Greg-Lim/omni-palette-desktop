@@ -25,7 +25,7 @@ use crate::core::plugins::{
     command::PluginApplication,
     runtime::LoadedPlugin,
 };
-use crate::domain::action::Os;
+use crate::domain::action::{InteractionContext, Os};
 
 const PLUGIN_TIMEOUT: Duration = Duration::from_millis(750);
 
@@ -176,6 +176,15 @@ impl PluginRegistry {
     }
 
     pub fn execute(&self, plugin_id: &str, command_id: &str) -> Result<(), String> {
+        self.execute_with_context(plugin_id, command_id, InteractionContext::default())
+    }
+
+    pub fn execute_with_context(
+        &self,
+        plugin_id: &str,
+        command_id: &str,
+        active_interaction: InteractionContext,
+    ) -> Result<(), String> {
         self.stats.started.fetch_add(1, Ordering::Relaxed);
         log::debug!("Starting WASM plugin command: {plugin_id}:{command_id}");
 
@@ -183,6 +192,7 @@ impl PluginRegistry {
         let request = PluginRequest {
             plugin_id: plugin_id.to_string(),
             command_id: command_id.to_string(),
+            active_interaction,
             response_tx: tx,
         };
 
@@ -227,6 +237,7 @@ impl PluginRegistry {
 struct PluginRequest {
     plugin_id: String,
     command_id: String,
+    active_interaction: InteractionContext,
     response_tx: mpsc::Sender<Result<(), String>>,
 }
 
@@ -261,7 +272,9 @@ fn spawn_plugin_executor(
                     .get(&request.plugin_id)
                     .cloned()
                     .ok_or_else(|| format!("Unknown WASM plugin: {}", request.plugin_id))
-                    .and_then(|plugin| plugin.execute_sync(&request.command_id));
+                    .and_then(|plugin| {
+                        plugin.execute_sync(&request.command_id, request.active_interaction)
+                    });
                 let _ = request.response_tx.send(result);
             }
         })
@@ -339,6 +352,76 @@ mod tests {
         )]
     }
 
+    fn context_reader_plugin_wat(buffer_capacity: i32) -> String {
+        format!(
+            r#"(module
+  (import "env" "host_read_context_json" (func $host_read_context_json (param i32 i32) (result i32)))
+  (import "env" "host_write_text" (func $host_write_text (param i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 1024) "[{{\"id\":\"read_context\",\"name\":\"Read context\",\"priority\":\"medium\",\"focus_state\":\"global\",\"tags\":[\"test\"],\"shortcut_text\":\"WASM\"}}]\00")
+  (func (export "register_commands_json") (result i32)
+    i32.const 1024)
+  (func (export "execute") (param $command_id_ptr i32) (param $command_id_len i32) (result i32)
+    i32.const 4096
+    i32.const {buffer_capacity}
+    call $host_read_context_json
+    local.tee $command_id_len
+    i32.const -4
+    i32.eq
+    if
+      i32.const 0
+      return
+    end
+    local.get $command_id_len
+    i32.const 0
+    i32.lt_s
+    if
+      i32.const 1
+      return
+    end
+    i32.const 4096
+    local.get $command_id_len
+    call $host_write_text
+    return)
+)"#
+        )
+    }
+
+    fn write_context_reader_plugin(
+        root_name: &str,
+        permissions: &str,
+        buffer_capacity: i32,
+    ) -> PathBuf {
+        let root = Path::new("target").join("plugin-tests").join(root_name);
+        let plugin_dir = root.join("plugins").join(root_name);
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("should reset test plugin root");
+        }
+        fs::create_dir_all(&plugin_dir).expect("should create test plugin folder");
+        fs::write(
+            plugin_dir.join("plugin.wat"),
+            context_reader_plugin_wat(buffer_capacity),
+        )
+        .expect("should write context reader plugin");
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            format!(
+                r#"id = "{root_name}"
+name = "Context Reader"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wat"
+permissions = [{permissions}]
+
+[app]
+default_focus_state = "global"
+"#
+            ),
+        )
+        .expect("should write test manifest");
+        root
+    }
+
     #[test]
     fn loads_auto_typer_plugin_and_registers_command() {
         let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -357,6 +440,7 @@ mod tests {
         assert_eq!(app.commands.len(), 1);
         assert_eq!(app.commands[0].id, "type_hello_world");
         assert_eq!(app.commands[0].name, "Type hello world");
+        assert_eq!(app.commands[0].when.any, vec!["ui.text_input"]);
     }
 
     #[test]
@@ -419,6 +503,7 @@ mod tests {
         assert_eq!(app.commands.len(), 1);
         assert_eq!(app.commands[0].id, "auto_typer_email_signoff");
         assert_eq!(app.commands[0].name, "Email signoff");
+        assert_eq!(app.commands[0].when.any, vec!["ui.text_input"]);
 
         registry
             .execute("auto_typer", "auto_typer_email_signoff")
@@ -476,6 +561,7 @@ mod tests {
         assert_eq!(app.commands.len(), 1);
         assert_eq!(app.commands[0].id, "datetime_typer_custom_date_time");
         assert_eq!(app.commands[0].name, "Custom date time");
+        assert_eq!(app.commands[0].when.any, vec!["ui.text_input"]);
 
         registry
             .execute("datetime_typer", "datetime_typer_custom_date_time")
@@ -485,6 +571,79 @@ mod tests {
             typed.lock().expect("typed text lock poisoned").as_slice(),
             ["6 Apr 2026 07:08"]
         );
+    }
+
+    #[test]
+    fn read_context_capability_returns_active_interaction_tags() {
+        let root =
+            write_context_reader_plugin("context_reader", r#""write_text", "read_context""#, 512);
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_write_text_recorder(
+            ExtensionDiscovery::new(&root).plugin_manifest_paths(),
+            Os::Windows,
+            Arc::clone(&typed),
+        );
+
+        registry
+            .execute_with_context(
+                "context_reader",
+                "read_context",
+                InteractionContext::from_tags(["ui.text_input".to_string()]),
+            )
+            .expect("context reader should execute");
+
+        assert_eq!(
+            typed.lock().expect("typed text lock poisoned").as_slice(),
+            [r#"{"tags":["ui.text_input"]}"#]
+        );
+    }
+
+    #[test]
+    fn read_context_capability_requires_permission() {
+        let root =
+            write_context_reader_plugin("context_reader_no_permission", r#""write_text""#, 512);
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_write_text_recorder(
+            ExtensionDiscovery::new(&root).plugin_manifest_paths(),
+            Os::Windows,
+            Arc::clone(&typed),
+        );
+
+        let err = registry
+            .execute_with_context(
+                "context_reader_no_permission",
+                "read_context",
+                InteractionContext::from_tags(["ui.text_input".to_string()]),
+            )
+            .expect_err("read_context should require permission");
+
+        assert!(err.contains("non-zero exit code"));
+        assert!(typed.lock().expect("typed text lock poisoned").is_empty());
+    }
+
+    #[test]
+    fn read_context_capability_reports_buffer_too_small() {
+        let root = write_context_reader_plugin(
+            "context_reader_small_buffer",
+            r#""write_text", "read_context""#,
+            4,
+        );
+        let typed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = PluginRegistry::load_with_write_text_recorder(
+            ExtensionDiscovery::new(&root).plugin_manifest_paths(),
+            Os::Windows,
+            Arc::clone(&typed),
+        );
+
+        registry
+            .execute_with_context(
+                "context_reader_small_buffer",
+                "read_context",
+                InteractionContext::from_tags(["ui.text_input".to_string()]),
+            )
+            .expect("plugin treats buffer-too-small as success");
+
+        assert!(typed.lock().expect("typed text lock poisoned").is_empty());
     }
 
     #[test]

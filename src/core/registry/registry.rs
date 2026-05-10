@@ -23,9 +23,9 @@ use crate::{
     },
     domain::{
         action::{
-            normalize_context_tag, sequence_shortcut_text, Action, ActionContextCondition,
-            ActionExecution, ActionId, ActionMetadata, ActionName, AppName, AppProcessName,
-            ApplicationID, ContextRoot, FocusState, KeySequenceStep, Os, SequenceKey,
+            sequence_shortcut_text, Action, ActionContextCondition, ActionExecution, ActionId,
+            ActionMetadata, ActionName, AppName, AppProcessName, ApplicationID, ContextRoot,
+            FocusState, KeySequenceStep, Os, SequenceKey,
         },
         hotkey::{HotkeyModifiers, KeyboardShortcut},
     },
@@ -333,7 +333,7 @@ impl Application {
                     shortcut_text,
                     execution,
                     focus_state: command.focus_state,
-                    when: ActionContextCondition::default(),
+                    when: command.when.clone(),
                     metadata: ActionMetadata {
                         priority: command.priority,
                         favorite: command.favorite,
@@ -354,24 +354,7 @@ impl Application {
 fn action_condition_from_config(
     when: Option<&ActionWhenConfig>,
 ) -> Result<ActionContextCondition, String> {
-    let Some(when) = when else {
-        return Ok(ActionContextCondition::default());
-    };
-    if when.any.is_empty() {
-        return Err("Action context condition 'when.any' must not be empty".to_string());
-    }
-
-    let mut any = Vec::with_capacity(when.any.len());
-    for raw_tag in &when.any {
-        let Some(tag) = normalize_context_tag(raw_tag) else {
-            return Err(format!("Invalid action context tag: '{raw_tag}'"));
-        };
-        any.push(tag);
-    }
-    any.sort();
-    any.dedup();
-
-    Ok(ActionContextCondition { any })
+    ActionContextCondition::from_optional_any(when.map(|when| when.any.as_slice()))
 }
 
 const MAX_SHORTCUT_SEQUENCE_STEPS: usize = 5;
@@ -611,6 +594,63 @@ any = ["ppt.selection.text", "ui.text_input"]
     }
 
     #[test]
+    fn plugin_context_condition_filters_global_actions() {
+        let plugin = PluginApplication {
+            plugin_id: "datetime_typer".to_string(),
+            name: "DateTime Typer".to_string(),
+            process_name: "datetime_typer".to_string(),
+            commands: vec![PluginCommand {
+                id: "print_date".to_string(),
+                name: "Print date".to_string(),
+                priority: CommandPriority::Medium,
+                focus_state: FocusState::Global,
+                when: ActionContextCondition {
+                    any: vec!["ui.text_input".to_string()],
+                },
+                favorite: false,
+                tags: vec!["date".to_string()],
+                shortcut_text: Some("{D} {MMM}".to_string()),
+                cmd: None,
+            }],
+        };
+        let app = Application::from_plugin(&plugin).expect("plugin app should build");
+        let mut registry = MasterRegistry::default();
+        registry.application_registry.insert(0, app);
+
+        assert!(registry.get_actions(&empty_context()).is_empty());
+
+        let context = ContextRoot {
+            active_interaction: InteractionContext::from_tags(["ui.text_input".to_string()]),
+            ..empty_context()
+        };
+        let actions = registry.get_actions(&context);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action_name, "Print date");
+    }
+
+    #[test]
+    fn bundled_auto_typer_default_when_filters_global_actions() {
+        let discovery = ExtensionDiscovery::new("./extensions/bundled");
+        let registry = MasterRegistry::build(&discovery, Os::Windows);
+
+        assert!(registry
+            .get_actions(&empty_context())
+            .iter()
+            .all(|action| action.app_name != "Auto Typer"));
+
+        let context = ContextRoot {
+            active_interaction: InteractionContext::from_tags(["ui.text_input".to_string()]),
+            ..empty_context()
+        };
+        let actions = registry.get_actions(&context);
+
+        assert!(actions.iter().any(|action| {
+            action.app_name == "Auto Typer" && action.action_name == "Type hello world"
+        }));
+    }
+
+    #[test]
     fn context_condition_rejects_empty_any_list() {
         let config: Config = toml::from_str(
             r#"
@@ -734,6 +774,9 @@ cmd = { sequence = [
                 name: "AHK: Demo : Ctrl+H".to_string(),
                 priority: CommandPriority::Medium,
                 focus_state: FocusState::Global,
+                when: ActionContextCondition {
+                    any: vec!["ui.text_input".to_string()],
+                },
                 favorite: false,
                 tags: vec!["ahk".to_string(), "demo".to_string()],
                 shortcut_text: None,
@@ -752,6 +795,7 @@ cmd = { sequence = [
             .expect("plugin action should exist");
 
         assert_eq!(action.shortcut_text, "Ctrl+H");
+        assert_eq!(action.when.any, vec!["ui.text_input"]);
         match action.execution {
             ActionExecution::Shortcut(shortcut) => {
                 assert!(shortcut.modifier.control);
@@ -774,6 +818,7 @@ cmd = { sequence = [
                 name: "Demo : up; -> ⬆️".to_string(),
                 priority: CommandPriority::Medium,
                 focus_state: FocusState::Global,
+                when: ActionContextCondition::default(),
                 favorite: false,
                 tags: vec!["ahk".to_string(), "demo".to_string()],
                 shortcut_text: Some(String::new()),

@@ -6,7 +6,10 @@ use std::{
 use serde::Deserialize;
 
 use crate::core::plugins::capabilities::PluginPermission;
-use crate::domain::action::{FocusState, Os};
+use crate::{
+    config::extension::ActionWhenConfig,
+    domain::action::{FocusState, Os},
+};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PluginManifest {
@@ -37,6 +40,7 @@ impl PluginManifest {
 pub(crate) struct PluginAppConfig {
     pub default_focus_state: Option<FocusState>,
     pub default_tags: Option<Vec<String>>,
+    pub default_when: Option<ActionWhenConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]

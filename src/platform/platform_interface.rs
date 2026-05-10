@@ -18,9 +18,10 @@ pub fn get_all_context() -> ContextRoot {
                 .map(platwins::context::interaction::detect_active_interaction)
                 .unwrap_or_default();
             log::debug!(
-                "Retrieved context from Windows: fg has {} items, bg has {} items",
+                "Retrieved context from Windows: fg has {} items, bg has {} items, active tags: {:?}",
                 fg.len(),
-                bg.len()
+                bg.len(),
+                active_interaction.tags
             );
         } else {
             // Fallback for other OSs

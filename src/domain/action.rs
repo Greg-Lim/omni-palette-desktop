@@ -83,12 +83,33 @@ pub struct ActionMetadata {
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Hash)]
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq)]
 pub struct ActionContextCondition {
     pub any: Vec<String>,
 }
 
 impl ActionContextCondition {
+    pub fn from_optional_any(when_any: Option<&[String]>) -> Result<Self, String> {
+        let Some(when_any) = when_any else {
+            return Ok(Self::default());
+        };
+        if when_any.is_empty() {
+            return Err("Action context condition 'when.any' must not be empty".to_string());
+        }
+
+        let mut any = Vec::with_capacity(when_any.len());
+        for raw_tag in when_any {
+            let Some(tag) = normalize_context_tag(raw_tag) else {
+                return Err(format!("Invalid action context tag: '{raw_tag}'"));
+            };
+            any.push(tag);
+        }
+        any.sort();
+        any.dedup();
+
+        Ok(Self { any })
+    }
+
     pub fn matches(&self, context: &InteractionContext) -> bool {
         self.any.is_empty() || self.any.iter().any(|tag| context.has_tag(tag))
     }
@@ -144,7 +165,7 @@ impl ContextRoot {
     }
 }
 
-#[derive(Debug, Clone, Default, Hash)]
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq)]
 pub struct InteractionContext {
     pub tags: Vec<String>,
 }

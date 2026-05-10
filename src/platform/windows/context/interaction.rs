@@ -15,10 +15,11 @@ use windows::{
             Variant::VARIANT,
         },
         UI::Accessibility::{
-            CUIAutomation, IUIAutomation, UIA_ComboBoxControlTypeId, UIA_DocumentControlTypeId,
-            UIA_EditControlTypeId, UIA_ImageControlTypeId, UIA_ListControlTypeId,
-            UIA_ListItemControlTypeId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
-            UIA_TextControlTypeId, UIA_TextEditPatternId, UIA_TextPatternId, UIA_ValuePatternId,
+            CUIAutomation, IUIAutomation, IUIAutomationValuePattern, UIA_ComboBoxControlTypeId,
+            UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_ImageControlTypeId,
+            UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_SelectionItemPatternId,
+            UIA_SelectionPatternId, UIA_TextControlTypeId, UIA_TextEditPatternId,
+            UIA_TextPatternId, UIA_ValuePatternId, UIA_CONTROLTYPE_ID,
         },
     },
 };
@@ -61,7 +62,47 @@ fn detect_uia_tags(tags: &mut HashSet<String>) -> windows::core::Result<()> {
         unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }?;
     let element = unsafe { automation.GetFocusedElement() }?;
 
-    if let Ok(control_type) = unsafe { element.CurrentControlType() } {
+    let control_type = unsafe { element.CurrentControlType() }.ok();
+    let value_pattern = unsafe { element.GetCurrentPattern(UIA_ValuePatternId) };
+    let has_editable_value_pattern = value_pattern
+        .as_ref()
+        .ok()
+        .and_then(|pattern| pattern.cast::<IUIAutomationValuePattern>().ok())
+        .and_then(|value_pattern| unsafe { value_pattern.CurrentIsReadOnly() }.ok())
+        .is_some_and(|is_readonly| !is_readonly.as_bool());
+    let has_value_pattern = value_pattern.is_ok();
+    let has_text_pattern = unsafe { element.GetCurrentPattern(UIA_TextPatternId) }.is_ok();
+    let has_text_edit_pattern = unsafe { element.GetCurrentPattern(UIA_TextEditPatternId) }.is_ok();
+    let has_selection_pattern = unsafe { element.GetCurrentPattern(UIA_SelectionPatternId) }
+        .is_ok()
+        || unsafe { element.GetCurrentPattern(UIA_SelectionItemPatternId) }.is_ok();
+
+    tags.extend(tags_for_uia_features(UiaFeatures {
+        control_type,
+        has_value_pattern,
+        has_editable_value_pattern,
+        has_text_pattern,
+        has_text_edit_pattern,
+        has_selection_pattern,
+    }));
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct UiaFeatures {
+    control_type: Option<UIA_CONTROLTYPE_ID>,
+    has_value_pattern: bool,
+    has_editable_value_pattern: bool,
+    has_text_pattern: bool,
+    has_text_edit_pattern: bool,
+    has_selection_pattern: bool,
+}
+
+fn tags_for_uia_features(features: UiaFeatures) -> HashSet<String> {
+    let mut tags = HashSet::new();
+
+    if let Some(control_type) = features.control_type {
         if control_type == UIA_EditControlTypeId {
             tags.insert("ui.text_input".to_string());
             tags.insert("ui.edit".to_string());
@@ -79,21 +120,20 @@ fn detect_uia_tags(tags: &mut HashSet<String>) -> windows::core::Result<()> {
         }
     }
 
-    if unsafe { element.GetCurrentPattern(UIA_ValuePatternId) }.is_ok() {
+    if features.has_value_pattern {
         tags.insert("ui.value".to_string());
     }
-    if unsafe { element.GetCurrentPattern(UIA_TextPatternId) }.is_ok()
-        || unsafe { element.GetCurrentPattern(UIA_TextEditPatternId) }.is_ok()
-    {
+    if features.has_editable_value_pattern || features.has_text_edit_pattern {
         tags.insert("ui.text_input".to_string());
     }
-    if unsafe { element.GetCurrentPattern(UIA_SelectionPatternId) }.is_ok()
-        || unsafe { element.GetCurrentPattern(UIA_SelectionItemPatternId) }.is_ok()
-    {
+    if features.has_text_pattern || features.has_text_edit_pattern {
+        tags.insert("ui.text".to_string());
+    }
+    if features.has_selection_pattern {
         tags.insert("ui.selection".to_string());
     }
 
-    Ok(())
+    tags
 }
 
 fn detect_powerpoint_tags(tags: &mut HashSet<String>) -> windows::core::Result<()> {
@@ -194,5 +234,58 @@ impl Drop for ComApartment {
         if self.should_uninitialize {
             unsafe { CoUninitialize() };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uia_text_pattern_alone_is_text_but_not_text_input() {
+        let tags = tags_for_uia_features(UiaFeatures {
+            control_type: Some(UIA_DocumentControlTypeId),
+            has_text_pattern: true,
+            ..UiaFeatures::default()
+        });
+
+        assert!(tags.contains("ui.document"));
+        assert!(tags.contains("ui.text"));
+        assert!(!tags.contains("ui.text_input"));
+    }
+
+    #[test]
+    fn uia_edit_control_is_text_input() {
+        let tags = tags_for_uia_features(UiaFeatures {
+            control_type: Some(UIA_EditControlTypeId),
+            ..UiaFeatures::default()
+        });
+
+        assert!(tags.contains("ui.edit"));
+        assert!(tags.contains("ui.text_input"));
+    }
+
+    #[test]
+    fn uia_editable_value_pattern_is_text_input() {
+        let tags = tags_for_uia_features(UiaFeatures {
+            has_value_pattern: true,
+            has_editable_value_pattern: true,
+            ..UiaFeatures::default()
+        });
+
+        assert!(tags.contains("ui.value"));
+        assert!(tags.contains("ui.text_input"));
+    }
+
+    #[test]
+    fn uia_readonly_value_pattern_is_not_text_input() {
+        let tags = tags_for_uia_features(UiaFeatures {
+            has_value_pattern: true,
+            has_editable_value_pattern: false,
+            ..UiaFeatures::default()
+        });
+
+        assert!(tags.contains("ui.value"));
+        assert!(!tags.contains("ui.text_input"));
     }
 }
