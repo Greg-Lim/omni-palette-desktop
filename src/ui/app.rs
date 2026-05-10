@@ -12,6 +12,10 @@ use crate::platform::ui_support::{
     PlatformWindowToken,
 };
 use crate::theme::{apply_app_theme, current_app_theme};
+use crate::ui::debug_overlay::{
+    close_debug_overlay, show_debug_overlay, DebugCommandRow, DebugPaletteState, DebugSnapshot,
+    MAX_DEBUG_COMMAND_ROWS,
+};
 pub use crate::ui::guide::GuideHint;
 use crate::ui::guide::{close_guide_viewport, show_guide_viewport, ActiveGuide, GUIDE_DURATION};
 use crate::ui::palette::{
@@ -124,6 +128,9 @@ pub enum UiSignal {
     ExtensionSettingsLoaded(Result<LoadedExtensionSettings, String>),
     ExtensionSettingsSaved(Result<SavedExtensionSettings, String>),
     ReloadExtensionsFinished(Result<String, String>),
+    OpenDebugger,
+    CloseDebugger,
+    DebugSnapshotUpdated(DebugSnapshot),
     Quit,
 }
 
@@ -166,6 +173,8 @@ pub enum UiEvent {
         values: ExtensionSettingsValues,
     },
     ReloadExtensionsRequested,
+    OpenDebuggerRequested,
+    DebuggerClosed,
     QuitRequested,
 }
 
@@ -183,6 +192,8 @@ struct App {
     work_area: Option<PaletteWorkArea>,
     command_behavior: CommandBehavior,
     activation_hint: String,
+    debugger_open: bool,
+    latest_debug_snapshot: Option<DebugSnapshot>,
     guide: Option<ActiveGuide>,
     visibility: SharedUiVisibility,
     platform_ui: PlatformUiRuntime,
@@ -216,6 +227,8 @@ impl App {
             work_area: None,
             command_behavior,
             activation_hint,
+            debugger_open: false,
+            latest_debug_snapshot: None,
             guide: None,
             visibility,
             platform_ui,
@@ -327,6 +340,17 @@ impl App {
                     settings.reload_finished(result);
                 }
             }
+            UiSignal::OpenDebugger => {
+                self.debugger_open = true;
+            }
+            UiSignal::CloseDebugger => {
+                self.debugger_open = false;
+                self.latest_debug_snapshot = None;
+                close_debug_overlay(ctx);
+            }
+            UiSignal::DebugSnapshotUpdated(snapshot) => {
+                self.latest_debug_snapshot = Some(snapshot);
+            }
             UiSignal::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
     }
@@ -396,6 +420,52 @@ impl App {
     fn run_command_action(&self, command_index: usize) {
         (self.palette.all_commands[command_index].action)();
         let _ = self.event_tx.send(UiEvent::ActionExecuted);
+    }
+
+    fn refresh_debug_overlay(&self, ctx: &egui::Context) {
+        if !self.debugger_open {
+            close_debug_overlay(ctx);
+            return;
+        }
+
+        if let Some(snapshot) = self.latest_debug_snapshot.clone() {
+            show_debug_overlay(
+                ctx,
+                snapshot,
+                self.debug_palette_state(),
+                self.event_tx.clone(),
+            );
+        }
+    }
+
+    fn debug_palette_state(&self) -> Option<DebugPaletteState> {
+        if !self.palette.is_open {
+            return None;
+        }
+
+        let top_rows = self
+            .palette
+            .filtered_commands
+            .iter()
+            .take(MAX_DEBUG_COMMAND_ROWS)
+            .filter_map(|row| {
+                let command = self.palette.all_commands.get(row.command_index)?;
+                Some(DebugCommandRow {
+                    label: command.label.clone(),
+                    focus_state: command.focus_state,
+                    priority: command.priority,
+                    favorite: command.favorite,
+                    score: row.score,
+                    tags: command.tags.clone(),
+                })
+            })
+            .collect();
+
+        Some(DebugPaletteState {
+            query: self.palette.filter_text.clone(),
+            filtered_count: self.palette.filtered_commands.len(),
+            top_rows,
+        })
     }
 
     fn start_guide(&mut self, ctx: &egui::Context, command_index: usize, reason: &str) {
@@ -580,6 +650,7 @@ impl eframe::App for App {
         }
 
         self.refresh_guide(ctx);
+        self.refresh_debug_overlay(ctx);
 
         if !self.palette.is_open {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));

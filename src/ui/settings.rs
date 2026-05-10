@@ -333,6 +333,14 @@ impl SettingsState {
         }
     }
 
+    fn request_debugger_open(&mut self, event_tx: &Sender<UiEvent>) {
+        if event_tx.send(UiEvent::OpenDebuggerRequested).is_ok() {
+            self.set_status("Opening debugger");
+        } else {
+            self.set_status("Could not open debugger because the settings channel is unavailable.");
+        }
+    }
+
     fn sync_bundled_extension_enabled(&mut self) {
         for extension in &mut self.bundled_extensions {
             extension.enabled = self
@@ -640,6 +648,24 @@ impl SettingsState {
                                 "Guide",
                             );
                         });
+                    },
+                );
+            },
+        );
+
+        section(
+            ui,
+            "Debug",
+            "Show the live context Omni Palette uses to pick, filter, and rank commands.",
+            |ui| {
+                setting_row_with_help(
+                    ui,
+                    "Context overlay",
+                    "Shows process names, active context tags, text-input state, ignored-app passthrough, and command candidate summaries. Window titles are not shown.",
+                    |ui| {
+                        if secondary_button(ui, "Pop up debugger").clicked() {
+                            self.request_debugger_open(event_tx);
+                        }
                     },
                 );
             },
@@ -2738,6 +2764,25 @@ mod tests {
             Some("Could not save config")
         );
         assert!(!state.has_visible_unsaved_settings_changes());
+    }
+
+    #[test]
+    fn debugger_popup_request_sends_open_event_without_dirtying_settings() {
+        let mut state = settings_state(RuntimeConfig::default());
+        let (tx, rx) = mpsc::channel();
+
+        state.request_debugger_open(&tx);
+
+        assert!(!state.is_dirty());
+        assert!(!state.has_visible_unsaved_settings_changes());
+        assert!(matches!(
+            rx.try_recv().expect("open event should be queued"),
+            UiEvent::OpenDebuggerRequested
+        ));
+        assert_eq!(
+            state.status.as_ref().map(|status| status.message.as_str()),
+            Some("Opening debugger")
+        );
     }
 
     #[test]

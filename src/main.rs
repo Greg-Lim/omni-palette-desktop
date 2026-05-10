@@ -6,7 +6,7 @@ use std::sync::{
     Arc, OnceLock, RwLock,
 };
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use env_logger::Builder;
 
@@ -62,6 +62,7 @@ mod theme;
 mod ui;
 
 const BUNDLED_EXTENSIONS_ROOT: &str = "./extensions/bundled";
+const DEBUG_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(500);
 
 type SharedRegistry = Arc<RwLock<MasterRegistry>>;
 type SharedIgnoredProcessNames = Arc<RwLock<HashSet<String>>>;
@@ -627,6 +628,8 @@ fn spawn_hotkey_bridge(
         let mut palette_open = false;
         let mut guide_active = false;
         let mut guide_shortcut = None;
+        let mut debugger_open = false;
+        let mut last_debug_snapshot = Instant::now();
 
         loop {
             handle_ui_events(
@@ -640,6 +643,7 @@ fn spawn_hotkey_bridge(
                 &mut palette_open,
                 &mut guide_active,
                 &mut guide_shortcut,
+                &mut debugger_open,
                 &ui_context,
             );
 
@@ -674,6 +678,15 @@ fn spawn_hotkey_bridge(
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
+
+            if debugger_open {
+                if last_debug_snapshot.elapsed() >= DEBUG_SNAPSHOT_INTERVAL {
+                    send_debug_snapshot(&ui_tx, &runtime_state, &ui_context);
+                    last_debug_snapshot = Instant::now();
+                }
+            } else {
+                last_debug_snapshot = Instant::now();
+            }
         }
     })
 }
@@ -689,6 +702,7 @@ fn handle_ui_events(
     palette_open: &mut bool,
     guide_active: &mut bool,
     guide_shortcut: &mut Option<KeyboardShortcut>,
+    debugger_open: &mut bool,
     ui_context: &SharedUiContext,
 ) {
     while let Ok(event) = event_rx.try_recv() {
@@ -830,6 +844,15 @@ fn handle_ui_events(
                     ui_context,
                     UiSignal::ReloadExtensionsFinished(result),
                 );
+            }
+            UiEvent::OpenDebuggerRequested => {
+                *debugger_open = true;
+                send_ui_signal(ui_tx, ui_context, UiSignal::OpenDebugger);
+                send_debug_snapshot(ui_tx, runtime_state, ui_context);
+            }
+            UiEvent::DebuggerClosed => {
+                *debugger_open = false;
+                send_ui_signal(ui_tx, ui_context, UiSignal::CloseDebugger);
             }
             UiEvent::QuitRequested => {
                 send_ui_signal(ui_tx, ui_context, UiSignal::Quit);
@@ -1013,6 +1036,36 @@ fn show_palette(
         *palette_open = true;
         request_ui_repaint(ui_context);
     }
+}
+
+fn send_debug_snapshot(
+    ui_tx: &Sender<UiSignal>,
+    runtime_state: &RuntimeState,
+    ui_context: &SharedUiContext,
+) {
+    let context_root = get_all_context();
+    let ignored_process_name = ignored_active_process_name_from_shared(
+        &context_root,
+        &runtime_state.ignored_process_names,
+    );
+    let work_area = palette_work_area(&context_root);
+    let registry_read = match runtime_state.registry.read() {
+        Ok(registry) => registry,
+        Err(err) => {
+            log::error!("Extension registry lock poisoned while collecting debug snapshot: {err}");
+            return;
+        }
+    };
+    let unit_actions = registry_read.get_actions(&context_root);
+    drop(registry_read);
+
+    let snapshot = crate::ui::debug_overlay::snapshot_from_context(
+        &context_root,
+        &unit_actions,
+        ignored_process_name,
+        work_area,
+    );
+    send_ui_signal(ui_tx, ui_context, UiSignal::DebugSnapshotUpdated(snapshot));
 }
 
 fn request_ui_repaint(ui_context: &SharedUiContext) {
