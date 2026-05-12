@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = [".", "xtask"]
+members = [".", "xtask", "apps/desktop-tauri/src-tauri"]
 default-members = ["."]
 
 [dependencies]

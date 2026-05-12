@@ -5,7 +5,7 @@
 
 ## Migration Status
 
-- Current phase: Phase 1 - Planning And Inventory
+- Current phase: Phase 2 - Minimal Tauri Wireframe
 - Last updated: 2026-05-12
 - Update this section whenever the migration moves to a new phase.
 
@@ -21,6 +21,7 @@ parity.
 - Use Tauri v2 as the desktop shell.
 - Use React and TypeScript for the frontend.
 - Use Tailwind for styling, starting with wireframe-level UI only.
+- Use Bun for Phase 2 frontend package management and scripts.
 - Keep the Rust runtime, Windows integration, extension loading, plugin host,
   search, and command execution logic as the system backend.
 - Build the new Tauri app beside the current egui app first, then cut over only
@@ -159,6 +160,7 @@ Scope:
   - Empty state.
   - Settings placeholder view.
 - Keep styling intentionally plain and Tailwind-based.
+- Use Bun for dependency installation and frontend scripts.
 
 Out of scope:
 
@@ -178,40 +180,76 @@ Acceptance criteria:
 
 Purpose:
 
-- Turn the current egui-only `UiSignal` and `UiEvent` relationship into a typed
-  backend/frontend contract that Tauri and React can use.
+- Build the first real bridge between the Tauri React frontend and the existing
+  Rust runtime without migrating hotkeys, settings, or full command execution.
+- Split the current binary-only Rust crate into a reusable library boundary so
+  the Tauri crate can call shared Omni Palette backend code instead of
+  duplicating runtime logic.
+- Replace Phase 2 static frontend commands with backend-provided serializable
+  command DTOs and backend-owned command IDs.
 
 Scope:
 
-- Introduce serializable DTOs for frontend communication:
-  - `CommandDto`
+- Add a root library target with `src/lib.rs`.
+  - Export reusable modules such as `config`, `core`, `domain`, `platform`, and
+    `theme` from the library.
+  - Keep egui-specific UI modules and the egui runtime bridge in `src/main.rs`.
+  - Update `src/main.rs` to import shared modules through the library so the
+    existing egui app continues to run unchanged.
+- Add a backend contract module for serializable frontend communication:
   - `CommandId`
+  - `PaletteSessionId`
+  - `CommandDto`
   - `MatchRangeDto`
   - `PaletteSnapshotDto`
-  - `PaletteWorkAreaDto`
-  - `RuntimeConfigDto` or a minimal config DTO
-  - Extension summary/settings DTOs when settings migration starts
-- Replace frontend-owned command closures with backend-owned command IDs.
-- Keep command execution in Rust.
-- Add Tauri commands for early integration:
-  - `get_bootstrap`
+  - `PaletteBootstrapDto`
+  - `CommandExecutionResultDto`
+- Add a Rust command-session service that:
+  - Queries `MasterRegistry` using the current Windows context.
+  - Converts `UnitAction` values into serializable command DTOs.
+  - Stores Rust-only executable command records behind generated opaque command
+    IDs.
+  - Uses existing `core::command_filter` behavior for query filtering and match
+    ranges.
+  - Includes a built-in reload-extensions command.
+- Add Tauri commands:
+  - `get_palette_bootstrap`
   - `search_commands`
   - `execute_command`
-  - `hide_palette`
-  - `save_runtime_config`
-- Add event names for Rust-to-frontend notifications:
-  - `palette://show`
-  - `palette://hide`
-  - `palette://commands-updated`
-  - `settings://updated`
-  - `guide://show`
-  - `guide://hide`
+- In Phase 3, `execute_command` should support safe built-in commands such as
+  reload extensions. Shortcut-backed and plugin-backed actions may return a
+  clear "deferred until runtime integration" result; full execution belongs to
+  Phase 4.
+- Update React to load commands from `search_commands` instead of
+  `sampleCommands`, while preserving the Phase 2 wireframe layout and selection
+  behavior.
+
+Interfaces:
+
+- Backend owns command discovery, filtering, sorting, match ranges, and command
+  ID generation.
+- Frontend owns query text, selected command ID, rendering, and invoking backend
+  commands.
+- DTO fields use serde-compatible snake_case names on the wire, and TypeScript
+  types match those names exactly.
+- Command IDs are opaque strings to React; React must not infer runtime behavior
+  from them.
+- Keep `health_check` as a simple smoke-test command.
 
 Acceptance criteria:
 
-- The data needed by React is serializable.
-- Command execution can be requested by ID.
-- The old egui app remains intact while the new contract is developed.
+- The root crate exposes reusable backend modules through `src/lib.rs`.
+- The existing egui app remains functional after the library split.
+- The Tauri frontend receives backend-generated command DTOs instead of static
+  sample rows.
+- Empty and non-empty searches are served by Rust using existing command filter
+  behavior.
+- Unknown or stale command IDs return a controlled result instead of panicking.
+- Built-in reload can be represented and dispatched without frontend-owned
+  closures.
+- Global hotkeys, palette show/hide events, guide mode, settings save,
+  extension settings UI, and full shortcut/plugin execution remain deferred to
+  later phases.
 
 ### Phase 4: Runtime Integration
 
