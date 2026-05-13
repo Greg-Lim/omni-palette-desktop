@@ -1,14 +1,6 @@
 use eframe::egui;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ThemeMode {
-    #[default]
-    System,
-    Light,
-    Dark,
-}
+use crate::config::runtime::ThemeMode;
 
 impl ThemeMode {
     pub fn egui_preference(self) -> egui::ThemePreference {

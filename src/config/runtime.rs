@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::extension::Modifier,
     domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
-    theme::ThemeMode,
 };
 
 const APP_DIR_NAME: &str = "OmniPalette";
@@ -149,6 +148,15 @@ pub enum CommandBehavior {
     #[default]
     Execute,
     Guide,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -352,7 +360,6 @@ fn default_true() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::ThemeMode;
 
     #[test]
     fn default_activation_is_ctrl_shift_p() {

@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-import { filterCommands, sampleCommands } from "./commands";
+import {
+  CommandExecutionResult,
+  CommandRow,
+  nextSelectedCommandId,
+  paletteApi,
+} from "./commands";
 
 type HealthPayload = {
   app_name: string;
@@ -11,18 +16,49 @@ type HealthPayload = {
 
 export function App() {
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState(sampleCommands[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState("");
+  const [rows, setRows] = useState<CommandRow[]>([]);
   const [activeView, setActiveView] = useState<"palette" | "settings">("palette");
   const [health, setHealth] = useState<HealthPayload | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-
-  const visibleCommands = useMemo(() => filterCommands(sampleCommands, query), [query]);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [loadingCommands, setLoadingCommands] = useState(true);
+  const [executionResult, setExecutionResult] = useState<CommandExecutionResult | null>(null);
 
   useEffect(() => {
-    if (!visibleCommands.some((command) => command.id === selectedId)) {
-      setSelectedId(visibleCommands[0]?.id ?? "");
-    }
-  }, [selectedId, visibleCommands]);
+    let cancelled = false;
+    setLoadingCommands(true);
+
+    paletteApi
+      .searchCommands(query)
+      .then((snapshot) => {
+        if (cancelled) {
+          return;
+        }
+        setRows(snapshot.commands);
+        setCommandError(null);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setRows([]);
+        setCommandError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingCommands(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [query]);
+
+  useEffect(() => {
+    setSelectedId((currentId) => nextSelectedCommandId(currentId, rows));
+  }, [rows]);
 
   useEffect(() => {
     invoke<HealthPayload>("health_check")
@@ -36,13 +72,29 @@ export function App() {
       });
   }, []);
 
+  const runSelectedCommand = () => {
+    if (!selectedId) {
+      return;
+    }
+
+    paletteApi
+      .executeCommand(selectedId)
+      .then(setExecutionResult)
+      .catch((error: unknown) => {
+        setExecutionResult({
+          status: "failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  };
+
   return (
     <main className="min-h-screen bg-zinc-950 p-6 text-zinc-100">
       <section className="mx-auto max-w-4xl">
         <header className="mb-4 flex items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold">Omni Palette</h1>
-            <p className="text-sm text-zinc-400">Phase 2 Tauri wireframe</p>
+            <p className="text-sm text-zinc-400">Phase 3 backend command bridge</p>
           </div>
           <div className="flex rounded-md border border-zinc-700 p-1 text-sm">
             <button
@@ -66,11 +118,15 @@ export function App() {
 
         {activeView === "palette" ? (
           <PaletteWireframe
-            query={query}
+            commandError={commandError}
+            executionResult={executionResult}
+            loading={loadingCommands}
             onQueryChange={setQuery}
-            selectedId={selectedId}
+            onRunSelected={runSelectedCommand}
             onSelect={setSelectedId}
-            rows={visibleCommands}
+            query={query}
+            rows={rows}
+            selectedId={selectedId}
           />
         ) : (
           <SettingsPlaceholder />
@@ -81,17 +137,25 @@ export function App() {
 }
 
 function PaletteWireframe({
-  query,
+  commandError,
+  executionResult,
+  loading,
   onQueryChange,
-  selectedId,
+  onRunSelected,
   onSelect,
+  query,
   rows,
+  selectedId,
 }: {
-  query: string;
+  commandError: string | null;
+  executionResult: CommandExecutionResult | null;
+  loading: boolean;
   onQueryChange: (value: string) => void;
-  selectedId: string;
+  onRunSelected: () => void;
   onSelect: (value: string) => void;
-  rows: ReturnType<typeof filterCommands>;
+  query: string;
+  rows: CommandRow[];
+  selectedId: string;
 }) {
   return (
     <section className="rounded-lg border border-zinc-700 bg-zinc-900">
@@ -109,10 +173,34 @@ function PaletteWireframe({
         />
       </div>
 
+      <div className="flex items-center justify-between border-b border-zinc-700 px-4 py-2 text-xs text-zinc-400">
+        <span>{loading ? "Loading commands..." : `${rows.length} commands`}</span>
+        <button
+          className="rounded border border-zinc-700 px-3 py-1 text-zinc-100 disabled:text-zinc-600"
+          disabled={!selectedId}
+          onClick={onRunSelected}
+          type="button"
+        >
+          Run selected
+        </button>
+      </div>
+
+      {commandError ? (
+        <div className="border-b border-zinc-700 px-4 py-2 text-sm text-red-300">
+          {commandError}
+        </div>
+      ) : null}
+
+      {executionResult ? (
+        <div className="border-b border-zinc-700 px-4 py-2 text-sm text-zinc-300">
+          {executionResult.status}: {executionResult.message}
+        </div>
+      ) : null}
+
       <div className="max-h-[420px] overflow-y-auto p-2">
         {rows.length === 0 ? (
           <div className="rounded-md border border-dashed border-zinc-700 p-8 text-center text-sm text-zinc-400">
-            No matching commands
+            {loading ? "Loading commands..." : "No matching commands"}
           </div>
         ) : (
           rows.map((command) => {
@@ -129,9 +217,13 @@ function PaletteWireframe({
               >
                 <span>
                   <span className="block text-sm font-medium">{command.label}</span>
-                  <span className="block text-xs text-zinc-400">{command.scope}</span>
+                  <span className="block text-xs text-zinc-400">
+                    {command.focus_state} - {command.priority}
+                  </span>
                 </span>
-                <span className="text-xs text-zinc-400">{command.shortcut || "backend"}</span>
+                <span className="text-xs text-zinc-400">
+                  {command.shortcut_text || "backend"}
+                </span>
               </button>
             );
           })
@@ -146,8 +238,8 @@ function SettingsPlaceholder() {
     <section className="rounded-lg border border-zinc-700 bg-zinc-900 p-6">
       <h2 className="text-lg font-semibold">Settings</h2>
       <p className="mt-2 text-sm text-zinc-400">
-        Placeholder view for Phase 2. Runtime settings and extension management stay in the egui
-        app until later migration phases.
+        Placeholder view. Runtime settings and extension management stay in the egui app until a
+        later migration phase.
       </p>
     </section>
   );

@@ -1,52 +1,66 @@
+import { invoke } from "@tauri-apps/api/core";
+
+export type CommandFocusState = "focused" | "background" | "global";
+export type CommandPriority = "suppressed" | "low" | "medium" | "high";
+
+export type MatchRange = {
+  start: number;
+  end: number;
+};
+
 export type CommandRow = {
   id: string;
   label: string;
-  shortcut: string;
-  scope: "focused" | "background" | "global";
+  shortcut_text: string;
+  focus_state: CommandFocusState;
+  priority: CommandPriority;
+  favorite: boolean;
   tags: string[];
+  original_order: number;
+  score: number;
+  label_matches: MatchRange[];
 };
 
-export const sampleCommands: CommandRow[] = [
-  {
-    id: "reload-extensions",
-    label: "Omni Palette: Reload extensions",
-    shortcut: "",
-    scope: "global",
-    tags: ["extensions", "reload"],
-  },
-  {
-    id: "chrome-new-tab",
-    label: "Chrome: New tab",
-    shortcut: "Ctrl+T",
-    scope: "focused",
-    tags: ["browser", "tabs"],
-  },
-  {
-    id: "windows-explorer",
-    label: "Windows: Open File Explorer",
-    shortcut: "Win+E",
-    scope: "global",
-    tags: ["windows", "files"],
-  },
-  {
-    id: "ahk-date",
-    label: "AHK: Insert current date",
-    shortcut: "",
-    scope: "global",
-    tags: ["plugin", "typing"],
-  },
-];
+export type PaletteSnapshot = {
+  session_id: string;
+  query: string;
+  commands: CommandRow[];
+};
 
-export function filterCommands(commands: CommandRow[], query: string): CommandRow[] {
-  const normalizedQuery = query.trim().toLowerCase();
-  if (normalizedQuery.length === 0) {
-    return commands;
+export type PaletteBootstrap = {
+  session_id: string;
+  backend_status: string;
+  commands: CommandRow[];
+};
+
+export type CommandExecutionStatus = "succeeded" | "failed" | "deferred";
+
+export type CommandExecutionResult = {
+  status: CommandExecutionStatus;
+  message: string;
+};
+
+export type PaletteInvoke = <T>(
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
+
+export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
+  return {
+    getPaletteBootstrap: () => invokeCommand<PaletteBootstrap>("get_palette_bootstrap"),
+    searchCommands: (query: string) =>
+      invokeCommand<PaletteSnapshot>("search_commands", { query }),
+    executeCommand: (commandId: string) =>
+      invokeCommand<CommandExecutionResult>("execute_command", { commandId }),
+  };
+}
+
+export const paletteApi = createPaletteApi();
+
+export function nextSelectedCommandId(currentId: string, commands: CommandRow[]): string {
+  if (commands.some((command) => command.id === currentId)) {
+    return currentId;
   }
 
-  return commands.filter((command) => {
-    const searchableText = [command.label, command.shortcut, command.scope, ...command.tags]
-      .join(" ")
-      .toLowerCase();
-    return searchableText.includes(normalizedQuery);
-  });
+  return commands[0]?.id ?? "";
 }

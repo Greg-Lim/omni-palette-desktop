@@ -17,7 +17,8 @@ use crate::core::extensions::settings::{
 };
 use crate::domain::action::Os;
 use crate::domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut};
-use crate::theme::{current_app_theme, SettingsTheme, ThemeMode};
+use crate::config::runtime::ThemeMode;
+use crate::theme::{current_app_theme, SettingsTheme};
 use crate::ui::app::{InstalledExtensionsUpdate, UiEvent};
 use crate::ui::components::toggle_switch;
 

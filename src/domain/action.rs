@@ -115,7 +115,9 @@ impl ActionContextCondition {
     }
 }
 
-#[derive(Debug, Deserialize, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Deserialize, Serialize, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum CommandPriority {
     #[serde(alias = "Suppressed")]
@@ -129,7 +131,7 @@ pub enum CommandPriority {
     High,
 }
 
-#[derive(Debug, Deserialize, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Deserialize, Serialize, Copy, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum FocusState {
     Focused,

@@ -5,8 +5,8 @@
 
 ## Migration Status
 
-- Current phase: Phase 2 - Minimal Tauri Wireframe
-- Last updated: 2026-05-12
+- Current phase: Phase 3 - Backend Contract Extraction (completed)
+- Last updated: 2026-05-13
 - Update this section whenever the migration moves to a new phase.
 
 ## Goal

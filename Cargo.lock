@@ -4037,6 +4037,7 @@ dependencies = [
 name = "omni_palette_desktop_tauri"
 version = "0.1.0"
 dependencies = [
+ "omni_palette",
  "serde",
  "tauri",
  "tauri-build",
