@@ -2,8 +2,8 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
 
-  import type { CommandExecutionResult, CommandRow } from "./commands";
-  import { nextSelectedCommandId, paletteApi } from "./commands";
+  import type { CommandExecutionResult, CommandRow, RuntimeStatus } from "./commands";
+  import { formatRuntimeStatus, nextSelectedCommandId, paletteApi } from "./commands";
 
   type HealthPayload = {
     app_name: string;
@@ -17,6 +17,7 @@
   let activeView: "palette" | "settings" = "palette";
   let health: HealthPayload | null = null;
   let healthError: string | null = null;
+  let runtimeStatus: RuntimeStatus | null = null;
   let commandError: string | null = null;
   let loadingCommands = true;
   let executionResult: CommandExecutionResult | null = null;
@@ -35,6 +36,15 @@
       })
       .catch((error: unknown) => {
         health = null;
+        healthError = errorMessage(error);
+      });
+
+    paletteApi
+      .getPaletteBootstrap()
+      .then((bootstrap) => {
+        runtimeStatus = bootstrap.runtime_status;
+      })
+      .catch((error: unknown) => {
         healthError = errorMessage(error);
       });
   });
@@ -128,6 +138,9 @@
     <div class="mb-4 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-300">
       {#if health}
         <span>Backend: {health.status} - {health.app_name} - {health.phase}</span>
+        {#if runtimeStatus}
+          <span class="ml-2 text-zinc-400">- {formatRuntimeStatus(runtimeStatus)}</span>
+        {/if}
       {:else}
         <span>Backend: {healthError ? `unavailable (${healthError})` : "checking..."}</span>
       {/if}

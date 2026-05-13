@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    path::Path,
+    sync::RwLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     core::{
         command_filter::{filter_commands, FilterableCommand},
-        extensions::discovery::ExtensionDiscovery,
-        registry::registry::{MasterRegistry, UnitAction},
+        registry::registry::UnitAction,
         search::MatchRange,
     },
     domain::action::{ActionExecution, ActionMetadata, CommandPriority, FocusState, Os},
     platform::platform_interface::get_all_context,
+    runtime_state::{OmniRuntimeState, ReloadReport, RuntimeStateLoadOptions, RuntimeStatusDto},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -86,6 +86,7 @@ pub struct PaletteSnapshotDto {
 pub struct PaletteBootstrapDto {
     pub session_id: PaletteSessionId,
     pub backend_status: String,
+    pub runtime_status: RuntimeStatusDto,
     pub commands: Vec<CommandDto>,
 }
 
@@ -308,22 +309,20 @@ impl CommandSession {
 }
 
 pub struct PaletteBackend {
-    registry: Arc<RwLock<MasterRegistry>>,
-    bundled_extensions_root: PathBuf,
-    current_os: Os,
+    runtime_state: OmniRuntimeState,
     session: RwLock<CommandSession>,
 }
 
 impl PaletteBackend {
     pub fn default_for_bundled_root(root: impl AsRef<Path>, current_os: Os) -> Self {
-        let bundled_extensions_root = root.as_ref().to_path_buf();
-        let discovery = ExtensionDiscovery::bundled_with_user_root(&bundled_extensions_root);
-        let registry = MasterRegistry::build(&discovery, current_os);
+        Self::from_runtime_state(OmniRuntimeState::load(
+            RuntimeStateLoadOptions::from_environment(root, current_os),
+        ))
+    }
 
+    pub fn from_runtime_state(runtime_state: OmniRuntimeState) -> Self {
         Self {
-            registry: Arc::new(RwLock::new(registry)),
-            bundled_extensions_root,
-            current_os,
+            runtime_state,
             session: RwLock::new(CommandSession::from_commands(Vec::new())),
         }
     }
@@ -334,6 +333,7 @@ impl PaletteBackend {
         PaletteBootstrapDto {
             session_id: snapshot.session_id,
             backend_status: "ok".to_string(),
+            runtime_status: self.runtime_state.status(),
             commands: snapshot.commands,
         }
     }
@@ -366,8 +366,8 @@ impl PaletteBackend {
 
     fn build_current_session(&self) -> Result<CommandSession, String> {
         let context = get_all_context();
-        let registry = self
-            .registry
+        let registry = self.runtime_state.registry();
+        let registry = registry
             .read()
             .map_err(|err| format!("Extension registry lock poisoned: {err}"))?;
         let mut commands = vec![self.reload_extensions_command(0)];
@@ -384,36 +384,25 @@ impl PaletteBackend {
     }
 
     fn reload_extensions_command(&self, original_order: usize) -> BackendCommand {
-        let registry = Arc::clone(&self.registry);
-        let bundled_extensions_root = self.bundled_extensions_root.clone();
-        let current_os = self.current_os;
+        let runtime_state = self.runtime_state.clone();
 
         BackendCommand::reload_extensions(
             CommandId::new("reload-extensions"),
             original_order,
             Box::new(move || {
-                reload_registry(&registry, &bundled_extensions_root, current_os).map(|count| {
-                    format!("Reloaded extensions: {count} applications")
-                })
+                runtime_state
+                    .reload_extensions()
+                    .map(reload_report_message)
             }),
         )
     }
 }
 
-fn reload_registry(
-    registry: &Arc<RwLock<MasterRegistry>>,
-    bundled_extensions_root: &Path,
-    current_os: Os,
-) -> Result<usize, String> {
-    let discovery = ExtensionDiscovery::bundled_with_user_root(bundled_extensions_root);
-    let new_registry =
-        MasterRegistry::build_strict(&discovery, current_os).map_err(|err| err.to_string())?;
-    let application_count = new_registry.application_registry.len();
-    let mut registry = registry
-        .write()
-        .map_err(|err| format!("Extension registry lock poisoned: {err}"))?;
-    *registry = new_registry;
-    Ok(application_count)
+fn reload_report_message(report: ReloadReport) -> String {
+    format!(
+        "Reloaded extensions: {} applications, {} ignored processes",
+        report.application_count, report.ignored_process_count
+    )
 }
 
 fn backend_error_command(message: String) -> BackendCommand {
@@ -449,13 +438,16 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+    use std::path::{Path, PathBuf};
 
     use crate::{
+        config::runtime::RuntimePaths,
         core::search::MatchRange,
         domain::{
             action::{ActionExecution, ActionMetadata, CommandPriority, FocusState},
             hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
         },
+        runtime_state::{OmniRuntimeState, RuntimeStateLoadOptions},
     };
 
     use super::*;
@@ -613,5 +605,125 @@ mod tests {
             result,
             CommandExecutionResultDto::succeeded("Reloaded extensions: 1 applications, 0 ignored processes")
         );
+    }
+
+    #[test]
+    fn runtime_state_loads_config_registry_and_ignored_processes() {
+        let root = runtime_test_root("loads-config-registry-and-ignore");
+        write_static_extension(&root, "chrome", "Chrome", "chrome.exe");
+        std::fs::write(root.join("ignore.toml"), "windows = [\"Code.exe\"]")
+            .expect("ignore config should be written");
+
+        let runtime = OmniRuntimeState::load(RuntimeStateLoadOptions {
+            bundled_extensions_root: root.clone(),
+            user_extensions_root: None,
+            dev_config_path: root.join("config.toml"),
+            runtime_paths: RuntimePaths {
+                config_path: None,
+                local_cache_root: None,
+            },
+            current_os: Os::Windows,
+        });
+
+        let status = runtime.status();
+
+        assert_eq!(status.application_count, 1);
+        assert_eq!(status.ignored_process_count, 1);
+        assert_eq!(status.plugin_count, 0);
+        assert_eq!(status.plugin_application_count, 0);
+        assert_eq!(status.config_path, None);
+        assert_eq!(status.config_error, None);
+    }
+
+    #[test]
+    fn palette_bootstrap_reports_runtime_status() {
+        let root = runtime_test_root("palette-bootstrap-runtime-status");
+        write_static_extension(&root, "chrome", "Chrome", "chrome.exe");
+        std::fs::write(root.join("ignore.toml"), "windows = [\"Code.exe\"]")
+            .expect("ignore config should be written");
+
+        let runtime = OmniRuntimeState::load(RuntimeStateLoadOptions {
+            bundled_extensions_root: root,
+            user_extensions_root: None,
+            dev_config_path: PathBuf::from("missing-dev-config.toml"),
+            runtime_paths: RuntimePaths {
+                config_path: Some(PathBuf::from("C:/Users/example/AppData/Roaming/OmniPalette/config.toml")),
+                local_cache_root: None,
+            },
+            current_os: Os::Windows,
+        });
+        let backend = PaletteBackend::from_runtime_state(runtime);
+
+        let bootstrap = backend.get_palette_bootstrap();
+
+        assert_eq!(bootstrap.backend_status, "ok");
+        assert_eq!(bootstrap.runtime_status.application_count, 1);
+        assert_eq!(bootstrap.runtime_status.ignored_process_count, 1);
+        assert_eq!(bootstrap.runtime_status.config_path.as_deref(), Some("C:/Users/example/AppData/Roaming/OmniPalette/config.toml"));
+        assert_eq!(bootstrap.runtime_status.activation_hint, "Ctrl+Shift+P");
+        assert!(!bootstrap.commands.is_empty());
+    }
+
+    #[test]
+    fn reload_refreshes_registry_and_ignored_process_count() {
+        let root = runtime_test_root("reload-refreshes-state");
+        write_static_extension(&root, "chrome", "Chrome", "chrome.exe");
+        std::fs::write(root.join("ignore.toml"), "windows = [\"Code.exe\"]")
+            .expect("ignore config should be written");
+
+        let runtime = OmniRuntimeState::load(RuntimeStateLoadOptions {
+            bundled_extensions_root: root.clone(),
+            user_extensions_root: None,
+            dev_config_path: PathBuf::from("missing-dev-config.toml"),
+            runtime_paths: RuntimePaths {
+                config_path: None,
+                local_cache_root: None,
+            },
+            current_os: Os::Windows,
+        });
+
+        write_static_extension(&root, "notepad", "Notepad", "notepad.exe");
+        std::fs::write(root.join("ignore.toml"), "windows = [\"Code.exe\", \"notepad.exe\"]")
+            .expect("ignore config should be updated");
+
+        let report = runtime.reload_extensions().expect("reload should succeed");
+
+        assert_eq!(report.application_count, 2);
+        assert_eq!(report.ignored_process_count, 2);
+        assert_eq!(runtime.status().application_count, 2);
+        assert_eq!(runtime.status().ignored_process_count, 2);
+    }
+
+    fn runtime_test_root(name: &str) -> PathBuf {
+        let root = PathBuf::from("target")
+            .join("runtime-state-tests")
+            .join(name);
+        if root.exists() {
+            std::fs::remove_dir_all(&root).expect("runtime test root should reset");
+        }
+        std::fs::create_dir_all(root.join("static")).expect("static dir should be created");
+        root
+    }
+
+    fn write_static_extension(root: &Path, id: &str, name: &str, process_name: &str) {
+        let content = format!(
+            r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "{id}"
+name = "{name}"
+process_name = "{process_name}"
+
+[actions]
+
+[actions.open]
+name = "Open"
+cmd = {{ mods = ["ctrl"], key = "KeyO" }}
+"#
+        );
+        std::fs::write(root.join("static").join(format!("{id}.toml")), content)
+            .expect("static extension should be written");
     }
 }

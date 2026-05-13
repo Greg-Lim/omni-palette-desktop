@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type CommandFocusState = "focused" | "background" | "global";
 export type CommandPriority = "suppressed" | "low" | "medium" | "high";
+export type CommandBehavior = "execute" | "guide";
 
 export type MatchRange = {
   start: number;
@@ -27,9 +28,21 @@ export type PaletteSnapshot = {
   commands: CommandRow[];
 };
 
+export type RuntimeStatus = {
+  config_path: string | null;
+  config_error: string | null;
+  activation_hint: string;
+  command_behavior: CommandBehavior;
+  application_count: number;
+  ignored_process_count: number;
+  plugin_count: number;
+  plugin_application_count: number;
+};
+
 export type PaletteBootstrap = {
   session_id: string;
   backend_status: string;
+  runtime_status: RuntimeStatus;
   commands: CommandRow[];
 };
 
@@ -63,4 +76,14 @@ export function nextSelectedCommandId(currentId: string, commands: CommandRow[])
   }
 
   return commands[0]?.id ?? "";
+}
+
+export function formatRuntimeStatus(status: RuntimeStatus): string {
+  return [
+    status.activation_hint,
+    status.command_behavior,
+    `${status.application_count} apps`,
+    `${status.ignored_process_count} ignored`,
+    `${status.plugin_count} plugins`,
+  ].join(" - ");
 }

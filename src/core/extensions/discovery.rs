@@ -39,7 +39,6 @@ impl ExtensionDiscovery {
         Self { roots }
     }
 
-    #[cfg(test)]
     pub fn with_roots(roots: impl IntoIterator<Item = PathBuf>) -> Self {
         Self {
             roots: roots.into_iter().collect(),

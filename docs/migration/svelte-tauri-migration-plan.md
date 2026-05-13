@@ -10,9 +10,9 @@
 
 ## Migration Status
 
-- Current priority: Svelte frontend parity is complete; plan Phase 4 separately
-  before resuming broader Tauri migration work.
-- Current phase: Phase 3 - Svelte Parity Verification complete.
+- Current priority: plan Phase 4B real command execution before hotkeys,
+  settings, tray behavior, guide mode, or egui removal.
+- Current phase: Phase 4A - Runtime State Foundation complete.
 - Last updated: 2026-05-13.
 - Update this section whenever the Svelte migration moves to a new phase.
 
@@ -26,9 +26,8 @@ continues only through the Svelte frontend.
 
 ## Current State
 
-- `apps/desktop-tauri/` contains a Tauri v2 app created during the prior
-  React-based migration.
-- The frontend currently uses React, TypeScript, Vite, Tailwind, and Bun.
+- `apps/desktop-tauri/` contains a Tauri v2 app with a Svelte, TypeScript,
+  Vite, Tailwind, and Bun frontend.
 - The Rust side has started Phase 3 backend contract extraction and exposes
   Tauri invoke commands that the Svelte frontend should keep using:
   - `health_check`

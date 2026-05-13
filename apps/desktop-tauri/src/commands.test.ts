@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
-import { CommandRow, createPaletteApi, nextSelectedCommandId } from "./commands";
+import {
+  CommandRow,
+  RuntimeStatus,
+  createPaletteApi,
+  formatRuntimeStatus,
+  nextSelectedCommandId,
+} from "./commands";
 
 const rows: CommandRow[] = [
   {
@@ -30,6 +36,35 @@ const rows: CommandRow[] = [
 ];
 
 describe("palette api", () => {
+  it("calls the backend bootstrap command and preserves runtime status", async () => {
+    const runtimeStatus: RuntimeStatus = {
+      config_path: "C:/Users/example/AppData/Roaming/OmniPalette/config.toml",
+      config_error: null,
+      activation_hint: "Ctrl+Space",
+      command_behavior: "execute",
+      application_count: 4,
+      ignored_process_count: 2,
+      plugin_count: 1,
+      plugin_application_count: 1,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return {
+        session_id: "session-1",
+        backend_status: "ok",
+        runtime_status: runtimeStatus,
+        commands: rows,
+      } as T;
+    });
+
+    const bootstrap = await api.getPaletteBootstrap();
+
+    expect(calls).toEqual([{ command: "get_palette_bootstrap", args: undefined }]);
+    expect(bootstrap.runtime_status).toEqual(runtimeStatus);
+    expect(bootstrap.commands).toEqual(rows);
+  });
+
   it("calls the backend search command with the current query", async () => {
     const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
     const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
@@ -56,6 +91,23 @@ describe("palette api", () => {
       { command: "execute_command", args: { commandId: "chrome-new-tab" } },
     ]);
     expect(result.status).toBe("deferred");
+  });
+});
+
+describe("formatRuntimeStatus", () => {
+  it("summarizes runtime metadata for the status strip", () => {
+    expect(
+      formatRuntimeStatus({
+        config_path: "C:/Users/example/AppData/Roaming/OmniPalette/config.toml",
+        config_error: null,
+        activation_hint: "Ctrl+Space",
+        command_behavior: "execute",
+        application_count: 4,
+        ignored_process_count: 2,
+        plugin_count: 1,
+        plugin_application_count: 1,
+      }),
+    ).toBe("Ctrl+Space - execute - 4 apps - 2 ignored - 1 plugins");
   });
 });
 

@@ -6,6 +6,7 @@ use omni_palette::{
         PaletteSnapshotDto,
     },
     domain::action::Os,
+    runtime_state::{OmniRuntimeState, RuntimeStateLoadOptions},
 };
 use serde::Serialize;
 use tauri::State;
@@ -25,7 +26,7 @@ pub struct HealthCheckPayload {
 fn health_check() -> HealthCheckPayload {
     HealthCheckPayload {
         app_name: "Omni Palette",
-        phase: "Phase 3 - Backend Command Bridge",
+        phase: "Phase 4A - Runtime State Foundation",
         status: "ok",
     }
 }
@@ -50,12 +51,12 @@ fn execute_command(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let bundled_extensions_root = bundled_extensions_root();
     tauri::Builder::default()
         .manage(AppState {
-            backend: Arc::new(PaletteBackend::default_for_bundled_root(
-                bundled_extensions_root(),
-                Os::Windows,
-            )),
+            backend: Arc::new(PaletteBackend::from_runtime_state(OmniRuntimeState::load(
+                RuntimeStateLoadOptions::from_environment(bundled_extensions_root, Os::Windows),
+            ))),
         })
         .invoke_handler(tauri::generate_handler![
             health_check,
@@ -81,11 +82,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_check_reports_phase_three_bridge() {
+    fn health_check_reports_phase_four_runtime_state() {
         let payload = health_check();
 
         assert_eq!(payload.app_name, "Omni Palette");
-        assert_eq!(payload.phase, "Phase 3 - Backend Command Bridge");
+        assert_eq!(payload.phase, "Phase 4A - Runtime State Foundation");
         assert_eq!(payload.status, "ok");
     }
 
