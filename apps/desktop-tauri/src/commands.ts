@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type CommandFocusState = "focused" | "background" | "global";
 export type CommandPriority = "suppressed" | "low" | "medium" | "high";
 export type CommandBehavior = "execute" | "guide";
+export const HOTKEY_EVENT_NAME = "omni://palette-activation-requested";
 
 export type MatchRange = {
   start: number;
@@ -53,6 +54,29 @@ export type CommandExecutionResult = {
   message: string;
 };
 
+export type HotkeyEventKind =
+  | "activation_requested"
+  | "ignored_passthrough"
+  | "listener_error";
+
+export type HotkeyEventPayload = {
+  kind: HotkeyEventKind;
+  shortcut: string;
+  process_name: string | null;
+  activation_count: number;
+  ignored_passthrough_count: number;
+  message: string | null;
+};
+
+export type HotkeyStatus = {
+  running: boolean;
+  activation_hint: string;
+  activation_count: number;
+  ignored_passthrough_count: number;
+  last_event: HotkeyEventPayload | null;
+  last_error: string | null;
+};
+
 export type PaletteInvoke = <T>(
   command: string,
   args?: Record<string, unknown>,
@@ -65,6 +89,7 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
       invokeCommand<PaletteSnapshot>("search_commands", { query }),
     executeCommand: (commandId: string) =>
       invokeCommand<CommandExecutionResult>("execute_command", { commandId }),
+    getHotkeyStatus: () => invokeCommand<HotkeyStatus>("get_hotkey_status"),
   };
 }
 
@@ -85,5 +110,18 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     `${status.application_count} apps`,
     `${status.ignored_process_count} ignored`,
     `${status.plugin_count} plugins`,
+  ].join(" - ");
+}
+
+export function formatHotkeyStatus(status: HotkeyStatus): string {
+  if (status.last_error) {
+    return `hotkey error - ${status.last_error}`;
+  }
+
+  return [
+    status.running ? "hotkey on" : "hotkey off",
+    status.activation_hint,
+    `${status.activation_count} activations`,
+    `${status.ignored_passthrough_count} passthrough`,
   ].join(" - ");
 }

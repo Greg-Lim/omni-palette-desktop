@@ -10,10 +10,10 @@
 
 ## Migration Status
 
-- Current priority: plan Phase 4C hotkey listener and ignored-app passthrough
-  before Tauri window lifecycle, palette parity, settings, tray behavior, guide
-  mode, or egui removal.
-- Current phase: Phase 4B - Runtime Command Execution complete.
+- Current priority: plan Phase 4D Tauri window lifecycle before palette parity,
+  settings, tray behavior, guide mode, or egui removal.
+- Current phase: Phase 4C - Hotkey Listener And Ignored-App Passthrough
+  complete.
 - Last updated: 2026-05-13.
 - Update this section whenever the Svelte migration moves to a new phase.
 
@@ -202,7 +202,7 @@ Subphase boundaries:
   rows. Complete.
 - Phase 4C - Hotkey Listener And Ignored-App Passthrough: start the existing
   Windows hotkey listener from Tauri and preserve ignored foreground app
-  passthrough. Do not add palette UX parity.
+  passthrough. Do not add palette UX parity. Complete.
 - Phase 4D - Tauri Window Lifecycle: show, hide, focus, and position the Tauri
   palette from runtime events. Do not add settings UI or egui removal.
 - Phase 5 remains palette behavior parity only: keyboard navigation,

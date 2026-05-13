@@ -2,8 +2,10 @@ import { describe, expect, it } from "bun:test";
 
 import {
   CommandRow,
+  HotkeyStatus,
   RuntimeStatus,
   createPaletteApi,
+  formatHotkeyStatus,
   formatRuntimeStatus,
   nextSelectedCommandId,
 } from "./commands";
@@ -105,6 +107,34 @@ describe("palette api", () => {
       message: "Executed Chrome: New tab",
     });
   });
+
+  it("calls the backend hotkey status command and preserves payload", async () => {
+    const hotkeyStatus: HotkeyStatus = {
+      running: true,
+      activation_hint: "Ctrl+Shift+P",
+      activation_count: 2,
+      ignored_passthrough_count: 1,
+      last_event: {
+        kind: "activation_requested",
+        shortcut: "Ctrl+Shift+P",
+        process_name: "notepad.exe",
+        activation_count: 2,
+        ignored_passthrough_count: 1,
+        message: null,
+      },
+      last_error: null,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return hotkeyStatus as T;
+    });
+
+    const status = await api.getHotkeyStatus();
+
+    expect(calls).toEqual([{ command: "get_hotkey_status", args: undefined }]);
+    expect(status).toEqual(hotkeyStatus);
+  });
 });
 
 describe("formatRuntimeStatus", () => {
@@ -121,6 +151,48 @@ describe("formatRuntimeStatus", () => {
         plugin_application_count: 1,
       }),
     ).toBe("Ctrl+Space - execute - 4 apps - 2 ignored - 1 plugins");
+  });
+});
+
+describe("formatHotkeyStatus", () => {
+  it("summarizes running activation and passthrough state", () => {
+    expect(
+      formatHotkeyStatus({
+        running: true,
+        activation_hint: "Ctrl+Shift+P",
+        activation_count: 2,
+        ignored_passthrough_count: 1,
+        last_event: {
+          kind: "ignored_passthrough",
+          shortcut: "Ctrl+Shift+P",
+          process_name: "Code.exe",
+          activation_count: 2,
+          ignored_passthrough_count: 1,
+          message: null,
+        },
+        last_error: null,
+      }),
+    ).toBe("hotkey on - Ctrl+Shift+P - 2 activations - 1 passthrough");
+  });
+
+  it("shows listener errors before event counts", () => {
+    expect(
+      formatHotkeyStatus({
+        running: false,
+        activation_hint: "Ctrl+Shift+P",
+        activation_count: 0,
+        ignored_passthrough_count: 0,
+        last_event: {
+          kind: "listener_error",
+          shortcut: "Ctrl+Shift+P",
+          process_name: null,
+          activation_count: 0,
+          ignored_passthrough_count: 0,
+          message: "failed to register hotkey",
+        },
+        last_error: "failed to register hotkey",
+      }),
+    ).toBe("hotkey error - failed to register hotkey");
   });
 });
 

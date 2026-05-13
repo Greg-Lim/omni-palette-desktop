@@ -1,9 +1,22 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
 
-  import type { CommandExecutionResult, CommandRow, RuntimeStatus } from "./commands";
-  import { formatRuntimeStatus, nextSelectedCommandId, paletteApi } from "./commands";
+  import type {
+    CommandExecutionResult,
+    CommandRow,
+    HotkeyEventPayload,
+    HotkeyStatus,
+    RuntimeStatus,
+  } from "./commands";
+  import {
+    HOTKEY_EVENT_NAME,
+    formatHotkeyStatus,
+    formatRuntimeStatus,
+    nextSelectedCommandId,
+    paletteApi,
+  } from "./commands";
 
   type HealthPayload = {
     app_name: string;
@@ -18,6 +31,7 @@
   let health: HealthPayload | null = null;
   let healthError: string | null = null;
   let runtimeStatus: RuntimeStatus | null = null;
+  let hotkeyStatus: HotkeyStatus | null = null;
   let commandError: string | null = null;
   let loadingCommands = true;
   let executionResult: CommandExecutionResult | null = null;
@@ -47,6 +61,30 @@
       .catch((error: unknown) => {
         healthError = errorMessage(error);
       });
+
+    paletteApi
+      .getHotkeyStatus()
+      .then((status) => {
+        hotkeyStatus = status;
+      })
+      .catch((error: unknown) => {
+        healthError = errorMessage(error);
+      });
+
+    let unlistenHotkeyEvents: (() => void) | null = null;
+    listen<HotkeyEventPayload>(HOTKEY_EVENT_NAME, (event) => {
+      hotkeyStatus = nextHotkeyStatus(hotkeyStatus, event.payload);
+    })
+      .then((unlisten) => {
+        unlistenHotkeyEvents = unlisten;
+      })
+      .catch((error: unknown) => {
+        healthError = errorMessage(error);
+      });
+
+    return () => {
+      unlistenHotkeyEvents?.();
+    };
   });
 
   function searchCommands(currentQuery: string) {
@@ -102,6 +140,20 @@
     return error instanceof Error ? error.message : String(error);
   }
 
+  function nextHotkeyStatus(
+    current: HotkeyStatus | null,
+    event: HotkeyEventPayload,
+  ): HotkeyStatus {
+    return {
+      running: event.kind !== "listener_error" && (current?.running ?? true),
+      activation_hint: current?.activation_hint ?? event.shortcut,
+      activation_count: event.activation_count,
+      ignored_passthrough_count: event.ignored_passthrough_count,
+      last_event: event,
+      last_error: event.kind === "listener_error" ? event.message : null,
+    };
+  }
+
   function viewButtonClass(active: boolean): string {
     return [
       "rounded px-3 py-1",
@@ -140,6 +192,9 @@
         <span>Backend: {health.status} - {health.app_name} - {health.phase}</span>
         {#if runtimeStatus}
           <span class="ml-2 text-zinc-400">- {formatRuntimeStatus(runtimeStatus)}</span>
+        {/if}
+        {#if hotkeyStatus}
+          <span class="ml-2 text-zinc-400">- {formatHotkeyStatus(hotkeyStatus)}</span>
         {/if}
       {:else}
         <span>Backend: {healthError ? `unavailable (${healthError})` : "checking..."}</span>

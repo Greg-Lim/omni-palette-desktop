@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{
-        ignore::load_ignored_process_names,
+        ignore::{load_ignored_process_names, normalize_process_name},
         runtime::{CommandBehavior, RuntimeConfig, RuntimeConfigLoad, RuntimePaths},
     },
     core::{
@@ -31,10 +31,7 @@ pub struct RuntimeStateLoadOptions {
 }
 
 impl RuntimeStateLoadOptions {
-    pub fn from_environment(
-        bundled_extensions_root: impl AsRef<Path>,
-        current_os: Os,
-    ) -> Self {
+    pub fn from_environment(bundled_extensions_root: impl AsRef<Path>, current_os: Os) -> Self {
         let bundled_extensions_root = bundled_extensions_root.as_ref().to_path_buf();
         Self {
             dev_config_path: dev_config_path_for_bundled_root(&bundled_extensions_root),
@@ -88,6 +85,17 @@ impl OmniRuntimeState {
 
     pub fn config(&self) -> &RuntimeConfig {
         &self.runtime_config_load.config
+    }
+
+    pub fn is_ignored_process_name(&self, process_name: &str) -> bool {
+        let Some(process_name) = normalize_process_name(process_name) else {
+            return false;
+        };
+
+        self.ignored_process_names
+            .read()
+            .map(|ignored| ignored.contains(&process_name))
+            .unwrap_or(false)
     }
 
     pub fn status(&self) -> RuntimeStatusDto {
@@ -201,4 +209,43 @@ fn dev_config_path_for_bundled_root(bundled_extensions_root: &Path) -> PathBuf {
         .and_then(Path::parent)
         .map(|repo_root| repo_root.join("config.toml"))
         .unwrap_or_else(|| PathBuf::from("config.toml"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::runtime::RuntimePaths, domain::action::Os};
+
+    #[test]
+    fn ignored_process_lookup_normalizes_configured_names() {
+        let root = runtime_test_root("ignored-process-lookup");
+        std::fs::write(root.join("ignore.toml"), "windows = [\"Code.exe\"]")
+            .expect("ignore config should be written");
+
+        let runtime = OmniRuntimeState::load(RuntimeStateLoadOptions {
+            bundled_extensions_root: root.clone(),
+            user_extensions_root: None,
+            dev_config_path: root.join("config.toml"),
+            runtime_paths: RuntimePaths {
+                config_path: None,
+                local_cache_root: None,
+            },
+            current_os: Os::Windows,
+        });
+
+        assert!(runtime.is_ignored_process_name("CODE.EXE"));
+        assert!(!runtime.is_ignored_process_name("notepad.exe"));
+        assert!(!runtime.is_ignored_process_name(""));
+    }
+
+    fn runtime_test_root(name: &str) -> PathBuf {
+        let root = PathBuf::from("target")
+            .join("runtime-state-tests")
+            .join(name);
+        if root.exists() {
+            std::fs::remove_dir_all(&root).expect("runtime test root should reset");
+        }
+        std::fs::create_dir_all(root.join("static")).expect("static dir should be created");
+        root
+    }
 }
