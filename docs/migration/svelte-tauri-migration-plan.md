@@ -10,9 +10,9 @@
 
 ## Migration Status
 
-- Current priority: replace the React Tauri frontend with Svelte before any
-  further Tauri parity phases.
-- Current phase: Phase 0 - Documentation and priority reset.
+- Current priority: Svelte frontend parity is complete; plan Phase 4 separately
+  before resuming broader Tauri migration work.
+- Current phase: Phase 3 - Svelte Parity Verification complete.
 - Last updated: 2026-05-13.
 - Update this section whenever the Svelte migration moves to a new phase.
 
