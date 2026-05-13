@@ -1,20 +1,34 @@
 use std::{
     collections::HashMap,
     path::Path,
-    sync::RwLock,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, RwLock},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
+use windows::Win32::Foundation::HWND;
 
 use crate::{
     core::{
         command_filter::{filter_commands, FilterableCommand},
+        plugins::PluginRegistry,
         registry::registry::UnitAction,
         search::MatchRange,
     },
-    domain::action::{ActionExecution, ActionMetadata, CommandPriority, FocusState, Os},
-    platform::platform_interface::get_all_context,
+    domain::{
+        action::{
+            ActionExecution, ActionMetadata, CommandPriority, FocusState, InteractionContext,
+            KeySequenceStep, Os,
+        },
+        hotkey::KeyboardShortcut,
+    },
+    platform::{
+        platform_interface::get_all_context,
+        windows::{
+            context::context::{focus_window, get_hwnd_from_raw},
+            sender::hotkey_sender::{send_shortcut, send_shortcut_sequence},
+        },
+    },
     runtime_state::{OmniRuntimeState, ReloadReport, RuntimeStateLoadOptions, RuntimeStatusDto},
 };
 
@@ -128,6 +142,113 @@ impl CommandExecutionResultDto {
 }
 
 type ReloadExtensionsFn = dyn Fn() -> Result<String, String> + Send + Sync;
+type SharedCommandExecutor = Arc<dyn CommandExecutor>;
+
+trait CommandExecutor: Send + Sync {
+    fn execute_shortcut(
+        &self,
+        shortcut: KeyboardShortcut,
+        focus_target: Option<isize>,
+    ) -> Result<(), String>;
+
+    fn execute_shortcut_sequence(
+        &self,
+        sequence: &[KeySequenceStep],
+        focus_target: Option<isize>,
+    ) -> Result<(), String>;
+
+    fn execute_plugin_command(
+        &self,
+        plugin_registry: Arc<PluginRegistry>,
+        plugin_id: &str,
+        command_id: &str,
+        active_hwnd_val: Option<isize>,
+        active_interaction: InteractionContext,
+    ) -> Result<(), String>;
+}
+
+struct WindowsCommandExecutor;
+
+impl CommandExecutor for WindowsCommandExecutor {
+    fn execute_shortcut(
+        &self,
+        shortcut: KeyboardShortcut,
+        focus_target: Option<isize>,
+    ) -> Result<(), String> {
+        if let Some(val) = focus_target {
+            focus_window_from_value(val);
+        }
+        send_shortcut(&shortcut);
+        Ok(())
+    }
+
+    fn execute_shortcut_sequence(
+        &self,
+        sequence: &[KeySequenceStep],
+        focus_target: Option<isize>,
+    ) -> Result<(), String> {
+        if let Some(val) = focus_target {
+            focus_window_from_value(val);
+        }
+        send_shortcut_sequence(sequence);
+        Ok(())
+    }
+
+    fn execute_plugin_command(
+        &self,
+        plugin_registry: Arc<PluginRegistry>,
+        plugin_id: &str,
+        command_id: &str,
+        active_hwnd_val: Option<isize>,
+        active_interaction: InteractionContext,
+    ) -> Result<(), String> {
+        if let Some(val) = active_hwnd_val {
+            focus_window_from_value(val);
+            std::thread::sleep(Duration::from_millis(75));
+        }
+        plugin_registry.execute_with_context(plugin_id, command_id, active_interaction)
+    }
+}
+
+fn focus_window_from_value(hwnd_val: isize) {
+    focus_window(HWND(hwnd_val as *mut _));
+}
+
+struct RuntimeActionContext {
+    shortcut_focus_target: Option<isize>,
+    active_hwnd_val: Option<isize>,
+    active_interaction: InteractionContext,
+    plugin_registry: Arc<PluginRegistry>,
+}
+
+struct RuntimeActionCommand {
+    execution: ActionExecution,
+    context: RuntimeActionContext,
+    executor: SharedCommandExecutor,
+}
+
+impl RuntimeActionCommand {
+    fn execute(&self) -> Result<(), String> {
+        match &self.execution {
+            ActionExecution::Shortcut(shortcut) => self
+                .executor
+                .execute_shortcut(*shortcut, self.context.shortcut_focus_target),
+            ActionExecution::ShortcutSequence(sequence) => self
+                .executor
+                .execute_shortcut_sequence(sequence, self.context.shortcut_focus_target),
+            ActionExecution::PluginCommand {
+                plugin_id,
+                command_id,
+            } => self.executor.execute_plugin_command(
+                Arc::clone(&self.context.plugin_registry),
+                plugin_id,
+                command_id,
+                self.context.active_hwnd_val,
+                self.context.active_interaction.clone(),
+            ),
+        }
+    }
+}
 
 pub struct BackendCommand {
     id: CommandId,
@@ -141,6 +262,7 @@ pub struct BackendCommand {
 
 enum StoredExecution {
     Deferred(ActionExecution),
+    RuntimeAction(RuntimeActionCommand),
     ReloadExtensions(Box<ReloadExtensionsFn>),
 }
 
@@ -160,6 +282,32 @@ impl BackendCommand {
             shortcut_text,
             focus_state,
             execution: StoredExecution::Deferred(execution),
+            metadata,
+            original_order,
+        }
+    }
+
+    fn runtime_action(
+        id: CommandId,
+        label: String,
+        shortcut_text: String,
+        focus_state: FocusState,
+        execution: ActionExecution,
+        metadata: ActionMetadata,
+        original_order: usize,
+        context: RuntimeActionContext,
+        executor: SharedCommandExecutor,
+    ) -> Self {
+        Self {
+            id,
+            label,
+            shortcut_text,
+            focus_state,
+            execution: StoredExecution::RuntimeAction(RuntimeActionCommand {
+                execution,
+                context,
+                executor,
+            }),
             metadata,
             original_order,
         }
@@ -185,8 +333,21 @@ impl BackendCommand {
         }
     }
 
-    fn from_unit_action(action: UnitAction, original_order: usize) -> Self {
-        Self::deferred(
+    fn from_unit_action(
+        action: UnitAction,
+        original_order: usize,
+        plugin_registry: Arc<PluginRegistry>,
+        active_hwnd_val: Option<isize>,
+        active_interaction: InteractionContext,
+        executor: SharedCommandExecutor,
+    ) -> Self {
+        let target_hwnd_val = action
+            .target_window
+            .and_then(get_hwnd_from_raw)
+            .map(|hwnd| hwnd.0 as isize);
+        let shortcut_focus_target = target_hwnd_val.or(active_hwnd_val);
+
+        Self::runtime_action(
             CommandId::new(format!("action-{original_order}")),
             format!("{}: {}", action.app_name, action.action_name),
             action.shortcut_text,
@@ -194,6 +355,13 @@ impl BackendCommand {
             action.execution,
             action.metadata,
             original_order,
+            RuntimeActionContext {
+                shortcut_focus_target,
+                active_hwnd_val,
+                active_interaction,
+                plugin_registry,
+            },
+            executor,
         )
     }
 
@@ -263,9 +431,7 @@ impl CommandSession {
     pub fn search(&self, query: &str) -> PaletteSnapshotDto {
         let commands = filter_commands(&self.commands, query)
             .into_iter()
-            .map(|row| {
-                self.commands[row.command_index].to_dto(row.label_matches, row.score)
-            })
+            .map(|row| self.commands[row.command_index].to_dto(row.label_matches, row.score))
             .collect();
 
         PaletteSnapshotDto {
@@ -292,6 +458,15 @@ impl CommandSession {
                 Ok(message) => CommandExecutionResultDto::succeeded(message),
                 Err(err) => CommandExecutionResultDto::failed(err),
             },
+            StoredExecution::RuntimeAction(action) => match action.execute() {
+                Ok(()) => {
+                    CommandExecutionResultDto::succeeded(format!("Executed {}", command.label))
+                }
+                Err(err) => CommandExecutionResultDto::failed(format!(
+                    "Failed to execute {}: {err}",
+                    command.label
+                )),
+            },
             StoredExecution::Deferred(execution) => {
                 let execution_kind = match execution {
                     ActionExecution::Shortcut(_) => "shortcut",
@@ -310,6 +485,7 @@ impl CommandSession {
 
 pub struct PaletteBackend {
     runtime_state: OmniRuntimeState,
+    command_executor: SharedCommandExecutor,
     session: RwLock<CommandSession>,
 }
 
@@ -321,8 +497,16 @@ impl PaletteBackend {
     }
 
     pub fn from_runtime_state(runtime_state: OmniRuntimeState) -> Self {
+        Self::with_command_executor(runtime_state, Arc::new(WindowsCommandExecutor))
+    }
+
+    fn with_command_executor(
+        runtime_state: OmniRuntimeState,
+        command_executor: SharedCommandExecutor,
+    ) -> Self {
         Self {
             runtime_state,
+            command_executor,
             session: RwLock::new(CommandSession::from_commands(Vec::new())),
         }
     }
@@ -358,27 +542,39 @@ impl PaletteBackend {
     pub fn execute_command(&self, command_id: &CommandId) -> CommandExecutionResultDto {
         match self.session.read() {
             Ok(session) => session.execute(command_id),
-            Err(err) => CommandExecutionResultDto::failed(format!(
-                "Command session lock poisoned: {err}"
-            )),
+            Err(err) => {
+                CommandExecutionResultDto::failed(format!("Command session lock poisoned: {err}"))
+            }
         }
     }
 
     fn build_current_session(&self) -> Result<CommandSession, String> {
         let context = get_all_context();
+        let active_hwnd_val = context
+            .get_active()
+            .and_then(|handle| get_hwnd_from_raw(*handle))
+            .map(|hwnd| hwnd.0 as isize);
+        let active_interaction = context.active_interaction.clone();
         let registry = self.runtime_state.registry();
         let registry = registry
             .read()
             .map_err(|err| format!("Extension registry lock poisoned: {err}"))?;
+        let plugin_registry = registry.plugin_registry();
+        let command_executor = Arc::clone(&self.command_executor);
         let mut commands = vec![self.reload_extensions_command(0)];
 
-        commands.extend(
-            registry
-                .get_actions(&context)
-                .into_iter()
-                .enumerate()
-                .map(|(index, action)| BackendCommand::from_unit_action(action, index + 1)),
-        );
+        commands.extend(registry.get_actions(&context).into_iter().enumerate().map(
+            |(index, action)| {
+                BackendCommand::from_unit_action(
+                    action,
+                    index + 1,
+                    Arc::clone(&plugin_registry),
+                    active_hwnd_val,
+                    active_interaction.clone(),
+                    Arc::clone(&command_executor),
+                )
+            },
+        ));
 
         Ok(CommandSession::from_commands(commands))
     }
@@ -389,11 +585,7 @@ impl PaletteBackend {
         BackendCommand::reload_extensions(
             CommandId::new("reload-extensions"),
             original_order,
-            Box::new(move || {
-                runtime_state
-                    .reload_extensions()
-                    .map(reload_report_message)
-            }),
+            Box::new(move || runtime_state.reload_extensions().map(reload_report_message)),
         )
     }
 }
@@ -434,17 +626,21 @@ fn new_session_id() -> PaletteSessionId {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     };
-    use std::path::{Path, PathBuf};
 
     use crate::{
         config::runtime::RuntimePaths,
+        core::plugins::PluginRegistry,
         core::search::MatchRange,
         domain::{
-            action::{ActionExecution, ActionMetadata, CommandPriority, FocusState},
+            action::{
+                ActionExecution, ActionMetadata, CommandPriority, FocusState, InteractionContext,
+                KeySequenceStep, SequenceKey,
+            },
             hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
         },
         runtime_state::{OmniRuntimeState, RuntimeStateLoadOptions},
@@ -488,6 +684,30 @@ mod tests {
             shortcut_execution(),
             metadata(priority, favorite, tags),
             original_order,
+        )
+    }
+
+    fn runtime_action_command(
+        id: &str,
+        label: &str,
+        execution: ActionExecution,
+        executor: Arc<dyn CommandExecutor>,
+    ) -> BackendCommand {
+        BackendCommand::runtime_action(
+            CommandId::new(id),
+            label.to_string(),
+            "Ctrl+T".to_string(),
+            FocusState::Focused,
+            execution,
+            metadata(CommandPriority::Medium, false, &["runtime"]),
+            0,
+            RuntimeActionContext {
+                shortcut_focus_target: Some(44),
+                active_hwnd_val: Some(55),
+                active_interaction: InteractionContext::from_tags(["selection.url".to_string()]),
+                plugin_registry: Arc::new(PluginRegistry::default()),
+            },
+            executor,
         )
     }
 
@@ -550,7 +770,10 @@ mod tests {
             .iter()
             .map(|command| command.label.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(labels, vec!["Chrome: Close tab", "Windows: Open File Explorer"]);
+        assert_eq!(
+            labels,
+            vec!["Chrome: Close tab", "Windows: Open File Explorer"]
+        );
     }
 
     #[test]
@@ -603,7 +826,134 @@ mod tests {
         assert!(called.load(Ordering::Relaxed));
         assert_eq!(
             result,
-            CommandExecutionResultDto::succeeded("Reloaded extensions: 1 applications, 0 ignored processes")
+            CommandExecutionResultDto::succeeded(
+                "Reloaded extensions: 1 applications, 0 ignored processes"
+            )
+        );
+    }
+
+    #[test]
+    fn shortcut_command_dispatches_through_executor() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(RecordingCommandExecutor::new(Arc::clone(&calls), Ok(())));
+        let shortcut = KeyboardShortcut {
+            modifier: HotkeyModifiers {
+                control: true,
+                ..Default::default()
+            },
+            key: Key::KeyT,
+        };
+        let session = CommandSession::from_commands(vec![runtime_action_command(
+            "chrome-new-tab",
+            "Chrome: New tab",
+            ActionExecution::Shortcut(shortcut),
+            executor,
+        )]);
+
+        let result = session.execute(&CommandId::new("chrome-new-tab"));
+
+        assert_eq!(
+            result,
+            CommandExecutionResultDto::succeeded("Executed Chrome: New tab")
+        );
+        assert_eq!(
+            recorded_calls(&calls),
+            vec![RecordedExecution::Shortcut {
+                shortcut,
+                focus_target: Some(44),
+            }]
+        );
+    }
+
+    #[test]
+    fn shortcut_sequence_command_dispatches_through_executor() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(RecordingCommandExecutor::new(Arc::clone(&calls), Ok(())));
+        let sequence = vec![KeySequenceStep {
+            modifier: HotkeyModifiers {
+                control: true,
+                shift: true,
+                ..Default::default()
+            },
+            key: SequenceKey::Key(Key::KeyK),
+        }];
+        let session = CommandSession::from_commands(vec![runtime_action_command(
+            "vscode-command-palette",
+            "VS Code: Command Palette",
+            ActionExecution::ShortcutSequence(sequence.clone()),
+            executor,
+        )]);
+
+        let result = session.execute(&CommandId::new("vscode-command-palette"));
+
+        assert_eq!(
+            result,
+            CommandExecutionResultDto::succeeded("Executed VS Code: Command Palette")
+        );
+        assert_eq!(
+            recorded_calls(&calls),
+            vec![RecordedExecution::ShortcutSequence {
+                sequence,
+                focus_target: Some(44),
+            }]
+        );
+    }
+
+    #[test]
+    fn plugin_command_dispatches_with_active_interaction_context() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(RecordingCommandExecutor::new(Arc::clone(&calls), Ok(())));
+        let session = CommandSession::from_commands(vec![runtime_action_command(
+            "plugin-command",
+            "Context Reader: Read URL",
+            ActionExecution::PluginCommand {
+                plugin_id: "context_reader".to_string(),
+                command_id: "read_url".to_string(),
+            },
+            executor,
+        )]);
+
+        let result = session.execute(&CommandId::new("plugin-command"));
+
+        assert_eq!(
+            result,
+            CommandExecutionResultDto::succeeded("Executed Context Reader: Read URL")
+        );
+        assert_eq!(
+            recorded_calls(&calls),
+            vec![RecordedExecution::Plugin {
+                plugin_id: "context_reader".to_string(),
+                command_id: "read_url".to_string(),
+                active_hwnd_val: Some(55),
+                active_interaction: InteractionContext::from_tags(["selection.url".to_string()]),
+            }]
+        );
+    }
+
+    #[test]
+    fn plugin_command_failure_returns_controlled_failure() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(RecordingCommandExecutor::new(
+            Arc::clone(&calls),
+            Err("plugin exploded".to_string()),
+        ));
+        let session = CommandSession::from_commands(vec![runtime_action_command(
+            "plugin-command",
+            "Context Reader: Read URL",
+            ActionExecution::PluginCommand {
+                plugin_id: "context_reader".to_string(),
+                command_id: "read_url".to_string(),
+            },
+            executor,
+        )]);
+
+        let result = session.execute(&CommandId::new("plugin-command"));
+
+        assert_eq!(
+            result,
+            CommandExecutionResultDto::failed(
+                "Failed to execute Context Reader: Read URL: plugin exploded"
+            )
         );
     }
 
@@ -647,7 +997,9 @@ mod tests {
             user_extensions_root: None,
             dev_config_path: PathBuf::from("missing-dev-config.toml"),
             runtime_paths: RuntimePaths {
-                config_path: Some(PathBuf::from("C:/Users/example/AppData/Roaming/OmniPalette/config.toml")),
+                config_path: Some(PathBuf::from(
+                    "C:/Users/example/AppData/Roaming/OmniPalette/config.toml",
+                )),
                 local_cache_root: None,
             },
             current_os: Os::Windows,
@@ -659,7 +1011,10 @@ mod tests {
         assert_eq!(bootstrap.backend_status, "ok");
         assert_eq!(bootstrap.runtime_status.application_count, 1);
         assert_eq!(bootstrap.runtime_status.ignored_process_count, 1);
-        assert_eq!(bootstrap.runtime_status.config_path.as_deref(), Some("C:/Users/example/AppData/Roaming/OmniPalette/config.toml"));
+        assert_eq!(
+            bootstrap.runtime_status.config_path.as_deref(),
+            Some("C:/Users/example/AppData/Roaming/OmniPalette/config.toml")
+        );
         assert_eq!(bootstrap.runtime_status.activation_hint, "Ctrl+Shift+P");
         assert!(!bootstrap.commands.is_empty());
     }
@@ -683,8 +1038,11 @@ mod tests {
         });
 
         write_static_extension(&root, "notepad", "Notepad", "notepad.exe");
-        std::fs::write(root.join("ignore.toml"), "windows = [\"Code.exe\", \"notepad.exe\"]")
-            .expect("ignore config should be updated");
+        std::fs::write(
+            root.join("ignore.toml"),
+            "windows = [\"Code.exe\", \"notepad.exe\"]",
+        )
+        .expect("ignore config should be updated");
 
         let report = runtime.reload_extensions().expect("reload should succeed");
 
@@ -725,5 +1083,89 @@ cmd = {{ mods = ["ctrl"], key = "KeyO" }}
         );
         std::fs::write(root.join("static").join(format!("{id}.toml")), content)
             .expect("static extension should be written");
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum RecordedExecution {
+        Shortcut {
+            shortcut: KeyboardShortcut,
+            focus_target: Option<isize>,
+        },
+        ShortcutSequence {
+            sequence: Vec<KeySequenceStep>,
+            focus_target: Option<isize>,
+        },
+        Plugin {
+            plugin_id: String,
+            command_id: String,
+            active_hwnd_val: Option<isize>,
+            active_interaction: InteractionContext,
+        },
+    }
+
+    struct RecordingCommandExecutor {
+        calls: Arc<Mutex<Vec<RecordedExecution>>>,
+        result: Result<(), String>,
+    }
+
+    impl RecordingCommandExecutor {
+        fn new(calls: Arc<Mutex<Vec<RecordedExecution>>>, result: Result<(), String>) -> Self {
+            Self { calls, result }
+        }
+    }
+
+    impl CommandExecutor for RecordingCommandExecutor {
+        fn execute_shortcut(
+            &self,
+            shortcut: KeyboardShortcut,
+            focus_target: Option<isize>,
+        ) -> Result<(), String> {
+            self.calls
+                .lock()
+                .expect("calls should lock")
+                .push(RecordedExecution::Shortcut {
+                    shortcut,
+                    focus_target,
+                });
+            self.result.clone()
+        }
+
+        fn execute_shortcut_sequence(
+            &self,
+            sequence: &[KeySequenceStep],
+            focus_target: Option<isize>,
+        ) -> Result<(), String> {
+            self.calls.lock().expect("calls should lock").push(
+                RecordedExecution::ShortcutSequence {
+                    sequence: sequence.to_vec(),
+                    focus_target,
+                },
+            );
+            self.result.clone()
+        }
+
+        fn execute_plugin_command(
+            &self,
+            _plugin_registry: Arc<PluginRegistry>,
+            plugin_id: &str,
+            command_id: &str,
+            active_hwnd_val: Option<isize>,
+            active_interaction: InteractionContext,
+        ) -> Result<(), String> {
+            self.calls
+                .lock()
+                .expect("calls should lock")
+                .push(RecordedExecution::Plugin {
+                    plugin_id: plugin_id.to_string(),
+                    command_id: command_id.to_string(),
+                    active_hwnd_val,
+                    active_interaction,
+                });
+            self.result.clone()
+        }
+    }
+
+    fn recorded_calls(calls: &Arc<Mutex<Vec<RecordedExecution>>>) -> Vec<RecordedExecution> {
+        calls.lock().expect("calls should lock").clone()
     }
 }

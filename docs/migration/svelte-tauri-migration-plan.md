@@ -10,9 +10,10 @@
 
 ## Migration Status
 
-- Current priority: plan Phase 4B real command execution before hotkeys,
-  settings, tray behavior, guide mode, or egui removal.
-- Current phase: Phase 4A - Runtime State Foundation complete.
+- Current priority: plan Phase 4C hotkey listener and ignored-app passthrough
+  before Tauri window lifecycle, palette parity, settings, tray behavior, guide
+  mode, or egui removal.
+- Current phase: Phase 4B - Runtime Command Execution complete.
 - Last updated: 2026-05-13.
 - Update this section whenever the Svelte migration moves to a new phase.
 
@@ -191,6 +192,24 @@ Acceptance criteria:
 - Future migration plans and implementation tasks name Svelte as the frontend.
 - No new React UI migration work is added.
 - egui removal remains deferred until Svelte/Tauri parity is proven.
+
+Subphase boundaries:
+
+- Phase 4A - Runtime State Foundation: load, report, and reload real runtime
+  state from the Tauri backend. Complete.
+- Phase 4B - Runtime Command Execution: execute existing shortcut,
+  shortcut-sequence, plugin, and reload commands from the Svelte/Tauri command
+  rows. Complete.
+- Phase 4C - Hotkey Listener And Ignored-App Passthrough: start the existing
+  Windows hotkey listener from Tauri and preserve ignored foreground app
+  passthrough. Do not add palette UX parity.
+- Phase 4D - Tauri Window Lifecycle: show, hide, focus, and position the Tauri
+  palette from runtime events. Do not add settings UI or egui removal.
+- Phase 5 remains palette behavior parity only: keyboard navigation,
+  close/focus behavior, highlighted matches, guide-mode usability, and refined
+  palette positioning.
+- Phase 6 remains settings and extension management only.
+- Phase 8 remains final cutover and egui removal only.
 
 ## Non-Goals For The Svelte Swap
 

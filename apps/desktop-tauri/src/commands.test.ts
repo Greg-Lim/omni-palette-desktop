@@ -92,6 +92,19 @@ describe("palette api", () => {
     ]);
     expect(result.status).toBe("deferred");
   });
+
+  it("preserves a successful backend execution result", async () => {
+    const api = createPaletteApi(async <T>() => {
+      return { status: "succeeded", message: "Executed Chrome: New tab" } as T;
+    });
+
+    const result = await api.executeCommand("chrome-new-tab");
+
+    expect(result).toEqual({
+      status: "succeeded",
+      message: "Executed Chrome: New tab",
+    });
+  });
 });
 
 describe("formatRuntimeStatus", () => {

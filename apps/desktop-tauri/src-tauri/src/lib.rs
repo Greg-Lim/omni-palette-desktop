@@ -26,7 +26,7 @@ pub struct HealthCheckPayload {
 fn health_check() -> HealthCheckPayload {
     HealthCheckPayload {
         app_name: "Omni Palette",
-        phase: "Phase 4A - Runtime State Foundation",
+        phase: "Phase 4B - Runtime Command Execution",
         status: "ok",
     }
 }
@@ -42,10 +42,7 @@ fn search_commands(query: String, state: State<'_, AppState>) -> PaletteSnapshot
 }
 
 #[tauri::command]
-fn execute_command(
-    command_id: String,
-    state: State<'_, AppState>,
-) -> CommandExecutionResultDto {
+fn execute_command(command_id: String, state: State<'_, AppState>) -> CommandExecutionResultDto {
     state.backend.execute_command(&CommandId::new(command_id))
 }
 
@@ -82,11 +79,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_check_reports_phase_four_runtime_state() {
+    fn health_check_reports_phase_four_runtime_command_execution() {
         let payload = health_check();
 
         assert_eq!(payload.app_name, "Omni Palette");
-        assert_eq!(payload.phase, "Phase 4A - Runtime State Foundation");
+        assert_eq!(payload.phase, "Phase 4B - Runtime Command Execution");
         assert_eq!(payload.status, "ok");
     }
 
