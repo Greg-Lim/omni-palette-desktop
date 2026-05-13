@@ -1,7 +1,10 @@
 # Tauri Migration Plan
 
-> Canonical migration memory: before doing any Omni Palette Tauri migration work,
-> read this document first and align the task with the phases below.
+> Paused by the Svelte-first migration. This React-based plan is no longer the
+> active Tauri migration authority. Before doing any Omni Palette Tauri migration
+> work, read `docs/migration/svelte-tauri-migration-plan.md` first and follow it.
+> Do not continue React-specific Tauri migration phases unless the Svelte plan
+> explicitly says to resume them.
 
 ## Migration Status
 

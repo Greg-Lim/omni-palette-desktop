@@ -106,7 +106,7 @@ cargo run -p xtask -- detect-changed --force-all
 cargo run -p xtask -- package-extension --package-root extensions/registry/packages/chrome/windows
 ```
 
-Phase 2 Tauri migration tooling:
+Svelte-first Tauri migration tooling:
 
 ```sh
 cd apps/desktop-tauri
@@ -117,8 +117,11 @@ bun run test
 bun run tauri dev
 ```
 
-Use Bun for the React, TypeScript, Tailwind, and Tauri frontend workspace unless
-a later migration note explicitly changes package managers.
+`docs/migration/svelte-tauri-migration-plan.md` is the active Tauri migration
+authority and supersedes the older React-based plan. Prioritize that plan before
+any other egui-to-Tauri migration work. Use Bun for the Svelte, TypeScript,
+Tailwind, and Tauri frontend workspace unless a later Svelte migration note
+explicitly changes package managers.
 
 ## Important Notes
 
