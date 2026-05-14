@@ -15,7 +15,7 @@ describe("Svelte frontend entrypoint", () => {
     expect(existsSync(join(srcDir, "main.tsx"))).toBe(false);
   });
 
-  it("mounts App.svelte from the entrypoint", () => {
+  it("mounts the palette or guide Svelte app from the entrypoint", () => {
     const mainPath = join(srcDir, "main.ts");
 
     expect(existsSync(mainPath)).toBe(true);
@@ -27,6 +27,8 @@ describe("Svelte frontend entrypoint", () => {
     const mainSource = readFileSync(mainPath, "utf8");
     expect(mainSource).toContain('from "svelte"');
     expect(mainSource).toContain('from "./App.svelte"');
-    expect(mainSource).toContain("mount(App,");
+    expect(mainSource).toContain('from "./Guide.svelte"');
+    expect(mainSource).toContain("getCurrentWindow().label");
+    expect(mainSource).toContain("mount(Component,");
   });
 });

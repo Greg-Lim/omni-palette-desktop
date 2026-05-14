@@ -6,6 +6,8 @@
   import type {
     CommandExecutionResult,
     CommandRow,
+    GuideEventPayload,
+    GuideStatus,
     HotkeyEventPayload,
     HotkeyStatus,
     RuntimeStatus,
@@ -13,18 +15,22 @@
     WindowLifecycleStatus,
   } from "./commands";
   import {
+    GUIDE_EVENT_NAME,
     HOTKEY_EVENT_NAME,
     WINDOW_LIFECYCLE_EVENT_NAME,
     commandExecutionShouldHidePalette,
+    formatGuideStatus,
     formatHotkeyStatus,
     formatRuntimeStatus,
     formatWindowLifecycleStatus,
     highlightedLabelSegments,
     nextKeyboardSelectedCommandId,
+    nextGuideStatus,
     nextSelectedCommandId,
     nextWindowLifecycleStatus,
     paletteKeyAction,
     paletteApi,
+    shouldStartGuideForCommand,
     shouldHidePaletteForWindowBlur,
     shouldRefreshCommandsForWindowLifecycleEvent,
   } from "./commands";
@@ -44,6 +50,7 @@
   let runtimeStatus: RuntimeStatus | null = null;
   let hotkeyStatus: HotkeyStatus | null = null;
   let windowLifecycleStatus: WindowLifecycleStatus | null = null;
+  let guideStatus: GuideStatus | null = null;
   let commandError: string | null = null;
   let loadingCommands = true;
   let executionResult: CommandExecutionResult | null = null;
@@ -93,6 +100,15 @@
         healthError = errorMessage(error);
       });
 
+    paletteApi
+      .getGuideStatus()
+      .then((status) => {
+        guideStatus = status;
+      })
+      .catch((error: unknown) => {
+        healthError = errorMessage(error);
+      });
+
     let unlistenHotkeyEvents: (() => void) | null = null;
     listen<HotkeyEventPayload>(HOTKEY_EVENT_NAME, (event) => {
       hotkeyStatus = nextHotkeyStatus(hotkeyStatus, event.payload);
@@ -123,11 +139,23 @@
         healthError = errorMessage(error);
       });
 
+    let unlistenGuideEvents: (() => void) | null = null;
+    listen<GuideEventPayload>(GUIDE_EVENT_NAME, (event) => {
+      guideStatus = nextGuideStatus(guideStatus, event.payload);
+    })
+      .then((unlisten) => {
+        unlistenGuideEvents = unlisten;
+      })
+      .catch((error: unknown) => {
+        healthError = errorMessage(error);
+      });
+
     window.addEventListener("blur", handleWindowBlur);
 
     return () => {
       unlistenHotkeyEvents?.();
       unlistenWindowLifecycleEvents?.();
+      unlistenGuideEvents?.();
       window.removeEventListener("blur", handleWindowBlur);
     };
   });
@@ -169,6 +197,23 @@
     }
 
     selectedId = commandId;
+    const command = rows.find((row) => row.id === commandId);
+    if (shouldStartGuideForCommand(runtimeStatus, command)) {
+      executionResult = null;
+      paletteApi
+        .startGuide(commandId)
+        .then((status) => {
+          guideStatus = status;
+        })
+        .catch((error: unknown) => {
+          executionResult = {
+            status: "failed",
+            message: errorMessage(error),
+          };
+        });
+      return;
+    }
+
     paletteApi
       .executeCommand(commandId)
       .then((result) => {
@@ -261,7 +306,7 @@
     <header class="mb-4 flex items-center justify-between gap-4">
       <div>
         <h1 class="text-xl font-semibold">Omni Palette</h1>
-        <p class="text-sm text-zinc-400">Phase 5A core palette UX parity</p>
+        <p class="text-sm text-zinc-400">Phase 5B guide mode and refined palette positioning</p>
       </div>
       <div class="flex rounded-md border border-zinc-700 p-1 text-sm">
         <button
@@ -292,6 +337,9 @@
         {/if}
         {#if windowLifecycleStatus}
           <span class="ml-2 text-zinc-400">- {formatWindowLifecycleStatus(windowLifecycleStatus)}</span>
+        {/if}
+        {#if guideStatus}
+          <span class="ml-2 text-zinc-400">- {formatGuideStatus(guideStatus)}</span>
         {/if}
       {:else}
         <span>Backend: {healthError ? `unavailable (${healthError})` : "checking..."}</span>

@@ -9,13 +9,17 @@ import {
   createPaletteApi,
   commandExecutionShouldHidePalette,
   formatHotkeyStatus,
+  formatGuideStatus,
   formatRuntimeStatus,
   formatWindowLifecycleStatus,
+  guideShortcutParts,
   highlightedLabelSegments,
   nextKeyboardSelectedCommandId,
+  nextGuideStatus,
   nextWindowLifecycleStatus,
   paletteKeyAction,
   nextSelectedCommandId,
+  shouldStartGuideForCommand,
   shouldHidePaletteForWindowBlur,
   shouldRefreshCommandsForWindowLifecycleEvent,
 } from "./commands";
@@ -32,6 +36,7 @@ const rows: CommandRow[] = [
     original_order: 0,
     score: 0,
     label_matches: [],
+    guide_hint: null,
   },
   {
     id: "chrome-new-tab",
@@ -44,6 +49,10 @@ const rows: CommandRow[] = [
     original_order: 1,
     score: 12,
     label_matches: [{ start: 8, end: 11 }],
+    guide_hint: {
+      shortcut_text: "Ctrl+T",
+      captures_shortcut: true,
+    },
   },
 ];
 
@@ -188,6 +197,35 @@ describe("palette api", () => {
 
     expect(calls).toEqual([{ command: "hide_palette_window", args: undefined }]);
     expect(status).toEqual(windowStatus);
+  });
+
+  it("calls the backend guide commands and preserves payloads", async () => {
+    const guideStatus = {
+      active: true,
+      command_label: "Chrome: New tab",
+      shortcut_text: "Ctrl+T",
+      activation_hint: "Ctrl+Shift+P",
+      start_count: 1,
+      complete_count: 0,
+      cancel_count: 0,
+      expire_count: 0,
+      last_action: "started" as const,
+      last_error: null,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return guideStatus as T;
+    });
+
+    expect(await api.startGuide("chrome-new-tab")).toEqual(guideStatus);
+    expect(await api.cancelGuide()).toEqual(guideStatus);
+    expect(await api.getGuideStatus()).toEqual(guideStatus);
+    expect(calls).toEqual([
+      { command: "start_guide", args: { commandId: "chrome-new-tab" } },
+      { command: "cancel_guide", args: undefined },
+      { command: "get_guide_status", args: undefined },
+    ]);
   });
 });
 
@@ -349,6 +387,53 @@ describe("window lifecycle status", () => {
   });
 });
 
+describe("guide status", () => {
+  it("summarizes active guide state", () => {
+    expect(
+      formatGuideStatus({
+        active: true,
+        command_label: "Chrome: New tab",
+        shortcut_text: "Ctrl+T",
+        activation_hint: "Ctrl+Shift+P",
+        start_count: 1,
+        complete_count: 0,
+        cancel_count: 0,
+        expire_count: 0,
+        last_action: "started",
+        last_error: null,
+      }),
+    ).toBe("guide active - Chrome: New tab - Ctrl+T");
+  });
+
+  it("applies guide events without requesting palette command refresh", () => {
+    const status = nextGuideStatus(null, {
+      action: "cancelled",
+      active: false,
+      command_label: null,
+      shortcut_text: null,
+      activation_hint: "Ctrl+Shift+P",
+      start_count: 1,
+      complete_count: 0,
+      cancel_count: 1,
+      expire_count: 0,
+      message: null,
+    });
+
+    expect(status).toEqual({
+      active: false,
+      command_label: null,
+      shortcut_text: null,
+      activation_hint: "Ctrl+Shift+P",
+      start_count: 1,
+      complete_count: 0,
+      cancel_count: 1,
+      expire_count: 0,
+      last_action: "cancelled",
+      last_error: null,
+    });
+  });
+});
+
 describe("nextSelectedCommandId", () => {
   it("keeps the current selection when it remains visible", () => {
     expect(nextSelectedCommandId("chrome-new-tab", rows)).toBe("chrome-new-tab");
@@ -399,6 +484,27 @@ describe("commandExecutionShouldHidePalette", () => {
     expect(commandExecutionShouldHidePalette(succeeded)).toBe(true);
     expect(commandExecutionShouldHidePalette(failed)).toBe(false);
     expect(commandExecutionShouldHidePalette(deferred)).toBe(false);
+  });
+});
+
+describe("guide command activation", () => {
+  it("starts guide only when runtime behavior is guide and the command is guideable", () => {
+    const runtimeStatus: RuntimeStatus = {
+      config_path: null,
+      config_error: null,
+      activation_hint: "Ctrl+Shift+P",
+      command_behavior: "guide",
+      application_count: 1,
+      ignored_process_count: 0,
+      plugin_count: 0,
+      plugin_application_count: 0,
+    };
+
+    expect(shouldStartGuideForCommand(runtimeStatus, rows[1])).toBe(true);
+    expect(shouldStartGuideForCommand(runtimeStatus, rows[0])).toBe(false);
+    expect(
+      shouldStartGuideForCommand({ ...runtimeStatus, command_behavior: "execute" }, rows[1]),
+    ).toBe(false);
   });
 });
 
@@ -467,5 +573,12 @@ describe("highlightedLabelSegments", () => {
       { text: "hro", highlighted: true },
       { text: "me", highlighted: false },
     ]);
+  });
+});
+
+describe("guideShortcutParts", () => {
+  it("parses single chord and sequence shortcuts into keycaps", () => {
+    expect(guideShortcutParts("Ctrl+T")).toEqual([["Ctrl", "T"]]);
+    expect(guideShortcutParts("Alt+J, I")).toEqual([["Alt", "J"], ["I"]]);
   });
 });

@@ -19,6 +19,18 @@
         "resizable": true,
         "decorations": true,
         "visible": false
+      },
+      {
+        "title": "Omni Palette Guide",
+        "label": "guide",
+        "width": 560,
+        "height": 218,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {

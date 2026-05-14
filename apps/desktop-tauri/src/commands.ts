@@ -5,6 +5,7 @@ export type CommandPriority = "suppressed" | "low" | "medium" | "high";
 export type CommandBehavior = "execute" | "guide";
 export const HOTKEY_EVENT_NAME = "omni://palette-activation-requested";
 export const WINDOW_LIFECYCLE_EVENT_NAME = "omni://palette-window-lifecycle";
+export const GUIDE_EVENT_NAME = "omni://palette-guide";
 
 export type MatchRange = {
   start: number;
@@ -15,6 +16,7 @@ export type CommandRow = {
   id: string;
   label: string;
   shortcut_text: string;
+  guide_hint: GuideHint | null;
   focus_state: CommandFocusState;
   priority: CommandPriority;
   favorite: boolean;
@@ -22,6 +24,11 @@ export type CommandRow = {
   original_order: number;
   score: number;
   label_matches: MatchRange[];
+};
+
+export type GuideHint = {
+  shortcut_text: string;
+  captures_shortcut: boolean;
 };
 
 export type HighlightedLabelSegment = {
@@ -105,6 +112,34 @@ export type WindowLifecycleStatus = {
   last_error: string | null;
 };
 
+export type GuideAction = "started" | "completed" | "cancelled" | "expired" | "error";
+
+export type GuideStatus = {
+  active: boolean;
+  command_label: string | null;
+  shortcut_text: string | null;
+  activation_hint: string;
+  start_count: number;
+  complete_count: number;
+  cancel_count: number;
+  expire_count: number;
+  last_action: GuideAction | null;
+  last_error: string | null;
+};
+
+export type GuideEventPayload = {
+  action: GuideAction;
+  active: boolean;
+  command_label: string | null;
+  shortcut_text: string | null;
+  activation_hint: string;
+  start_count: number;
+  complete_count: number;
+  cancel_count: number;
+  expire_count: number;
+  message: string | null;
+};
+
 export type PaletteKeyAction = "select_next" | "select_previous" | "execute" | "hide";
 
 export type PaletteInvoke = <T>(
@@ -123,6 +158,10 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
     getWindowLifecycleStatus: () =>
       invokeCommand<WindowLifecycleStatus>("get_window_lifecycle_status"),
     hidePaletteWindow: () => invokeCommand<WindowLifecycleStatus>("hide_palette_window"),
+    startGuide: (commandId: string) =>
+      invokeCommand<GuideStatus>("start_guide", { commandId }),
+    cancelGuide: () => invokeCommand<GuideStatus>("cancel_guide"),
+    getGuideStatus: () => invokeCommand<GuideStatus>("get_guide_status"),
   };
 }
 
@@ -156,6 +195,13 @@ export function nextKeyboardSelectedCommandId(
 
 export function commandExecutionShouldHidePalette(result: CommandExecutionResult): boolean {
   return result.status === "succeeded";
+}
+
+export function shouldStartGuideForCommand(
+  runtimeStatus: RuntimeStatus | null,
+  command: CommandRow | undefined,
+): boolean {
+  return runtimeStatus?.command_behavior === "guide" && command?.guide_hint != null;
 }
 
 export function paletteKeyAction(key: string): PaletteKeyAction | null {
@@ -281,6 +327,27 @@ export function formatWindowLifecycleStatus(status: WindowLifecycleStatus): stri
   ].join(" - ");
 }
 
+export function formatGuideStatus(status: GuideStatus): string {
+  if (status.last_error) {
+    return `guide error - ${status.last_error}`;
+  }
+
+  if (status.active) {
+    return [
+      "guide active",
+      status.command_label ?? "command",
+      status.shortcut_text ?? status.activation_hint,
+    ].join(" - ");
+  }
+
+  return [
+    "guide idle",
+    status.last_action ?? "idle",
+    `${status.start_count} started`,
+    `${status.complete_count} completed`,
+  ].join(" - ");
+}
+
 export function nextWindowLifecycleStatus(
   _current: WindowLifecycleStatus | null,
   event: WindowLifecycleEventPayload,
@@ -296,8 +363,38 @@ export function nextWindowLifecycleStatus(
   };
 }
 
+export function nextGuideStatus(
+  _current: GuideStatus | null,
+  event: GuideEventPayload,
+): GuideStatus {
+  return {
+    active: event.active,
+    command_label: event.command_label,
+    shortcut_text: event.shortcut_text,
+    activation_hint: event.activation_hint,
+    start_count: event.start_count,
+    complete_count: event.complete_count,
+    cancel_count: event.cancel_count,
+    expire_count: event.expire_count,
+    last_action: event.action,
+    last_error: event.action === "error" ? event.message : null,
+  };
+}
+
 export function shouldRefreshCommandsForWindowLifecycleEvent(
   event: WindowLifecycleEventPayload,
 ): boolean {
   return event.action === "shown";
+}
+
+export function guideShortcutParts(shortcutText: string): string[][] {
+  return shortcutText
+    .split(",")
+    .map((chord) =>
+      chord
+        .split("+")
+        .map((part) => part.trim())
+        .filter(Boolean),
+    )
+    .filter((chord) => chord.length > 0);
 }

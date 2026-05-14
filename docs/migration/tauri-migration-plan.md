@@ -9,10 +9,12 @@
 
 ## Migration Status
 
-- Current phase: Phase 5B - Guide Mode Usability And Refined Palette
-  Positioning is next.
+- Current phase: Phase 5B - Guide Mode And Refined Palette Positioning is
+  implemented and being verified.
+- Next phase after Phase 5B verification: Phase 6 - Settings And Extension
+  Management.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
-  Phase 4D, and Phase 5A.
+  Phase 4D, Phase 5A, and Phase 5B.
 - Last updated: 2026-05-14.
 - Update this section whenever the migration moves to a new phase.
 
@@ -36,6 +38,9 @@ egui app stays runnable until the Tauri version reaches functional parity.
   - `get_hotkey_status`
   - `get_window_lifecycle_status`
   - `hide_palette_window`
+  - `start_guide`
+  - `cancel_guide`
+  - `get_guide_status`
 - The existing egui app remains the production UI until final Tauri cutover.
 
 ## Direction
@@ -57,12 +62,14 @@ egui app stays runnable until the Tauri version reaches functional parity.
 - `apps/desktop-tauri/src/App.svelte`
   - Main Svelte palette shell, status strip, placeholder settings view, command
     rows, keyboard navigation, execution, and lifecycle event handling.
+- `apps/desktop-tauri/src/Guide.svelte`
+  - Compact guide-mode window rendered only for the Tauri `guide` window.
 - `apps/desktop-tauri/src/commands.ts`
   - TypeScript API boundary for Tauri invokes, DTO mirrors, formatting helpers,
-    selection helpers, and label highlight helpers.
+    selection helpers, label highlight helpers, and guide helpers.
 - `apps/desktop-tauri/src-tauri/**`
   - Tauri Rust crate, invoke registration, hotkey bridge, window lifecycle, and
-    frontend-facing backend state.
+    frontend-facing backend state, including the guide lifecycle.
 
 ### Shared Rust Backend
 
@@ -171,33 +178,28 @@ Status: complete.
 - Kept settings, tray work, guide mode, extension management, and egui removal
   out of scope.
 
-## Remaining Phases
-
 ### Phase 5B: Guide Mode Usability And Refined Palette Positioning
 
-Status: next.
+Status: complete.
 
-Purpose:
+Completed:
 
-- Bring the remaining palette behavior closer to egui before settings work.
+- Added guide hints to command rows for shortcut and shortcut-sequence commands.
+- Added `start_guide`, `cancel_guide`, and `get_guide_status` invokes plus the
+  `omni://palette-guide` event.
+- Added a hidden-by-default `guide` Tauri window rendered by Svelte.
+- Added guide lifecycle state for start, complete, cancel, captured-shortcut
+  passthrough, and expiry.
+- Connected guide hotkeys to the existing Windows hotkey listener and
+  passthrough path.
+- Refined main palette positioning and sizing toward the egui palette constants.
 
-Scope:
+Out of scope, still deferred:
 
-- Restore guide-mode usability for shortcut-backed commands in the Tauri path.
-- Refine palette placement and sizing beyond the current basic active-monitor
-  placement.
-- Keep keyboard navigation and command execution behavior from Phase 5A.
+- Settings UI, shortcut recorder UI, extension management, tray behavior, debug
+  overlay, packaging cutover, and egui removal.
 
-Out of scope:
-
-- Settings UI, shortcut recorder UI, extension management, tray behavior,
-  debug overlay, packaging cutover, and egui removal.
-
-Acceptance criteria:
-
-- Shortcut-backed command guide behavior is usable from the Tauri palette.
-- Palette placement feels equivalent enough to continue to settings work.
-- Existing Phase 5A interactions keep passing.
+## Remaining Phases
 
 ### Phase 6: Settings And Extension Management
 

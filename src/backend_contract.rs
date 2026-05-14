@@ -25,7 +25,7 @@ use crate::{
     platform::{
         platform_interface::get_all_context,
         windows::{
-            context::context::{focus_window, get_hwnd_from_raw},
+            context::context::{focus_window, get_hwnd_from_raw, monitor_work_area_from_window},
             sender::hotkey_sender::{send_shortcut, send_shortcut_sequence},
         },
     },
@@ -80,6 +80,7 @@ pub struct CommandDto {
     pub id: CommandId,
     pub label: String,
     pub shortcut_text: String,
+    pub guide_hint: Option<GuideHintDto>,
     pub focus_state: FocusState,
     pub priority: CommandPriority,
     pub favorite: bool,
@@ -87,6 +88,12 @@ pub struct CommandDto {
     pub original_order: usize,
     pub score: i32,
     pub label_matches: Vec<MatchRangeDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuideHintDto {
+    pub shortcut_text: String,
+    pub captures_shortcut: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,13 +221,16 @@ fn focus_window_from_value(hwnd_val: isize) {
     focus_window(HWND(hwnd_val as *mut _));
 }
 
+#[derive(Clone)]
 struct RuntimeActionContext {
     shortcut_focus_target: Option<isize>,
     active_hwnd_val: Option<isize>,
+    active_work_area: Option<(i32, i32, i32, i32)>,
     active_interaction: InteractionContext,
     plugin_registry: Arc<PluginRegistry>,
 }
 
+#[derive(Clone)]
 struct RuntimeActionCommand {
     execution: ActionExecution,
     context: RuntimeActionContext,
@@ -246,6 +256,41 @@ impl RuntimeActionCommand {
                 self.context.active_hwnd_val,
                 self.context.active_interaction.clone(),
             ),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct GuideCommand {
+    pub id: CommandId,
+    pub label: String,
+    pub shortcut_text: String,
+    pub focus_target: Option<isize>,
+    pub work_area: Option<(i32, i32, i32, i32)>,
+    action: RuntimeActionCommand,
+}
+
+impl GuideCommand {
+    pub fn captured_shortcut(&self) -> Option<KeyboardShortcut> {
+        match &self.action.execution {
+            ActionExecution::Shortcut(shortcut) => Some(*shortcut),
+            ActionExecution::ShortcutSequence(_) | ActionExecution::PluginCommand { .. } => None,
+        }
+    }
+
+    pub fn execute(&self) -> CommandExecutionResultDto {
+        match self.action.execute() {
+            Ok(()) => CommandExecutionResultDto::succeeded(format!("Executed {}", self.label)),
+            Err(err) => CommandExecutionResultDto::failed(format!(
+                "Failed to execute {}: {err}",
+                self.label
+            )),
+        }
+    }
+
+    pub fn focus_target_window(&self) {
+        if let Some(target) = self.focus_target {
+            focus_window_from_value(target);
         }
     }
 }
@@ -338,6 +383,7 @@ impl BackendCommand {
         original_order: usize,
         plugin_registry: Arc<PluginRegistry>,
         active_hwnd_val: Option<isize>,
+        active_work_area: Option<(i32, i32, i32, i32)>,
         active_interaction: InteractionContext,
         executor: SharedCommandExecutor,
     ) -> Self {
@@ -358,6 +404,7 @@ impl BackendCommand {
             RuntimeActionContext {
                 shortcut_focus_target,
                 active_hwnd_val,
+                active_work_area,
                 active_interaction,
                 plugin_registry,
             },
@@ -370,6 +417,7 @@ impl BackendCommand {
             id: self.id.clone(),
             label: self.label.clone(),
             shortcut_text: self.shortcut_text.clone(),
+            guide_hint: self.guide_hint(),
             focus_state: self.focus_state,
             priority: self.metadata.priority,
             favorite: self.metadata.favorite,
@@ -377,6 +425,51 @@ impl BackendCommand {
             original_order: self.original_order,
             score,
             label_matches: label_matches.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    fn guide_hint(&self) -> Option<GuideHintDto> {
+        let captures_shortcut = match &self.execution {
+            StoredExecution::Deferred(ActionExecution::Shortcut(_))
+            | StoredExecution::RuntimeAction(RuntimeActionCommand {
+                execution: ActionExecution::Shortcut(_),
+                ..
+            }) => true,
+            StoredExecution::Deferred(ActionExecution::ShortcutSequence(_))
+            | StoredExecution::RuntimeAction(RuntimeActionCommand {
+                execution: ActionExecution::ShortcutSequence(_),
+                ..
+            }) => false,
+            StoredExecution::Deferred(ActionExecution::PluginCommand { .. })
+            | StoredExecution::RuntimeAction(RuntimeActionCommand {
+                execution: ActionExecution::PluginCommand { .. },
+                ..
+            })
+            | StoredExecution::ReloadExtensions(_) => return None,
+        };
+
+        (!self.shortcut_text.is_empty()).then(|| GuideHintDto {
+            shortcut_text: self.shortcut_text.clone(),
+            captures_shortcut,
+        })
+    }
+
+    fn guide_command(&self) -> Option<GuideCommand> {
+        let StoredExecution::RuntimeAction(action) = &self.execution else {
+            return None;
+        };
+        match action.execution {
+            ActionExecution::Shortcut(_) | ActionExecution::ShortcutSequence(_) => {
+                Some(GuideCommand {
+                    id: self.id.clone(),
+                    label: self.label.clone(),
+                    shortcut_text: self.shortcut_text.clone(),
+                    focus_target: action.context.shortcut_focus_target,
+                    work_area: action.context.active_work_area,
+                    action: action.clone(),
+                })
+            }
+            ActionExecution::PluginCommand { .. } => None,
         }
     }
 }
@@ -480,6 +573,23 @@ impl CommandSession {
                 ))
             }
         }
+    }
+
+    pub fn guide_command(&self, command_id: &CommandId) -> Result<GuideCommand, String> {
+        let Some(command) = self
+            .command_index
+            .get(command_id.value())
+            .and_then(|index| self.commands.get(*index))
+        else {
+            return Err(format!(
+                "Unknown or stale command id: {}",
+                command_id.value()
+            ));
+        };
+
+        command
+            .guide_command()
+            .ok_or_else(|| format!("Command is not guideable: {}", command.label))
     }
 }
 
@@ -624,6 +734,13 @@ impl PaletteBackend {
         }
     }
 
+    pub fn guide_command(&self, command_id: &CommandId) -> Result<GuideCommand, String> {
+        match self.session.read() {
+            Ok(session) => session.session.guide_command(command_id),
+            Err(err) => Err(format!("Command session lock poisoned: {err}")),
+        }
+    }
+
     fn build_current_session(&self) -> Result<CommandSession, String> {
         self.build_session_for_context(&get_all_context())
     }
@@ -633,6 +750,10 @@ impl PaletteBackend {
             .get_active()
             .and_then(|handle| get_hwnd_from_raw(*handle))
             .map(|hwnd| hwnd.0 as isize);
+        let active_work_area = context
+            .get_active()
+            .and_then(|handle| get_hwnd_from_raw(*handle))
+            .and_then(monitor_work_area_from_window);
         let active_interaction = context.active_interaction.clone();
         let registry = self.runtime_state.registry();
         let registry = registry
@@ -649,6 +770,7 @@ impl PaletteBackend {
                     index + 1,
                     Arc::clone(&plugin_registry),
                     active_hwnd_val,
+                    active_work_area,
                     active_interaction.clone(),
                     Arc::clone(&command_executor),
                 )
@@ -728,13 +850,17 @@ mod tests {
     use super::*;
 
     fn shortcut_execution() -> ActionExecution {
-        ActionExecution::Shortcut(KeyboardShortcut {
+        ActionExecution::Shortcut(shortcut_execution_shortcut())
+    }
+
+    fn shortcut_execution_shortcut() -> KeyboardShortcut {
+        KeyboardShortcut {
             modifier: HotkeyModifiers {
                 control: true,
                 ..Default::default()
             },
             key: Key::KeyT,
-        })
+        }
     }
 
     fn metadata(priority: CommandPriority, favorite: bool, tags: &[&str]) -> ActionMetadata {
@@ -783,6 +909,7 @@ mod tests {
             RuntimeActionContext {
                 shortcut_focus_target: Some(44),
                 active_hwnd_val: Some(55),
+                active_work_area: Some((10, 20, 810, 620)),
                 active_interaction: InteractionContext::from_tags(["selection.url".to_string()]),
                 plugin_registry: Arc::new(PluginRegistry::default()),
             },
@@ -815,6 +942,105 @@ mod tests {
         assert_eq!(dto.original_order, 7);
         assert_eq!(dto.score, 42);
         assert_eq!(dto.label_matches, vec![MatchRangeDto { start: 8, end: 11 }]);
+        assert_eq!(
+            dto.guide_hint,
+            Some(GuideHintDto {
+                shortcut_text: "Ctrl+T".to_string(),
+                captures_shortcut: true,
+            })
+        );
+    }
+
+    #[test]
+    fn shortcut_sequence_commands_include_non_capturing_guide_hints() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(RecordingCommandExecutor::new(Arc::clone(&calls), Ok(())));
+        let sequence = vec![KeySequenceStep {
+            modifier: HotkeyModifiers {
+                alt: true,
+                ..Default::default()
+            },
+            key: SequenceKey::Key(Key::KeyJ),
+        }];
+        let command = runtime_action_command(
+            "vscode-open-recent",
+            "VS Code: Open recent",
+            ActionExecution::ShortcutSequence(sequence),
+            executor,
+        );
+
+        let dto = command.to_dto(Vec::new(), 0);
+
+        assert_eq!(
+            dto.guide_hint,
+            Some(GuideHintDto {
+                shortcut_text: "Ctrl+T".to_string(),
+                captures_shortcut: false,
+            })
+        );
+    }
+
+    #[test]
+    fn plugin_and_reload_commands_do_not_include_guide_hints() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(RecordingCommandExecutor::new(Arc::clone(&calls), Ok(())));
+        let plugin = runtime_action_command(
+            "plugin-command",
+            "Context Reader: Read URL",
+            ActionExecution::PluginCommand {
+                plugin_id: "context_reader".to_string(),
+                command_id: "read_url".to_string(),
+            },
+            executor,
+        );
+        let reload = BackendCommand::reload_extensions(
+            CommandId::new("reload"),
+            0,
+            Box::new(|| Ok("reloaded".to_string())),
+        );
+
+        assert_eq!(plugin.to_dto(Vec::new(), 0).guide_hint, None);
+        assert_eq!(reload.to_dto(Vec::new(), 0).guide_hint, None);
+    }
+
+    #[test]
+    fn starting_guide_from_session_preserves_runtime_action_context() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let executor = Arc::new(RecordingCommandExecutor::new(Arc::clone(&calls), Ok(())));
+        let session = CommandSession::from_commands(vec![runtime_action_command(
+            "chrome-new-tab",
+            "Chrome: New tab",
+            shortcut_execution(),
+            executor,
+        )]);
+
+        let guide_command = session
+            .guide_command(&CommandId::new("chrome-new-tab"))
+            .expect("shortcut command should be guideable");
+
+        assert_eq!(guide_command.id.value(), "chrome-new-tab");
+        assert_eq!(guide_command.label, "Chrome: New tab");
+        assert_eq!(guide_command.shortcut_text, "Ctrl+T");
+        assert_eq!(
+            guide_command.captured_shortcut(),
+            Some(shortcut_execution_shortcut())
+        );
+        assert_eq!(guide_command.focus_target, Some(44));
+        assert_eq!(guide_command.work_area, Some((10, 20, 810, 620)));
+
+        let result = guide_command.execute();
+
+        assert_eq!(
+            result,
+            CommandExecutionResultDto::succeeded("Executed Chrome: New tab")
+        );
+        assert_eq!(
+            recorded_calls(&calls),
+            vec![RecordedExecution::Shortcut {
+                shortcut: shortcut_execution_shortcut(),
+                focus_target: Some(44),
+            }]
+        );
     }
 
     #[test]

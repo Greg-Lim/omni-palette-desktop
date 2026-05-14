@@ -1,17 +1,21 @@
 use std::sync::{mpsc, Arc, Mutex};
 
 use omni_palette::{
-    backend_contract::PaletteBackend,
+    backend_contract::{PaletteBackend, PaletteSnapshotDto},
     domain::action::ContextRoot,
     platform::windows::context::context::{get_hwnd_from_raw, monitor_work_area_from_window},
 };
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
 use crate::hotkey_bridge::PaletteActivationHandler;
 
 pub const WINDOW_LIFECYCLE_EVENT_NAME: &str = "omni://palette-window-lifecycle";
 const MAIN_WINDOW_LABEL: &str = "main";
+const PALETTE_WINDOW_WIDTH: u32 = 780;
+const PALETTE_WINDOW_BASE_HEIGHT: u32 = 176;
+const PALETTE_COMMAND_ROW_HEIGHT: u32 = 54;
+const PALETTE_MAX_VISIBLE_ROWS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowLifecycleStatusDto {
@@ -168,13 +172,13 @@ fn event_from_state(
 }
 
 trait PaletteSessionManager: Send + Sync {
-    fn open_palette_session(&self, context: ContextRoot) -> Result<(), String>;
+    fn open_palette_session(&self, context: ContextRoot) -> Result<PaletteSnapshotDto, String>;
     fn close_palette_session(&self);
 }
 
 impl PaletteSessionManager for PaletteBackend {
-    fn open_palette_session(&self, context: ContextRoot) -> Result<(), String> {
-        PaletteBackend::open_palette_session(self, context).map(|_| ())
+    fn open_palette_session(&self, context: ContextRoot) -> Result<PaletteSnapshotDto, String> {
+        PaletteBackend::open_palette_session(self, context)
     }
 
     fn close_palette_session(&self) {
@@ -184,7 +188,7 @@ impl PaletteSessionManager for PaletteBackend {
 
 trait PaletteWindowController: Send + Sync {
     fn is_visible(&self) -> Result<bool, String>;
-    fn position(&self, context: &ContextRoot) -> Result<(), String>;
+    fn position(&self, context: &ContextRoot, visible_command_count: usize) -> Result<(), String>;
     fn show(&self) -> Result<(), String>;
     fn hide(&self) -> Result<(), String>;
     fn unminimize_if_needed(&self) -> Result<(), String>;
@@ -263,11 +267,12 @@ impl PaletteWindowController for TauriPaletteWindowController {
         })
     }
 
-    fn position(&self, context: &ContextRoot) -> Result<(), String> {
+    fn position(&self, context: &ContextRoot, visible_command_count: usize) -> Result<(), String> {
         let work_area = active_work_area(context);
         self.with_window("palette window positioning", move |window| {
+            let size = palette_window_size(visible_command_count);
+            window.set_size(size).map_err(|err| err.to_string())?;
             if let Some((left, top, right, bottom)) = work_area {
-                let size = window.outer_size().map_err(|err| err.to_string())?;
                 let work_width = right.saturating_sub(left);
                 let work_height = bottom.saturating_sub(top);
                 let x = left + ((work_width - size.width as i32) / 2).max(0);
@@ -314,6 +319,14 @@ fn active_work_area(context: &ContextRoot) -> Option<(i32, i32, i32, i32)> {
         .get_active()
         .and_then(|handle| get_hwnd_from_raw(*handle))
         .and_then(monitor_work_area_from_window)
+}
+
+pub fn palette_window_size(visible_command_count: usize) -> PhysicalSize<u32> {
+    let visible_rows = visible_command_count.min(PALETTE_MAX_VISIBLE_ROWS).max(1) as u32;
+    PhysicalSize::new(
+        PALETTE_WINDOW_WIDTH,
+        PALETTE_WINDOW_BASE_HEIGHT + (visible_rows * PALETTE_COMMAND_ROW_HEIGHT),
+    )
 }
 
 pub struct WindowLifecycle {
@@ -388,15 +401,18 @@ impl WindowLifecycle {
     }
 
     fn show_palette(&self, context: ContextRoot) {
-        if let Err(err) = self.session_manager.open_palette_session(context.clone()) {
-            self.emit(
-                self.status
-                    .record_error(format!("Failed to prepare palette command session: {err}")),
-            );
-            return;
-        }
+        let snapshot = match self.session_manager.open_palette_session(context.clone()) {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                self.emit(
+                    self.status
+                        .record_error(format!("Failed to prepare palette command session: {err}")),
+                );
+                return;
+            }
+        };
 
-        if let Err(err) = self.controller.position(&context) {
+        if let Err(err) = self.controller.position(&context, snapshot.commands.len()) {
             self.session_manager.close_palette_session();
             self.emit(
                 self.status
@@ -466,7 +482,10 @@ impl PaletteActivationHandler for WindowLifecycle {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use omni_palette::domain::action::{ContextRoot, InteractionContext};
+    use omni_palette::{
+        backend_contract::{CommandDto, CommandId, MatchRangeDto, PaletteSessionId},
+        domain::action::{CommandPriority, ContextRoot, FocusState, InteractionContext},
+    };
 
     use super::*;
 
@@ -521,6 +540,18 @@ mod tests {
                 position_count: 1,
                 message: None,
             }]
+        );
+    }
+
+    #[test]
+    fn hidden_activation_sizes_palette_from_visible_command_count() {
+        let lifecycle = test_lifecycle_with_visible_command_count(false, 2);
+
+        lifecycle.handle_activation(empty_context());
+
+        assert_eq!(
+            lifecycle.log(),
+            vec!["prepare_session:2", "position:2", "show", "focus"]
         );
     }
 
@@ -651,7 +682,7 @@ mod tests {
 
     struct TestLifecycle {
         lifecycle: WindowLifecycle,
-        log: Arc<Mutex<Vec<&'static str>>>,
+        log: Arc<Mutex<Vec<String>>>,
         events: Arc<Mutex<Vec<WindowLifecycleEventPayloadDto>>>,
     }
 
@@ -668,7 +699,7 @@ mod tests {
             self.lifecycle.status()
         }
 
-        fn log(&self) -> Vec<&'static str> {
+        fn log(&self) -> Vec<String> {
             self.log.lock().expect("log should lock").clone()
         }
 
@@ -682,16 +713,44 @@ mod tests {
         fail_on: Option<&'static str>,
         open_result: Result<(), String>,
     ) -> TestLifecycle {
+        test_lifecycle_inner(
+            visible,
+            fail_on,
+            open_result.map(|_| snapshot_with_command_count(1)),
+            false,
+        )
+    }
+
+    fn test_lifecycle_with_visible_command_count(
+        visible: bool,
+        visible_command_count: usize,
+    ) -> TestLifecycle {
+        test_lifecycle_inner(
+            visible,
+            None,
+            Ok(snapshot_with_command_count(visible_command_count)),
+            true,
+        )
+    }
+
+    fn test_lifecycle_inner(
+        visible: bool,
+        fail_on: Option<&'static str>,
+        open_result: Result<PaletteSnapshotDto, String>,
+        record_command_count: bool,
+    ) -> TestLifecycle {
         let log = Arc::new(Mutex::new(Vec::new()));
         let events = Arc::new(Mutex::new(Vec::new()));
         let session = Arc::new(RecordingSessionManager {
             log: Arc::clone(&log),
             open_result,
+            record_command_count,
         });
         let controller = Arc::new(RecordingWindowController {
             visible: Mutex::new(visible),
             fail_on,
             log: Arc::clone(&log),
+            record_command_count,
         });
         let event_sink = Arc::new(RecordingWindowLifecycleEventSink {
             events: Arc::clone(&events),
@@ -705,16 +764,27 @@ mod tests {
     }
 
     struct RecordingSessionManager {
-        log: Arc<Mutex<Vec<&'static str>>>,
-        open_result: Result<(), String>,
+        log: Arc<Mutex<Vec<String>>>,
+        open_result: Result<PaletteSnapshotDto, String>,
+        record_command_count: bool,
     }
 
     impl PaletteSessionManager for RecordingSessionManager {
-        fn open_palette_session(&self, _context: ContextRoot) -> Result<(), String> {
-            self.log
-                .lock()
-                .expect("log should lock")
-                .push("prepare_session");
+        fn open_palette_session(
+            &self,
+            _context: ContextRoot,
+        ) -> Result<PaletteSnapshotDto, String> {
+            let count = self
+                .open_result
+                .as_ref()
+                .map(|snapshot| snapshot.commands.len())
+                .unwrap_or_default();
+            let label = if self.record_command_count {
+                format!("prepare_session:{count}")
+            } else {
+                "prepare_session".to_string()
+            };
+            self.log.lock().expect("log should lock").push(label);
             self.open_result.clone()
         }
 
@@ -722,19 +792,23 @@ mod tests {
             self.log
                 .lock()
                 .expect("log should lock")
-                .push("close_session");
+                .push("close_session".to_string());
         }
     }
 
     struct RecordingWindowController {
         visible: Mutex<bool>,
         fail_on: Option<&'static str>,
-        log: Arc<Mutex<Vec<&'static str>>>,
+        log: Arc<Mutex<Vec<String>>>,
+        record_command_count: bool,
     }
 
     impl RecordingWindowController {
         fn maybe_fail(&self, operation: &'static str) -> Result<(), String> {
-            self.log.lock().expect("log should lock").push(operation);
+            self.log
+                .lock()
+                .expect("log should lock")
+                .push(operation.to_string());
             if self.fail_on == Some(operation) {
                 Err("boom".to_string())
             } else {
@@ -748,8 +822,24 @@ mod tests {
             Ok(*self.visible.lock().expect("visible should lock"))
         }
 
-        fn position(&self, _context: &ContextRoot) -> Result<(), String> {
-            self.maybe_fail("position")
+        fn position(
+            &self,
+            _context: &ContextRoot,
+            visible_command_count: usize,
+        ) -> Result<(), String> {
+            if self.record_command_count {
+                self.log
+                    .lock()
+                    .expect("log should lock")
+                    .push(format!("position:{visible_command_count}"));
+                if self.fail_on == Some("position") {
+                    Err("boom".to_string())
+                } else {
+                    Ok(())
+                }
+            } else {
+                self.maybe_fail("position")
+            }
         }
 
         fn show(&self) -> Result<(), String> {
@@ -795,6 +885,28 @@ mod tests {
             fg_context: Vec::new(),
             bg_context: Vec::new(),
             active_interaction: InteractionContext::default(),
+        }
+    }
+
+    fn snapshot_with_command_count(command_count: usize) -> PaletteSnapshotDto {
+        PaletteSnapshotDto {
+            session_id: PaletteSessionId::new("test-session"),
+            query: String::new(),
+            commands: (0..command_count)
+                .map(|index| CommandDto {
+                    id: CommandId::new(format!("cmd-{index}")),
+                    label: format!("Command {index}"),
+                    shortcut_text: String::new(),
+                    guide_hint: None,
+                    focus_state: FocusState::Global,
+                    priority: CommandPriority::Medium,
+                    favorite: false,
+                    tags: Vec::new(),
+                    original_order: index,
+                    score: 0,
+                    label_matches: Vec::<MatchRangeDto>::new(),
+                })
+                .collect(),
         }
     }
 }
