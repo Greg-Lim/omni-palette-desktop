@@ -1,4 +1,5 @@
 mod hotkey_bridge;
+mod window_lifecycle;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -14,10 +15,12 @@ use serde::Serialize;
 use tauri::{Manager, State};
 
 use crate::hotkey_bridge::{HotkeyBridge, HotkeyStatusDto};
+use crate::window_lifecycle::{WindowLifecycle, WindowLifecycleStatusDto};
 
 struct AppState {
     backend: Arc<PaletteBackend>,
     hotkey_bridge: Arc<HotkeyBridge>,
+    window_lifecycle: Arc<WindowLifecycle>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -31,7 +34,7 @@ pub struct HealthCheckPayload {
 fn health_check() -> HealthCheckPayload {
     HealthCheckPayload {
         app_name: "Omni Palette",
-        phase: "Phase 4C - Hotkey Listener And Ignored-App Passthrough",
+        phase: "Phase 4D - Tauri Window Lifecycle",
         status: "ok",
     }
 }
@@ -56,6 +59,11 @@ fn get_hotkey_status(state: State<'_, AppState>) -> HotkeyStatusDto {
     state.hotkey_bridge.status()
 }
 
+#[tauri::command]
+fn get_window_lifecycle_status(state: State<'_, AppState>) -> WindowLifecycleStatusDto {
+    state.window_lifecycle.status()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let bundled_extensions_root = bundled_extensions_root();
@@ -67,13 +75,21 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(move |app| {
+            let window_lifecycle = Arc::new(WindowLifecycle::for_tauri(
+                Arc::clone(&backend),
+                app.handle().clone(),
+            ));
+            let activation_handler: Arc<dyn hotkey_bridge::PaletteActivationHandler> =
+                window_lifecycle.clone();
             let hotkey_bridge = Arc::new(HotkeyBridge::start(
                 runtime_state.clone(),
                 app.handle().clone(),
+                activation_handler,
             ));
             app.manage(AppState {
                 backend: Arc::clone(&backend),
                 hotkey_bridge,
+                window_lifecycle,
             });
             Ok(())
         })
@@ -82,7 +98,8 @@ pub fn run() {
             get_palette_bootstrap,
             search_commands,
             execute_command,
-            get_hotkey_status
+            get_hotkey_status,
+            get_window_lifecycle_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
@@ -102,14 +119,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_check_reports_phase_four_hotkey_listener() {
+    fn health_check_reports_phase_four_window_lifecycle() {
         let payload = health_check();
 
         assert_eq!(payload.app_name, "Omni Palette");
-        assert_eq!(
-            payload.phase,
-            "Phase 4C - Hotkey Listener And Ignored-App Passthrough"
-        );
+        assert_eq!(payload.phase, "Phase 4D - Tauri Window Lifecycle");
         assert_eq!(payload.status, "ok");
     }
 

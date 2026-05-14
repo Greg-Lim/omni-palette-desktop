@@ -17,8 +17,8 @@ use crate::{
     },
     domain::{
         action::{
-            ActionExecution, ActionMetadata, CommandPriority, FocusState, InteractionContext,
-            KeySequenceStep, Os,
+            ActionExecution, ActionMetadata, CommandPriority, ContextRoot, FocusState,
+            InteractionContext, KeySequenceStep, Os,
         },
         hotkey::KeyboardShortcut,
     },
@@ -483,10 +483,42 @@ impl CommandSession {
     }
 }
 
+struct PaletteSessionState {
+    session: CommandSession,
+    open: bool,
+}
+
+impl PaletteSessionState {
+    fn closed_empty() -> Self {
+        Self {
+            session: CommandSession::from_commands(Vec::new()),
+            open: false,
+        }
+    }
+
+    fn transient(session: CommandSession) -> Self {
+        Self {
+            session,
+            open: false,
+        }
+    }
+
+    fn open(session: CommandSession) -> Self {
+        Self {
+            session,
+            open: true,
+        }
+    }
+
+    fn open_snapshot(&self, query: &str) -> Option<PaletteSnapshotDto> {
+        self.open.then(|| self.session.search(query))
+    }
+}
+
 pub struct PaletteBackend {
     runtime_state: OmniRuntimeState,
     command_executor: SharedCommandExecutor,
-    session: RwLock<CommandSession>,
+    session: RwLock<PaletteSessionState>,
 }
 
 impl PaletteBackend {
@@ -507,7 +539,7 @@ impl PaletteBackend {
         Self {
             runtime_state,
             command_executor,
-            session: RwLock::new(CommandSession::from_commands(Vec::new())),
+            session: RwLock::new(PaletteSessionState::closed_empty()),
         }
     }
 
@@ -523,11 +555,29 @@ impl PaletteBackend {
     }
 
     pub fn search_commands(&self, query: &str) -> PaletteSnapshotDto {
+        match self.session.read() {
+            Ok(current_session) => {
+                if let Some(snapshot) = current_session.open_snapshot(query) {
+                    return snapshot;
+                }
+            }
+            Err(err) => {
+                return PaletteSnapshotDto {
+                    session_id: new_session_id(),
+                    query: query.to_string(),
+                    commands: vec![backend_error_command(format!(
+                        "Command session lock poisoned: {err}"
+                    ))
+                    .to_dto(Vec::new(), 0)],
+                };
+            }
+        }
+
         match self.build_current_session() {
             Ok(session) => {
                 let snapshot = session.search(query);
                 if let Ok(mut current_session) = self.session.write() {
-                    *current_session = session;
+                    *current_session = PaletteSessionState::transient(session);
                 }
                 snapshot
             }
@@ -539,9 +589,35 @@ impl PaletteBackend {
         }
     }
 
+    pub fn open_palette_session(&self, context: ContextRoot) -> Result<PaletteSnapshotDto, String> {
+        let session = self.build_session_for_context(&context)?;
+        self.open_session(session)
+    }
+
+    fn open_session(&self, session: CommandSession) -> Result<PaletteSnapshotDto, String> {
+        let snapshot = session.search("");
+        let mut current_session = self
+            .session
+            .write()
+            .map_err(|err| format!("Command session lock poisoned: {err}"))?;
+        *current_session = PaletteSessionState::open(session);
+        Ok(snapshot)
+    }
+
+    pub fn close_palette_session(&self) {
+        match self.session.write() {
+            Ok(mut current_session) => {
+                *current_session = PaletteSessionState::closed_empty();
+            }
+            Err(err) => {
+                log::error!("Command session lock poisoned while closing palette: {err}");
+            }
+        }
+    }
+
     pub fn execute_command(&self, command_id: &CommandId) -> CommandExecutionResultDto {
         match self.session.read() {
-            Ok(session) => session.execute(command_id),
+            Ok(session) => session.session.execute(command_id),
             Err(err) => {
                 CommandExecutionResultDto::failed(format!("Command session lock poisoned: {err}"))
             }
@@ -549,7 +625,10 @@ impl PaletteBackend {
     }
 
     fn build_current_session(&self) -> Result<CommandSession, String> {
-        let context = get_all_context();
+        self.build_session_for_context(&get_all_context())
+    }
+
+    fn build_session_for_context(&self, context: &ContextRoot) -> Result<CommandSession, String> {
         let active_hwnd_val = context
             .get_active()
             .and_then(|handle| get_hwnd_from_raw(*handle))
@@ -563,7 +642,7 @@ impl PaletteBackend {
         let command_executor = Arc::clone(&self.command_executor);
         let mut commands = vec![self.reload_extensions_command(0)];
 
-        commands.extend(registry.get_actions(&context).into_iter().enumerate().map(
+        commands.extend(registry.get_actions(context).into_iter().enumerate().map(
             |(index, action)| {
                 BackendCommand::from_unit_action(
                     action,
@@ -954,6 +1033,49 @@ mod tests {
             CommandExecutionResultDto::failed(
                 "Failed to execute Context Reader: Read URL: plugin exploded"
             )
+        );
+    }
+
+    #[test]
+    fn search_commands_filters_captured_open_session_until_closed() {
+        let root = runtime_test_root("captured-open-session");
+        let runtime = OmniRuntimeState::load(RuntimeStateLoadOptions {
+            bundled_extensions_root: root,
+            user_extensions_root: None,
+            dev_config_path: PathBuf::from("missing-dev-config.toml"),
+            runtime_paths: RuntimePaths {
+                config_path: None,
+                local_cache_root: None,
+            },
+            current_os: Os::Windows,
+        });
+        let backend = PaletteBackend::from_runtime_state(runtime);
+
+        backend
+            .open_session(CommandSession::from_commands(vec![test_command(
+                "captured-open",
+                "Captured App: Open",
+                "Ctrl+O",
+                CommandPriority::High,
+                FocusState::Focused,
+                false,
+                &["captured"],
+                0,
+            )]))
+            .expect("captured session should open");
+
+        let snapshot = backend.search_commands("captured");
+
+        assert_eq!(snapshot.commands.len(), 1);
+        assert_eq!(snapshot.commands[0].id.value(), "captured-open");
+
+        backend.close_palette_session();
+
+        let result = backend.execute_command(&CommandId::new("captured-open"));
+
+        assert_eq!(
+            result,
+            CommandExecutionResultDto::failed("Unknown or stale command id: captured-open")
         );
     }
 

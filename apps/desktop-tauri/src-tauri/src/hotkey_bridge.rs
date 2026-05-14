@@ -3,7 +3,10 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use omni_palette::{domain::hotkey::KeyboardShortcut, runtime_state::OmniRuntimeState};
+use omni_palette::{
+    domain::{action::ContextRoot, hotkey::KeyboardShortcut},
+    runtime_state::OmniRuntimeState,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -158,6 +161,10 @@ trait HotkeyEventSink: Send + Sync {
     fn emit_hotkey_event(&self, payload: HotkeyEventPayloadDto) -> Result<(), String>;
 }
 
+pub trait PaletteActivationHandler: Send + Sync {
+    fn handle_palette_activation(&self, context: ContextRoot);
+}
+
 struct TauriHotkeyEventSink {
     app: AppHandle,
 }
@@ -193,8 +200,13 @@ impl HotkeyForwarder for WindowsHotkeyForwarder {
     }
 }
 
+struct ActiveWindowContext {
+    context: ContextRoot,
+    process_name: Option<String>,
+}
+
 trait ActiveProcessProvider: Send + Sync {
-    fn active_process_name(&self) -> Option<String>;
+    fn active_window_context(&self) -> ActiveWindowContext;
 }
 
 #[cfg(target_os = "windows")]
@@ -202,10 +214,15 @@ struct WindowsActiveProcessProvider;
 
 #[cfg(target_os = "windows")]
 impl ActiveProcessProvider for WindowsActiveProcessProvider {
-    fn active_process_name(&self) -> Option<String> {
-        get_all_context()
+    fn active_window_context(&self) -> ActiveWindowContext {
+        let context = get_all_context();
+        let process_name = context
             .get_active()
-            .and_then(|handle| handle.get_app_process_name())
+            .and_then(|handle| handle.get_app_process_name());
+        ActiveWindowContext {
+            context,
+            process_name,
+        }
     }
 }
 
@@ -232,7 +249,11 @@ pub struct HotkeyBridge {
 }
 
 impl HotkeyBridge {
-    pub fn start(runtime_state: OmniRuntimeState, app: AppHandle) -> Self {
+    pub fn start(
+        runtime_state: OmniRuntimeState,
+        app: AppHandle,
+        activation_handler: Arc<dyn PaletteActivationHandler>,
+    ) -> Self {
         let activation_shortcut = runtime_state.config().activation;
         let activation_hint = activation_shortcut.to_string();
 
@@ -255,6 +276,7 @@ impl HotkeyBridge {
                         runtime_state,
                         forwarder,
                         Arc::new(TauriHotkeyEventSink::new(app)),
+                        activation_handler,
                         Arc::new(WindowsActiveProcessProvider),
                     )
                 }
@@ -264,7 +286,7 @@ impl HotkeyBridge {
 
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = (runtime_state, app);
+            let _ = (runtime_state, app, activation_handler);
             Self::failed(
                 activation_hint,
                 "Global hotkey listener is only available on Windows".to_string(),
@@ -279,6 +301,7 @@ impl HotkeyBridge {
         runtime_state: OmniRuntimeState,
         forwarder: Arc<dyn HotkeyForwarder>,
         event_sink: Arc<dyn HotkeyEventSink>,
+        activation_handler: Arc<dyn PaletteActivationHandler>,
         active_process_provider: Arc<dyn ActiveProcessProvider>,
     ) -> Self {
         let status = HotkeyStatusStore::new(activation_hint);
@@ -286,16 +309,18 @@ impl HotkeyBridge {
         let loop_status = status.clone();
         let loop_forwarder = Arc::clone(&forwarder);
         let loop_event_sink = Arc::clone(&event_sink);
+        let loop_activation_handler = Arc::clone(&activation_handler);
 
         let bridge_thread = thread::spawn(move || {
             while let Ok(shortcut) = rx.recv() {
-                let active_process_name = active_process_provider.active_process_name();
+                let active_context = active_process_provider.active_window_context();
                 handle_hotkey_event(
                     shortcut,
                     &runtime_state,
-                    active_process_name,
+                    active_context,
                     Arc::clone(&loop_forwarder),
                     Arc::clone(&loop_event_sink),
+                    Arc::clone(&loop_activation_handler),
                     &loop_status,
                 );
             }
@@ -351,15 +376,17 @@ impl Drop for HotkeyBridge {
 fn handle_hotkey_event<F, E>(
     shortcut: KeyboardShortcut,
     runtime_state: &OmniRuntimeState,
-    active_process_name: Option<String>,
+    active_context: ActiveWindowContext,
     forwarder: Arc<F>,
     event_sink: Arc<E>,
+    activation_handler: Arc<dyn PaletteActivationHandler>,
     status: &HotkeyStatusStore,
 ) where
     F: HotkeyForwarder + ?Sized,
     E: HotkeyEventSink + ?Sized,
 {
-    let payload = if active_process_name
+    let payload = if active_context
+        .process_name
         .as_deref()
         .is_some_and(|process_name| runtime_state.is_ignored_process_name(process_name))
     {
@@ -368,9 +395,11 @@ fn handle_hotkey_event<F, E>(
             let _ = event_sink.emit_hotkey_event(payload);
             return;
         }
-        status.record_ignored_passthrough(shortcut, active_process_name)
+        status.record_ignored_passthrough(shortcut, active_context.process_name)
     } else {
-        status.record_activation(shortcut, active_process_name)
+        let payload = status.record_activation(shortcut, active_context.process_name);
+        activation_handler.handle_palette_activation(active_context.context);
+        payload
     };
 
     if let Err(err) = event_sink.emit_hotkey_event(payload) {
@@ -430,14 +459,21 @@ mod tests {
         status.record_running();
         let sink = Arc::new(RecordingEventSink::default());
         let forwarder = Arc::new(RecordingForwarder::default());
+        let activation_handler = Arc::new(RecordingActivationHandler::default());
+        let activation_handler_trait: Arc<dyn PaletteActivationHandler> =
+            activation_handler.clone();
         let shortcut = activation_shortcut();
 
         handle_hotkey_event(
             shortcut,
             &runtime,
-            Some("notepad.exe".to_string()),
+            ActiveWindowContext {
+                context: empty_context(),
+                process_name: Some("notepad.exe".to_string()),
+            },
             Arc::clone(&forwarder),
             Arc::clone(&sink),
+            activation_handler_trait,
             &status,
         );
 
@@ -445,6 +481,7 @@ mod tests {
         assert_eq!(snapshot.activation_count, 1);
         assert_eq!(snapshot.ignored_passthrough_count, 0);
         assert_eq!(forwarder.forwarded_shortcuts(), Vec::<String>::new());
+        assert_eq!(activation_handler.activation_count(), 1);
         assert_eq!(
             sink.events(),
             vec![HotkeyEventPayloadDto {
@@ -465,14 +502,21 @@ mod tests {
         status.record_running();
         let sink = Arc::new(RecordingEventSink::default());
         let forwarder = Arc::new(RecordingForwarder::default());
+        let activation_handler = Arc::new(RecordingActivationHandler::default());
+        let activation_handler_trait: Arc<dyn PaletteActivationHandler> =
+            activation_handler.clone();
         let shortcut = activation_shortcut();
 
         handle_hotkey_event(
             shortcut,
             &runtime,
-            Some("Code.exe".to_string()),
+            ActiveWindowContext {
+                context: empty_context(),
+                process_name: Some("Code.exe".to_string()),
+            },
             Arc::clone(&forwarder),
             Arc::clone(&sink),
+            activation_handler_trait,
             &status,
         );
 
@@ -483,6 +527,7 @@ mod tests {
             forwarder.forwarded_shortcuts(),
             vec!["Ctrl+Shift+P".to_string()]
         );
+        assert_eq!(activation_handler.activation_count(), 0);
         assert_eq!(
             sink.events(),
             vec![HotkeyEventPayloadDto {
@@ -545,6 +590,23 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct RecordingActivationHandler {
+        count: Mutex<u64>,
+    }
+
+    impl RecordingActivationHandler {
+        fn activation_count(&self) -> u64 {
+            *self.count.lock().expect("count should lock")
+        }
+    }
+
+    impl PaletteActivationHandler for RecordingActivationHandler {
+        fn handle_palette_activation(&self, _context: omni_palette::domain::action::ContextRoot) {
+            *self.count.lock().expect("count should lock") += 1;
+        }
+    }
+
+    #[derive(Default)]
     struct RecordingForwarder {
         shortcuts: Mutex<Vec<String>>,
     }
@@ -565,6 +627,14 @@ mod tests {
                 .expect("shortcuts should lock")
                 .push(shortcut.to_string());
             Ok(())
+        }
+    }
+
+    fn empty_context() -> omni_palette::domain::action::ContextRoot {
+        omni_palette::domain::action::ContextRoot {
+            fg_context: Vec::new(),
+            bg_context: Vec::new(),
+            active_interaction: omni_palette::domain::action::InteractionContext::default(),
         }
     }
 

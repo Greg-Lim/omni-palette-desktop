@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
 
@@ -9,13 +9,19 @@
     HotkeyEventPayload,
     HotkeyStatus,
     RuntimeStatus,
+    WindowLifecycleEventPayload,
+    WindowLifecycleStatus,
   } from "./commands";
   import {
     HOTKEY_EVENT_NAME,
+    WINDOW_LIFECYCLE_EVENT_NAME,
     formatHotkeyStatus,
     formatRuntimeStatus,
+    formatWindowLifecycleStatus,
     nextSelectedCommandId,
+    nextWindowLifecycleStatus,
     paletteApi,
+    shouldRefreshCommandsForWindowLifecycleEvent,
   } from "./commands";
 
   type HealthPayload = {
@@ -32,6 +38,7 @@
   let healthError: string | null = null;
   let runtimeStatus: RuntimeStatus | null = null;
   let hotkeyStatus: HotkeyStatus | null = null;
+  let windowLifecycleStatus: WindowLifecycleStatus | null = null;
   let commandError: string | null = null;
   let loadingCommands = true;
   let executionResult: CommandExecutionResult | null = null;
@@ -71,6 +78,15 @@
         healthError = errorMessage(error);
       });
 
+    paletteApi
+      .getWindowLifecycleStatus()
+      .then((status) => {
+        windowLifecycleStatus = status;
+      })
+      .catch((error: unknown) => {
+        healthError = errorMessage(error);
+      });
+
     let unlistenHotkeyEvents: (() => void) | null = null;
     listen<HotkeyEventPayload>(HOTKEY_EVENT_NAME, (event) => {
       hotkeyStatus = nextHotkeyStatus(hotkeyStatus, event.payload);
@@ -82,8 +98,28 @@
         healthError = errorMessage(error);
       });
 
+    let unlistenWindowLifecycleEvents: (() => void) | null = null;
+    listen<WindowLifecycleEventPayload>(WINDOW_LIFECYCLE_EVENT_NAME, (event) => {
+      windowLifecycleStatus = nextWindowLifecycleStatus(windowLifecycleStatus, event.payload);
+      if (shouldRefreshCommandsForWindowLifecycleEvent(event.payload)) {
+        activeView = "palette";
+        query = "";
+        selectedId = "";
+        executionResult = null;
+        searchCommands("");
+        tick().then(() => searchInput?.focus());
+      }
+    })
+      .then((unlisten) => {
+        unlistenWindowLifecycleEvents = unlisten;
+      })
+      .catch((error: unknown) => {
+        healthError = errorMessage(error);
+      });
+
     return () => {
       unlistenHotkeyEvents?.();
+      unlistenWindowLifecycleEvents?.();
     };
   });
 
@@ -195,6 +231,9 @@
         {/if}
         {#if hotkeyStatus}
           <span class="ml-2 text-zinc-400">- {formatHotkeyStatus(hotkeyStatus)}</span>
+        {/if}
+        {#if windowLifecycleStatus}
+          <span class="ml-2 text-zinc-400">- {formatWindowLifecycleStatus(windowLifecycleStatus)}</span>
         {/if}
       {:else}
         <span>Backend: {healthError ? `unavailable (${healthError})` : "checking..."}</span>

@@ -4,10 +4,14 @@ import {
   CommandRow,
   HotkeyStatus,
   RuntimeStatus,
+  WindowLifecycleStatus,
   createPaletteApi,
   formatHotkeyStatus,
   formatRuntimeStatus,
+  formatWindowLifecycleStatus,
+  nextWindowLifecycleStatus,
   nextSelectedCommandId,
+  shouldRefreshCommandsForWindowLifecycleEvent,
 } from "./commands";
 
 const rows: CommandRow[] = [
@@ -135,6 +139,28 @@ describe("palette api", () => {
     expect(calls).toEqual([{ command: "get_hotkey_status", args: undefined }]);
     expect(status).toEqual(hotkeyStatus);
   });
+
+  it("calls the backend window lifecycle status command and preserves payload", async () => {
+    const windowStatus: WindowLifecycleStatus = {
+      visible: true,
+      show_count: 2,
+      hide_count: 1,
+      focus_count: 2,
+      position_count: 2,
+      last_action: "shown",
+      last_error: null,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return windowStatus as T;
+    });
+
+    const status = await api.getWindowLifecycleStatus();
+
+    expect(calls).toEqual([{ command: "get_window_lifecycle_status", args: undefined }]);
+    expect(status).toEqual(windowStatus);
+  });
 });
 
 describe("formatRuntimeStatus", () => {
@@ -193,6 +219,105 @@ describe("formatHotkeyStatus", () => {
         last_error: "failed to register hotkey",
       }),
     ).toBe("hotkey error - failed to register hotkey");
+  });
+});
+
+describe("window lifecycle status", () => {
+  it("summarizes visible window lifecycle state", () => {
+    expect(
+      formatWindowLifecycleStatus({
+        visible: true,
+        show_count: 2,
+        hide_count: 1,
+        focus_count: 2,
+        position_count: 2,
+        last_action: "shown",
+        last_error: null,
+      }),
+    ).toBe("window visible - shown - 2 shown - 1 hidden");
+  });
+
+  it("shows lifecycle errors before counters", () => {
+    expect(
+      formatWindowLifecycleStatus({
+        visible: false,
+        show_count: 0,
+        hide_count: 0,
+        focus_count: 0,
+        position_count: 0,
+        last_action: "error",
+        last_error: "Failed to show palette window: boom",
+      }),
+    ).toBe("window error - Failed to show palette window: boom");
+  });
+
+  it("applies lifecycle events to the latest status", () => {
+    const status = nextWindowLifecycleStatus(
+      {
+        visible: false,
+        show_count: 0,
+        hide_count: 0,
+        focus_count: 0,
+        position_count: 0,
+        last_action: null,
+        last_error: null,
+      },
+      {
+        action: "shown",
+        visible: true,
+        show_count: 1,
+        hide_count: 0,
+        focus_count: 1,
+        position_count: 1,
+        message: null,
+      },
+    );
+
+    expect(status).toEqual({
+      visible: true,
+      show_count: 1,
+      hide_count: 0,
+      focus_count: 1,
+      position_count: 1,
+      last_action: "shown",
+      last_error: null,
+    });
+  });
+
+  it("refreshes commands only when the window is shown", () => {
+    expect(
+      shouldRefreshCommandsForWindowLifecycleEvent({
+        action: "shown",
+        visible: true,
+        show_count: 1,
+        hide_count: 0,
+        focus_count: 1,
+        position_count: 1,
+        message: null,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRefreshCommandsForWindowLifecycleEvent({
+        action: "hidden",
+        visible: false,
+        show_count: 1,
+        hide_count: 1,
+        focus_count: 1,
+        position_count: 1,
+        message: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshCommandsForWindowLifecycleEvent({
+        action: "error",
+        visible: false,
+        show_count: 0,
+        hide_count: 0,
+        focus_count: 0,
+        position_count: 0,
+        message: "Failed to show palette window: boom",
+      }),
+    ).toBe(false);
   });
 });
 

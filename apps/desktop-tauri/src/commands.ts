@@ -4,6 +4,7 @@ export type CommandFocusState = "focused" | "background" | "global";
 export type CommandPriority = "suppressed" | "low" | "medium" | "high";
 export type CommandBehavior = "execute" | "guide";
 export const HOTKEY_EVENT_NAME = "omni://palette-activation-requested";
+export const WINDOW_LIFECYCLE_EVENT_NAME = "omni://palette-window-lifecycle";
 
 export type MatchRange = {
   start: number;
@@ -77,6 +78,28 @@ export type HotkeyStatus = {
   last_error: string | null;
 };
 
+export type WindowLifecycleAction = "shown" | "hidden" | "error";
+
+export type WindowLifecycleEventPayload = {
+  action: WindowLifecycleAction;
+  visible: boolean;
+  show_count: number;
+  hide_count: number;
+  focus_count: number;
+  position_count: number;
+  message: string | null;
+};
+
+export type WindowLifecycleStatus = {
+  visible: boolean;
+  show_count: number;
+  hide_count: number;
+  focus_count: number;
+  position_count: number;
+  last_action: WindowLifecycleAction | null;
+  last_error: string | null;
+};
+
 export type PaletteInvoke = <T>(
   command: string,
   args?: Record<string, unknown>,
@@ -90,6 +113,8 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
     executeCommand: (commandId: string) =>
       invokeCommand<CommandExecutionResult>("execute_command", { commandId }),
     getHotkeyStatus: () => invokeCommand<HotkeyStatus>("get_hotkey_status"),
+    getWindowLifecycleStatus: () =>
+      invokeCommand<WindowLifecycleStatus>("get_window_lifecycle_status"),
   };
 }
 
@@ -124,4 +149,38 @@ export function formatHotkeyStatus(status: HotkeyStatus): string {
     `${status.activation_count} activations`,
     `${status.ignored_passthrough_count} passthrough`,
   ].join(" - ");
+}
+
+export function formatWindowLifecycleStatus(status: WindowLifecycleStatus): string {
+  if (status.last_error) {
+    return `window error - ${status.last_error}`;
+  }
+
+  return [
+    status.visible ? "window visible" : "window hidden",
+    status.last_action ?? "idle",
+    `${status.show_count} shown`,
+    `${status.hide_count} hidden`,
+  ].join(" - ");
+}
+
+export function nextWindowLifecycleStatus(
+  _current: WindowLifecycleStatus | null,
+  event: WindowLifecycleEventPayload,
+): WindowLifecycleStatus {
+  return {
+    visible: event.visible,
+    show_count: event.show_count,
+    hide_count: event.hide_count,
+    focus_count: event.focus_count,
+    position_count: event.position_count,
+    last_action: event.action,
+    last_error: event.action === "error" ? event.message : null,
+  };
+}
+
+export function shouldRefreshCommandsForWindowLifecycleEvent(
+  event: WindowLifecycleEventPayload,
+): boolean {
+  return event.action === "shown";
 }
