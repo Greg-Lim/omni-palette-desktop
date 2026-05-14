@@ -2,15 +2,21 @@ import { describe, expect, it } from "bun:test";
 
 import {
   CommandRow,
+  CommandExecutionResult,
   HotkeyStatus,
   RuntimeStatus,
   WindowLifecycleStatus,
   createPaletteApi,
+  commandExecutionShouldHidePalette,
   formatHotkeyStatus,
   formatRuntimeStatus,
   formatWindowLifecycleStatus,
+  highlightedLabelSegments,
+  nextKeyboardSelectedCommandId,
   nextWindowLifecycleStatus,
+  paletteKeyAction,
   nextSelectedCommandId,
+  shouldHidePaletteForWindowBlur,
   shouldRefreshCommandsForWindowLifecycleEvent,
 } from "./commands";
 
@@ -159,6 +165,28 @@ describe("palette api", () => {
     const status = await api.getWindowLifecycleStatus();
 
     expect(calls).toEqual([{ command: "get_window_lifecycle_status", args: undefined }]);
+    expect(status).toEqual(windowStatus);
+  });
+
+  it("calls the backend hide palette command and preserves payload", async () => {
+    const windowStatus: WindowLifecycleStatus = {
+      visible: false,
+      show_count: 1,
+      hide_count: 1,
+      focus_count: 1,
+      position_count: 1,
+      last_action: "hidden",
+      last_error: null,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return windowStatus as T;
+    });
+
+    const status = await api.hidePaletteWindow();
+
+    expect(calls).toEqual([{ command: "hide_palette_window", args: undefined }]);
     expect(status).toEqual(windowStatus);
   });
 });
@@ -332,5 +360,112 @@ describe("nextSelectedCommandId", () => {
 
   it("clears the selection when there are no rows", () => {
     expect(nextSelectedCommandId("missing", [])).toBe("");
+  });
+});
+
+describe("nextKeyboardSelectedCommandId", () => {
+  it("wraps down from the last visible row to the first", () => {
+    expect(nextKeyboardSelectedCommandId("chrome-new-tab", rows, 1)).toBe("reload-extensions");
+  });
+
+  it("wraps up from the first visible row to the last", () => {
+    expect(nextKeyboardSelectedCommandId("reload-extensions", rows, -1)).toBe("chrome-new-tab");
+  });
+
+  it("selects the first row when there is no current selection", () => {
+    expect(nextKeyboardSelectedCommandId("", rows, 1)).toBe("reload-extensions");
+  });
+
+  it("clears selection when there are no rows", () => {
+    expect(nextKeyboardSelectedCommandId("chrome-new-tab", [], 1)).toBe("");
+  });
+});
+
+describe("commandExecutionShouldHidePalette", () => {
+  it("hides only after successful command execution", () => {
+    const succeeded: CommandExecutionResult = {
+      status: "succeeded",
+      message: "Executed Chrome: New tab",
+    };
+    const failed: CommandExecutionResult = {
+      status: "failed",
+      message: "Failed to execute Chrome: New tab",
+    };
+    const deferred: CommandExecutionResult = {
+      status: "deferred",
+      message: "Deferred",
+    };
+
+    expect(commandExecutionShouldHidePalette(succeeded)).toBe(true);
+    expect(commandExecutionShouldHidePalette(failed)).toBe(false);
+    expect(commandExecutionShouldHidePalette(deferred)).toBe(false);
+  });
+});
+
+describe("paletteKeyAction", () => {
+  it("maps core palette keys to UX actions", () => {
+    expect(paletteKeyAction("ArrowDown")).toBe("select_next");
+    expect(paletteKeyAction("ArrowUp")).toBe("select_previous");
+    expect(paletteKeyAction("Enter")).toBe("execute");
+    expect(paletteKeyAction("Escape")).toBe("hide");
+    expect(paletteKeyAction("Tab")).toBeNull();
+  });
+});
+
+describe("shouldHidePaletteForWindowBlur", () => {
+  it("hides only when the lifecycle status says the palette is visible", () => {
+    expect(
+      shouldHidePaletteForWindowBlur({
+        visible: true,
+        show_count: 1,
+        hide_count: 0,
+        focus_count: 1,
+        position_count: 1,
+        last_action: "shown",
+        last_error: null,
+      }),
+    ).toBe(true);
+    expect(
+      shouldHidePaletteForWindowBlur({
+        visible: false,
+        show_count: 1,
+        hide_count: 1,
+        focus_count: 1,
+        position_count: 1,
+        last_action: "hidden",
+        last_error: null,
+      }),
+    ).toBe(false);
+    expect(shouldHidePaletteForWindowBlur(null)).toBe(false);
+  });
+});
+
+describe("highlightedLabelSegments", () => {
+  it("splits label text into plain and highlighted segments", () => {
+    expect(
+      highlightedLabelSegments("Chrome: New tab", [
+        { start: 0, end: 3 },
+        { start: 8, end: 11 },
+      ]),
+    ).toEqual([
+      { text: "Chr", highlighted: true },
+      { text: "ome: ", highlighted: false },
+      { text: "New", highlighted: true },
+      { text: " tab", highlighted: false },
+    ]);
+  });
+
+  it("ignores invalid ranges safely", () => {
+    expect(
+      highlightedLabelSegments("Chrome", [
+        { start: 3, end: 3 },
+        { start: 7, end: 9 },
+        { start: 1, end: 4 },
+      ]),
+    ).toEqual([
+      { text: "C", highlighted: false },
+      { text: "hro", highlighted: true },
+      { text: "me", highlighted: false },
+    ]);
   });
 });

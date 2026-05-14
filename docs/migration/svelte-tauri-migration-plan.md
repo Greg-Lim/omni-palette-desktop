@@ -10,9 +10,10 @@
 
 ## Migration Status
 
-- Current priority: plan Phase 5 palette behavior parity before settings, tray
-  behavior, guide mode polish, or egui removal.
-- Current phase: Phase 4D - Tauri Window Lifecycle complete.
+- Current priority: finish Phase 5A core palette UX parity before guide mode,
+  settings, tray behavior, extension management, or egui removal.
+- Current phase: Phase 5A - Core Palette UX Parity active; Phase 4D - Tauri
+  Window Lifecycle complete.
 - Last updated: 2026-05-14.
 - Update this section whenever the Svelte migration moves to a new phase.
 
@@ -28,14 +29,15 @@ continues only through the Svelte frontend.
 
 - `apps/desktop-tauri/` contains a Tauri v2 app with a Svelte, TypeScript,
   Vite, Tailwind, and Bun frontend.
-- The Rust side has started Phase 3 backend contract extraction and exposes
-  Tauri invoke commands that the Svelte frontend should keep using:
+- The Rust side exposes Tauri invoke commands that the Svelte frontend should
+  keep using:
   - `health_check`
   - `get_palette_bootstrap`
   - `search_commands`
   - `execute_command`
   - `get_hotkey_status`
   - `get_window_lifecycle_status`
+  - `hide_palette_window`
 - The current egui app remains the functional production UI until the
   Svelte/Tauri app reaches parity.
 
@@ -48,7 +50,7 @@ continues only through the Svelte frontend.
 - Keep Bun for frontend package management and scripts.
 - Treat Rust DTOs and Tauri invoke command names as stable during this
   framework swap.
-- Do not remove React dependencies until the Svelte implementation phase.
+- Do not reintroduce React dependencies or React-specific migration work.
 - Do not remove egui/eframe until the Tauri app reaches functional parity.
 
 ## File And Folder Inventory
@@ -207,9 +209,10 @@ Subphase boundaries:
 - Phase 4D - Tauri Window Lifecycle: show, hide, focus, and position the Tauri
   palette from runtime events. Do not add settings UI or egui removal.
   Complete.
-- Phase 5 remains palette behavior parity only: keyboard navigation,
-  close/focus behavior, highlighted matches, guide-mode usability, and refined
-  palette positioning.
+- Phase 5A - Core Palette UX Parity: keyboard navigation, Enter/click command
+  execution, Escape/focus-loss close behavior, successful-execution hide, and
+  highlighted match rendering. Active.
+- Phase 5B remains guide-mode usability and refined palette positioning only.
 - Phase 6 remains settings and extension management only.
 - Phase 8 remains final cutover and egui removal only.
 

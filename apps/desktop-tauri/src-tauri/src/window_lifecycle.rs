@@ -372,6 +372,21 @@ impl WindowLifecycle {
         }
     }
 
+    pub fn hide_palette_window(&self) -> WindowLifecycleStatusDto {
+        match self.controller.is_visible() {
+            Ok(true) => self.hide_palette(),
+            Ok(false) => self.session_manager.close_palette_session(),
+            Err(err) => {
+                self.emit(
+                    self.status
+                        .record_error(format!("Failed to read palette window visibility: {err}")),
+                );
+            }
+        }
+
+        self.status()
+    }
+
     fn show_palette(&self, context: ContextRoot) {
         if let Err(err) = self.session_manager.open_palette_session(context.clone()) {
             self.emit(
@@ -579,6 +594,61 @@ mod tests {
         );
     }
 
+    #[test]
+    fn hide_request_hides_visible_window_closes_session_and_returns_status() {
+        let lifecycle = test_lifecycle(true, None, Ok(()));
+
+        let status = lifecycle.hide_palette_window();
+
+        assert_eq!(lifecycle.log(), vec!["hide", "close_session"]);
+        assert_eq!(
+            status,
+            WindowLifecycleStatusDto {
+                visible: false,
+                show_count: 0,
+                hide_count: 1,
+                focus_count: 0,
+                position_count: 0,
+                last_action: Some(WindowLifecycleActionDto::Hidden),
+                last_error: None,
+            }
+        );
+        assert_eq!(
+            lifecycle.events(),
+            vec![WindowLifecycleEventPayloadDto {
+                action: WindowLifecycleActionDto::Hidden,
+                visible: false,
+                show_count: 0,
+                hide_count: 1,
+                focus_count: 0,
+                position_count: 0,
+                message: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn hide_request_when_already_hidden_closes_session_and_returns_status() {
+        let lifecycle = test_lifecycle(false, None, Ok(()));
+
+        let status = lifecycle.hide_palette_window();
+
+        assert_eq!(lifecycle.log(), vec!["close_session"]);
+        assert_eq!(
+            status,
+            WindowLifecycleStatusDto {
+                visible: false,
+                show_count: 0,
+                hide_count: 0,
+                focus_count: 0,
+                position_count: 0,
+                last_action: None,
+                last_error: None,
+            }
+        );
+        assert_eq!(lifecycle.events(), Vec::new());
+    }
+
     struct TestLifecycle {
         lifecycle: WindowLifecycle,
         log: Arc<Mutex<Vec<&'static str>>>,
@@ -588,6 +658,10 @@ mod tests {
     impl TestLifecycle {
         fn handle_activation(&self, context: ContextRoot) {
             self.lifecycle.handle_activation(context);
+        }
+
+        fn hide_palette_window(&self) -> WindowLifecycleStatusDto {
+            self.lifecycle.hide_palette_window()
         }
 
         fn status(&self) -> WindowLifecycleStatusDto {

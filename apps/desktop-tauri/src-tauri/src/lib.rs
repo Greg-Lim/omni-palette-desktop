@@ -34,7 +34,7 @@ pub struct HealthCheckPayload {
 fn health_check() -> HealthCheckPayload {
     HealthCheckPayload {
         app_name: "Omni Palette",
-        phase: "Phase 4D - Tauri Window Lifecycle",
+        phase: "Phase 5A - Core Palette UX Parity",
         status: "ok",
     }
 }
@@ -62,6 +62,11 @@ fn get_hotkey_status(state: State<'_, AppState>) -> HotkeyStatusDto {
 #[tauri::command]
 fn get_window_lifecycle_status(state: State<'_, AppState>) -> WindowLifecycleStatusDto {
     state.window_lifecycle.status()
+}
+
+#[tauri::command]
+fn hide_palette_window(state: State<'_, AppState>) -> WindowLifecycleStatusDto {
+    state.window_lifecycle.hide_palette_window()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -99,7 +104,8 @@ pub fn run() {
             search_commands,
             execute_command,
             get_hotkey_status,
-            get_window_lifecycle_status
+            get_window_lifecycle_status,
+            hide_palette_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
@@ -119,11 +125,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_check_reports_phase_four_window_lifecycle() {
+    fn health_check_reports_phase_five_core_palette_ux() {
         let payload = health_check();
 
         assert_eq!(payload.app_name, "Omni Palette");
-        assert_eq!(payload.phase, "Phase 4D - Tauri Window Lifecycle");
+        assert_eq!(payload.phase, "Phase 5A - Core Palette UX Parity");
         assert_eq!(payload.status, "ok");
     }
 

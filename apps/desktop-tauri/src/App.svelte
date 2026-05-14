@@ -15,12 +15,17 @@
   import {
     HOTKEY_EVENT_NAME,
     WINDOW_LIFECYCLE_EVENT_NAME,
+    commandExecutionShouldHidePalette,
     formatHotkeyStatus,
     formatRuntimeStatus,
     formatWindowLifecycleStatus,
+    highlightedLabelSegments,
+    nextKeyboardSelectedCommandId,
     nextSelectedCommandId,
     nextWindowLifecycleStatus,
+    paletteKeyAction,
     paletteApi,
+    shouldHidePaletteForWindowBlur,
     shouldRefreshCommandsForWindowLifecycleEvent,
   } from "./commands";
 
@@ -44,6 +49,7 @@
   let executionResult: CommandExecutionResult | null = null;
   let searchInput: HTMLInputElement | null = null;
   let searchRun = 0;
+  let hidingPalette = false;
 
   $: searchCommands(query);
 
@@ -117,9 +123,12 @@
         healthError = errorMessage(error);
       });
 
+    window.addEventListener("blur", handleWindowBlur);
+
     return () => {
       unlistenHotkeyEvents?.();
       unlistenWindowLifecycleEvents?.();
+      window.removeEventListener("blur", handleWindowBlur);
     };
   });
 
@@ -154,21 +163,68 @@
       });
   }
 
-  function runSelectedCommand() {
-    if (!selectedId) {
+  function runCommand(commandId: string) {
+    if (!commandId) {
       return;
     }
 
+    selectedId = commandId;
     paletteApi
-      .executeCommand(selectedId)
+      .executeCommand(commandId)
       .then((result) => {
         executionResult = result;
+        if (commandExecutionShouldHidePalette(result)) {
+          hidePaletteWindow();
+        }
       })
       .catch((error: unknown) => {
         executionResult = {
           status: "failed",
           message: errorMessage(error),
         };
+      });
+  }
+
+  function handlePaletteKeydown(event: KeyboardEvent) {
+    const action = paletteKeyAction(event.key);
+    if (!action || activeView !== "palette") {
+      return;
+    }
+
+    event.preventDefault();
+    if (action === "select_next") {
+      selectedId = nextKeyboardSelectedCommandId(selectedId, rows, 1);
+    } else if (action === "select_previous") {
+      selectedId = nextKeyboardSelectedCommandId(selectedId, rows, -1);
+    } else if (action === "execute") {
+      runCommand(selectedId);
+    } else {
+      hidePaletteWindow();
+    }
+  }
+
+  function handleWindowBlur() {
+    if (shouldHidePaletteForWindowBlur(windowLifecycleStatus)) {
+      hidePaletteWindow();
+    }
+  }
+
+  function hidePaletteWindow() {
+    if (hidingPalette) {
+      return;
+    }
+
+    hidingPalette = true;
+    paletteApi
+      .hidePaletteWindow()
+      .then((status) => {
+        windowLifecycleStatus = status;
+      })
+      .catch((error: unknown) => {
+        healthError = errorMessage(error);
+      })
+      .finally(() => {
+        hidingPalette = false;
       });
   }
 
@@ -198,12 +254,14 @@
   }
 </script>
 
+<svelte:window onkeydown={handlePaletteKeydown} />
+
 <main class="min-h-screen bg-zinc-950 p-6 text-zinc-100">
   <section class="mx-auto max-w-4xl">
     <header class="mb-4 flex items-center justify-between gap-4">
       <div>
         <h1 class="text-xl font-semibold">Omni Palette</h1>
-        <p class="text-sm text-zinc-400">Phase 3 backend command bridge</p>
+        <p class="text-sm text-zinc-400">Phase 5A core palette UX parity</p>
       </div>
       <div class="flex rounded-md border border-zinc-700 p-1 text-sm">
         <button
@@ -260,7 +318,7 @@
           <button
             class="rounded border border-zinc-700 px-3 py-1 text-zinc-100 disabled:text-zinc-600"
             disabled={!selectedId}
-            onclick={runSelectedCommand}
+            onclick={() => runCommand(selectedId)}
             type="button"
           >
             Run selected
@@ -292,11 +350,15 @@
                   "flex w-full items-center justify-between rounded-md px-3 py-3 text-left",
                   selected ? "border border-amber-500 bg-zinc-800" : "border border-transparent",
                 ].join(" ")}
-                onclick={() => (selectedId = command.id)}
+                onclick={() => runCommand(command.id)}
                 type="button"
               >
                 <span>
-                  <span class="block text-sm font-medium">{command.label}</span>
+                  <span class="block text-sm font-medium">
+                    {#each highlightedLabelSegments(command.label, command.label_matches) as segment}
+                      <span class={segment.highlighted ? "text-amber-300" : ""}>{segment.text}</span>
+                    {/each}
+                  </span>
                   <span class="block text-xs text-zinc-400">
                     {command.focus_state} - {command.priority}
                   </span>

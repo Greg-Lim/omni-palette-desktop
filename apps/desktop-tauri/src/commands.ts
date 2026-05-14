@@ -24,6 +24,11 @@ export type CommandRow = {
   label_matches: MatchRange[];
 };
 
+export type HighlightedLabelSegment = {
+  text: string;
+  highlighted: boolean;
+};
+
 export type PaletteSnapshot = {
   session_id: string;
   query: string;
@@ -100,6 +105,8 @@ export type WindowLifecycleStatus = {
   last_error: string | null;
 };
 
+export type PaletteKeyAction = "select_next" | "select_previous" | "execute" | "hide";
+
 export type PaletteInvoke = <T>(
   command: string,
   args?: Record<string, unknown>,
@@ -115,6 +122,7 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
     getHotkeyStatus: () => invokeCommand<HotkeyStatus>("get_hotkey_status"),
     getWindowLifecycleStatus: () =>
       invokeCommand<WindowLifecycleStatus>("get_window_lifecycle_status"),
+    hidePaletteWindow: () => invokeCommand<WindowLifecycleStatus>("hide_palette_window"),
   };
 }
 
@@ -126,6 +134,115 @@ export function nextSelectedCommandId(currentId: string, commands: CommandRow[])
   }
 
   return commands[0]?.id ?? "";
+}
+
+export function nextKeyboardSelectedCommandId(
+  currentId: string,
+  commands: CommandRow[],
+  delta: number,
+): string {
+  if (commands.length === 0) {
+    return "";
+  }
+
+  const currentIndex = commands.findIndex((command) => command.id === currentId);
+  if (currentIndex < 0) {
+    return commands[0].id;
+  }
+
+  const nextIndex = (currentIndex + delta + commands.length) % commands.length;
+  return commands[nextIndex].id;
+}
+
+export function commandExecutionShouldHidePalette(result: CommandExecutionResult): boolean {
+  return result.status === "succeeded";
+}
+
+export function paletteKeyAction(key: string): PaletteKeyAction | null {
+  switch (key) {
+    case "ArrowDown":
+      return "select_next";
+    case "ArrowUp":
+      return "select_previous";
+    case "Enter":
+      return "execute";
+    case "Escape":
+      return "hide";
+    default:
+      return null;
+  }
+}
+
+export function shouldHidePaletteForWindowBlur(
+  status: WindowLifecycleStatus | null,
+): boolean {
+  return status?.visible === true;
+}
+
+export function highlightedLabelSegments(
+  label: string,
+  ranges: MatchRange[],
+): HighlightedLabelSegment[] {
+  const validRanges = ranges
+    .map((range) => ({
+      start: byteOffsetToStringIndex(label, range.start),
+      end: byteOffsetToStringIndex(label, range.end),
+    }))
+    .filter(
+      (range): range is { start: number; end: number } =>
+        range.start !== null && range.end !== null && range.start < range.end,
+    )
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  const segments: HighlightedLabelSegment[] = [];
+  let cursor = 0;
+
+  for (const range of validRanges) {
+    if (range.start < cursor) {
+      continue;
+    }
+
+    if (cursor < range.start) {
+      segments.push({ text: label.slice(cursor, range.start), highlighted: false });
+    }
+
+    segments.push({ text: label.slice(range.start, range.end), highlighted: true });
+    cursor = range.end;
+  }
+
+  if (cursor < label.length) {
+    segments.push({ text: label.slice(cursor), highlighted: false });
+  }
+
+  return segments.length > 0 ? segments : [{ text: label, highlighted: false }];
+}
+
+function byteOffsetToStringIndex(label: string, byteOffset: number): number | null {
+  if (!Number.isInteger(byteOffset) || byteOffset < 0) {
+    return null;
+  }
+
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  for (let index = 0; index < label.length; ) {
+    if (bytes === byteOffset) {
+      return index;
+    }
+
+    const codePoint = label.codePointAt(index);
+    if (codePoint === undefined) {
+      return null;
+    }
+
+    const char = String.fromCodePoint(codePoint);
+    bytes += encoder.encode(char).length;
+    index += char.length;
+
+    if (bytes > byteOffset) {
+      return null;
+    }
+  }
+
+  return bytes === byteOffset ? label.length : null;
 }
 
 export function formatRuntimeStatus(status: RuntimeStatus): string {
