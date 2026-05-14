@@ -1,327 +1,221 @@
-# Tauri Migration Plan
+# Omni Palette Tauri Migration Plan
 
-> Paused by the Svelte-first migration. This React-based plan is no longer the
-> active Tauri migration authority. Before doing any Omni Palette Tauri migration
-> work, read `docs/migration/svelte-tauri-migration-plan.md` first and follow it.
-> Do not continue React-specific Tauri migration phases unless the Svelte plan
-> explicitly says to resume them.
+> Canonical migration memory: before doing any Omni Palette egui-to-Tauri
+> migration work, read this document first.
+>
+> React-to-Svelte migration work is complete. Future Tauri frontend work uses
+> Svelte with Vite, TypeScript, Tailwind, and Bun. Preserve the existing egui
+> app until the Svelte/Tauri app reaches functional parity.
 
 ## Migration Status
 
-- Current phase: Phase 3 - Backend Contract Extraction (completed)
-- Last updated: 2026-05-13
+- Current phase: Phase 5B - Guide Mode Usability And Refined Palette
+  Positioning is next.
+- Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
+  Phase 4D, and Phase 5A.
+- Last updated: 2026-05-14.
 - Update this section whenever the migration moves to a new phase.
 
 ## Goal
 
-Migrate Omni Palette from the current egui/eframe UI to a Tauri desktop app with
-React, TypeScript, and Tailwind. The migration should happen in phases while the
-existing egui app stays runnable until the Tauri version reaches functional
-parity.
+Migrate Omni Palette from the current egui/eframe UI to a Tauri v2 desktop app
+with a Svelte frontend. The migration should happen in phases while the existing
+egui app stays runnable until the Tauri version reaches functional parity.
 
-## Current Direction
+## Current State
 
-- Use Tauri v2 as the desktop shell.
-- Use React and TypeScript for the frontend.
-- Use Tailwind for styling, starting with wireframe-level UI only.
-- Use Bun for Phase 2 frontend package management and scripts.
-- Keep the Rust runtime, Windows integration, extension loading, plugin host,
-  search, and command execution logic as the system backend.
-- Build the new Tauri app beside the current egui app first, then cut over only
-  after parity is proven.
-
-Relevant Tauri references:
-
-- https://v2.tauri.app/start/create-project/
-- https://v2.tauri.app/start/frontend/vite/
-- https://v2.tauri.app/develop/calling-rust/
-- https://v2.tauri.app/develop/calling-frontend/
-- https://v2.tauri.app/plugin/global-shortcut/
-- https://v2.tauri.app/learn/system-tray/
-
-## File And Folder Inventory
-
-### Migrate First
-
-These files define the current UI/runtime boundary or contain egui-specific
-desktop shell behavior. They should be examined first when planning actual code
-changes.
-
-- `src/main.rs`
-  - Current entrypoint, runtime bridge, hotkey loop, UI signal handling, settings
-    side effects, extension reload/install events, and command execution
-    closures.
-  - Needs to be split so Tauri can own the window/event surface while reusable
-    runtime logic remains in Rust modules.
-- `src/ui/app.rs`
-  - Current egui app shell, `UiSignal`, `UiEvent`, `Command`, visibility state,
-    palette window control, guide state, debug overlay wiring, and settings
-    wiring.
-  - Needs to become a Tauri-safe typed backend/frontend contract rather than an
-    egui app.
-- `src/platform/ui_support.rs`
-  - Current platform UI action facade, palette window token, tray action channel,
-    and egui-dependent runtime construction.
-  - Needs a Tauri-compatible equivalent for tray actions, foreground checks, and
-    window focus behavior.
-- `src/platform/windows/ui_support.rs`
-  - Current Windows tray creation and egui/raw-window-handle integration.
-  - Needs to be replaced or adapted to Tauri window handles and Tauri tray APIs.
-- `src/theme/mod.rs`
-  - Current theme tokens are tied to egui color/style types.
-  - Needs either frontend CSS/Tailwind tokens or serializable theme data if theme
-    settings remain Rust-owned.
-
-### Rebuild In React
-
-These are UI implementations that should not be ported line-for-line. They
-should be recreated as React components after the backend contract is stable.
-
-- `src/ui/palette.rs`
-  - Rebuild as command palette React components: input, rows, selection,
-    highlighted matches, fixed actions, and empty state.
-- `src/ui/settings.rs`
-  - Rebuild as React settings screens after palette/runtime contracts are stable.
-- `src/ui/guide.rs`
-  - Rebuild as a lightweight always-on-top guide window or overlay.
-- `src/ui/debug_overlay.rs`
-  - Rebuild after core palette and settings behavior are working.
-- `src/ui/components/**`
-  - Replace with React/Tailwind components.
-
-### Keep Mostly Unchanged
-
-These folders should remain the backbone of the system. Changes should be small
-and driven by serialization or API boundary needs.
-
-- `src/core/**`
-  - Keep extension discovery, install state, registry, plugin runtime, command
-    filtering, fuzzy search, and performance helpers.
-- `src/config/**`
-  - Keep runtime config, extension schemas, and ignored app config.
-- `src/domain/**`
-  - Keep command, action, hotkey, focus, and OS domain types.
-- `src/platform/windows/context/**`
-  - Keep foreground/background window discovery and active interaction detection.
-- `src/platform/windows/mapper/**`
-  - Keep keyboard mapping.
-- `src/platform/windows/receiver/**`
-  - Keep current global hotkey receiver at first. Evaluate Tauri global shortcut
-    only after existing passthrough and guide behavior are preserved.
-- `src/platform/windows/sender/**`
-  - Keep shortcut sending and sequence execution.
-- `extensions/**`
-  - Keep bundled static extensions, bundled WASM plugins, registry packages, and
-    catalog data.
-- `xtask/**`
-  - Keep packaging utilities unless Tauri packaging later requires integration.
-
-### Add New
-
-- `apps/desktop-tauri/`
-  - New Tauri app root.
-- `apps/desktop-tauri/src-tauri/`
-  - New Tauri Rust crate, likely added as a workspace member.
-- `apps/desktop-tauri/src/`
-  - React, TypeScript, and Tailwind frontend.
-
-## Phases
-
-### Phase 1: Planning And Inventory
-
-Status: this document.
-
-Purpose:
-
-- Establish the migration direction.
-- Mark which files and folders move first, which are rebuilt, and which remain.
-- Keep future migration work anchored to a shared written plan.
-
-Acceptance criteria:
-
-- `docs/migration/tauri-migration-plan.md` exists.
-- The document identifies the first migration targets and protected backend
-  areas.
-- Future Tauri migration tasks refer back to this document before making code
-  changes.
-
-### Phase 2: Minimal Tauri Wireframe
-
-Purpose:
-
-- Create a Tauri v2 shell with React, TypeScript, Vite, and Tailwind.
-- Prove the frontend/backend toolchain works without migrating real behavior yet.
-
-Scope:
-
-- Add a minimal Tauri app under `apps/desktop-tauri/`.
-- Add a simple backend health command exposed through Tauri invoke.
-- Add a wireframe palette screen with:
-  - Search input.
-  - Static command rows.
-  - Selected row styling.
-  - Empty state.
-  - Settings placeholder view.
-- Keep styling intentionally plain and Tailwind-based.
-- Use Bun for dependency installation and frontend scripts.
-
-Out of scope:
-
-- Real global hotkeys.
-- Real command execution.
-- Real extension settings.
-- egui removal.
-
-Acceptance criteria:
-
-- The Tauri app launches.
-- React can call a Rust command and render the result.
-- The wireframe makes the intended palette structure visible.
-- The existing egui app still builds and runs.
-
-### Phase 3: Backend Contract Extraction
-
-Purpose:
-
-- Build the first real bridge between the Tauri React frontend and the existing
-  Rust runtime without migrating hotkeys, settings, or full command execution.
-- Split the current binary-only Rust crate into a reusable library boundary so
-  the Tauri crate can call shared Omni Palette backend code instead of
-  duplicating runtime logic.
-- Replace Phase 2 static frontend commands with backend-provided serializable
-  command DTOs and backend-owned command IDs.
-
-Scope:
-
-- Add a root library target with `src/lib.rs`.
-  - Export reusable modules such as `config`, `core`, `domain`, `platform`, and
-    `theme` from the library.
-  - Keep egui-specific UI modules and the egui runtime bridge in `src/main.rs`.
-  - Update `src/main.rs` to import shared modules through the library so the
-    existing egui app continues to run unchanged.
-- Add a backend contract module for serializable frontend communication:
-  - `CommandId`
-  - `PaletteSessionId`
-  - `CommandDto`
-  - `MatchRangeDto`
-  - `PaletteSnapshotDto`
-  - `PaletteBootstrapDto`
-  - `CommandExecutionResultDto`
-- Add a Rust command-session service that:
-  - Queries `MasterRegistry` using the current Windows context.
-  - Converts `UnitAction` values into serializable command DTOs.
-  - Stores Rust-only executable command records behind generated opaque command
-    IDs.
-  - Uses existing `core::command_filter` behavior for query filtering and match
-    ranges.
-  - Includes a built-in reload-extensions command.
-- Add Tauri commands:
+- `apps/desktop-tauri/` contains the Tauri v2 app with Svelte, TypeScript,
+  Vite, Tailwind, and Bun.
+- React dependencies and TSX entrypoints have been removed from the Tauri
+  frontend.
+- The Tauri shell exposes these invoke commands:
+  - `health_check`
   - `get_palette_bootstrap`
   - `search_commands`
   - `execute_command`
-- In Phase 3, `execute_command` should support safe built-in commands such as
-  reload extensions. Shortcut-backed and plugin-backed actions may return a
-  clear "deferred until runtime integration" result; full execution belongs to
-  Phase 4.
-- Update React to load commands from `search_commands` instead of
-  `sampleCommands`, while preserving the Phase 2 wireframe layout and selection
-  behavior.
+  - `get_hotkey_status`
+  - `get_window_lifecycle_status`
+  - `hide_palette_window`
+- The existing egui app remains the production UI until final Tauri cutover.
 
-Interfaces:
+## Direction
 
-- Backend owns command discovery, filtering, sorting, match ranges, and command
-  ID generation.
-- Frontend owns query text, selected command ID, rendering, and invoking backend
-  commands.
-- DTO fields use serde-compatible snake_case names on the wire, and TypeScript
-  types match those names exactly.
-- Command IDs are opaque strings to React; React must not infer runtime behavior
-  from them.
-- Keep `health_check` as a simple smoke-test command.
+- Use Svelte with Vite, not SvelteKit.
+- Keep TypeScript for frontend contracts.
+- Keep Tailwind for the Tauri frontend unless a later phase explicitly changes
+  styling.
+- Keep Bun for frontend package management and scripts.
+- Keep Rust DTOs and Tauri invoke command names stable unless a later phase
+  explicitly changes them.
+- Do not reintroduce React dependencies or React-specific migration work.
+- Do not remove egui/eframe until Phase 8 final cutover.
 
-Acceptance criteria:
+## File And Folder Inventory
 
-- The root crate exposes reusable backend modules through `src/lib.rs`.
-- The existing egui app remains functional after the library split.
-- The Tauri frontend receives backend-generated command DTOs instead of static
-  sample rows.
-- Empty and non-empty searches are served by Rust using existing command filter
-  behavior.
-- Unknown or stale command IDs return a controlled result instead of panicking.
-- Built-in reload can be represented and dispatched without frontend-owned
-  closures.
-- Global hotkeys, palette show/hide events, guide mode, settings save,
-  extension settings UI, and full shortcut/plugin execution remain deferred to
-  later phases.
+### Tauri Frontend
 
-### Phase 4: Runtime Integration
+- `apps/desktop-tauri/src/App.svelte`
+  - Main Svelte palette shell, status strip, placeholder settings view, command
+    rows, keyboard navigation, execution, and lifecycle event handling.
+- `apps/desktop-tauri/src/commands.ts`
+  - TypeScript API boundary for Tauri invokes, DTO mirrors, formatting helpers,
+    selection helpers, and label highlight helpers.
+- `apps/desktop-tauri/src-tauri/**`
+  - Tauri Rust crate, invoke registration, hotkey bridge, window lifecycle, and
+    frontend-facing backend state.
+
+### Shared Rust Backend
+
+- `src/backend_contract.rs`
+  - Shared backend-owned command discovery, filtering, command IDs, execution
+    result DTOs, runtime status DTOs, and command session state.
+- `src/runtime_state.rs`
+  - Shared runtime loading and reload state for config, extension discovery,
+    registries, plugin registry, and ignored-process config.
+- `src/core/**`, `src/config/**`, `src/domain/**`, and
+  `src/platform/windows/**`
+  - Keep as the backbone for extension loading, plugins, fuzzy search, context
+    lookup, hotkeys, and command sending.
+
+### egui Surfaces To Preserve Until Cutover
+
+- `src/ui/app.rs`
+- `src/ui/palette.rs`
+- `src/ui/settings.rs`
+- `src/ui/guide.rs`
+- `src/ui/debug_overlay.rs`
+- `src/platform/ui_support.rs`
+- `src/platform/windows/ui_support.rs`
+
+These remain functional until the Tauri app reaches parity. Do not delete or
+degrade them before Phase 8.
+
+## Completed Phase History
+
+### Phase 0: Documentation And Priority Reset
+
+Status: complete.
+
+- Created the Svelte-first plan when React-to-Svelte became the priority.
+- Paused the old React-shaped Tauri plan.
+- Updated agent-facing instructions to prioritize Svelte/Tauri work.
+
+### Phase 1: Svelte Tooling Swap
+
+Status: complete.
+
+- Replaced React, React DOM, React types, and the React Vite plugin with
+  Svelte tooling.
+- Preserved Bun, TypeScript, Vite, Tailwind, Tauri scripts, and the Tauri shell.
+- Verified frontend build and tests with Svelte.
+
+### Phase 2: Port The Wireframe To Svelte
+
+Status: complete.
+
+- Rebuilt the previous frontend wireframe as `App.svelte`.
+- Kept the palette shell, query input, command rows, selected row state, status
+  strip, settings placeholder, loading/error states, and execution result state.
+- Kept `commands.ts` as the frontend API boundary.
+
+### Phase 3: Svelte Parity Verification
+
+Status: complete.
+
+- Verified the Svelte frontend reached the previous bridge behavior.
+- Confirmed React runtime dependencies and TSX entrypoints were removed.
+- Resumed the broader egui-to-Tauri migration through Svelte.
+
+### Phase 4A: Runtime State Foundation
+
+Status: complete.
+
+- Added shared runtime-state loading for config, extension discovery, registry
+  state, plugin registry, and ignored-process names.
+- Updated Tauri bootstrap status with runtime metadata.
+- Preserved the egui app and deferred hotkeys/window lifecycle/execution.
+
+### Phase 4B: Runtime Command Execution
+
+Status: complete.
+
+- Replaced deferred execution with real shortcut, shortcut-sequence, plugin, and
+  reload command dispatch.
+- Kept stale or unknown command IDs as controlled failures.
+- Preserved existing Tauri invoke names and command result wire shape.
+
+### Phase 4C: Hotkey Listener And Ignored-App Passthrough
+
+Status: complete.
+
+- Started the existing Windows hotkey listener from Tauri.
+- Preserved ignored-app passthrough behavior.
+- Added observable hotkey status without showing or hiding the Tauri window.
+
+### Phase 4D: Tauri Window Lifecycle
+
+Status: complete.
+
+- Connected accepted hotkey activations to Tauri window show/hide/focus and
+  basic positioning.
+- Captured foreground context before focusing the Tauri window.
+- Kept command search filtering against the captured open palette session.
+
+### Phase 5A: Core Palette UX Parity
+
+Status: complete.
+
+- Added `hide_palette_window`.
+- Added keyboard navigation, Enter execution, click-to-run, Escape close,
+  focus-loss close, successful-execution hide, and highlighted label matches.
+- Kept settings, tray work, guide mode, extension management, and egui removal
+  out of scope.
+
+## Remaining Phases
+
+### Phase 5B: Guide Mode Usability And Refined Palette Positioning
+
+Status: next.
 
 Purpose:
 
-- Connect the Tauri shell to the existing Omni Palette runtime.
+- Bring the remaining palette behavior closer to egui before settings work.
 
 Scope:
 
-- Reuse current startup loading:
-  - Runtime config.
-  - Extension discovery.
-  - Bundled static extensions.
-  - Installed extensions.
-  - WASM plugins.
-  - Ignored foreground app config.
-- Reuse current Windows hotkey receiver initially.
-- Wire hotkey activation to show/hide the Tauri palette window.
-- Preserve ignored-app passthrough behavior.
-- Preserve shortcut-backed and plugin-backed command execution.
-- Keep extension reload behavior available.
+- Restore guide-mode usability for shortcut-backed commands in the Tauri path.
+- Refine palette placement and sizing beyond the current basic active-monitor
+  placement.
+- Keep keyboard navigation and command execution behavior from Phase 5A.
+
+Out of scope:
+
+- Settings UI, shortcut recorder UI, extension management, tray behavior,
+  debug overlay, packaging cutover, and egui removal.
 
 Acceptance criteria:
 
-- Pressing the configured hotkey opens the Tauri palette.
-- Ignored foreground apps still receive the hotkey.
-- A selected command can execute through the existing Rust runtime.
-- Reload extensions still refreshes available commands.
-
-### Phase 5: Palette Parity
-
-Purpose:
-
-- Make the React palette match the current functional behavior before migrating
-  the larger settings surface.
-
-Scope:
-
-- Port fuzzy search display and highlighted matches.
-- Port keyboard navigation.
-- Port enter-to-run and click-to-run.
-- Port fixed actions such as reload/settings/quit as appropriate.
-- Port close-on-escape and close-on-focus-loss behavior.
-- Port palette positioning using monitor work area data.
-- Preserve guide-mode behavior for shortcut-backed commands.
-
-Acceptance criteria:
-
-- Normal command search feels equivalent to egui.
-- Focused/background/global command priority remains correct.
-- Favorite, priority, tag, and original order sorting remain correct.
-- Guide mode remains usable for shortcut-backed commands.
+- Shortcut-backed command guide behavior is usable from the Tauri palette.
+- Palette placement feels equivalent enough to continue to settings work.
+- Existing Phase 5A interactions keep passing.
 
 ### Phase 6: Settings And Extension Management
 
 Purpose:
 
-- Rebuild the settings window in React after core palette behavior works.
+- Rebuild the settings and extension management surface in Svelte after palette
+  behavior is stable.
 
 Scope:
 
-- Port general runtime settings.
-- Port activation shortcut display and recorder.
-- Port appearance/theme setting.
-- Port marketplace catalog refresh/install.
-- Port installed extension enable/disable/uninstall.
-- Port bundled extension enable/disable.
-- Port extension-specific settings panels.
-- Preserve save/reload behavior after settings changes.
+- Runtime settings display/save.
+- Activation shortcut display and recorder.
+- Appearance/theme setting.
+- Marketplace catalog refresh/install.
+- Installed extension enable/disable/uninstall.
+- Bundled extension enable/disable.
+- Extension-specific settings panels.
+- Runtime reload after settings changes where the egui app does so today.
 
 Acceptance criteria:
 
@@ -334,14 +228,14 @@ Acceptance criteria:
 
 Purpose:
 
-- Restore developer diagnostics once the core user-facing path is working.
+- Restore developer diagnostics after the core user-facing path is working.
 
 Scope:
 
 - Port debug overlay data to Tauri events or commands.
 - Preserve periodic debug snapshots in debug builds.
 - Keep runtime telemetry logs.
-- Make the debug UI secondary to palette and settings parity.
+- Keep debug UI secondary to palette and settings parity.
 
 Acceptance criteria:
 
@@ -358,11 +252,11 @@ Purpose:
 Scope:
 
 - Switch default run/build documentation to the Tauri app.
+- Replace old tray/window support with Tauri equivalents.
+- Verify Tauri packaging expectations.
 - Remove egui/eframe dependencies after no production code uses them.
 - Remove or archive old egui UI modules.
-- Replace old tray/window support with Tauri equivalents.
 - Update README and developer docs.
-- Verify packaging expectations for Tauri.
 
 Acceptance criteria:
 
@@ -372,26 +266,27 @@ Acceptance criteria:
 - No egui/eframe production dependency remains.
 - README and docs describe the Tauri workflow.
 
-## Non-Goals For Early Phases
+## Non-Goals Before Cutover
 
 - Do not rewrite the extension system.
 - Do not rewrite the WASM plugin host.
 - Do not rewrite fuzzy search unless serialization requires small adapters.
 - Do not remove egui until the Tauri app is functionally ready.
-- Do not redesign visual styling deeply in the first Tauri phase; start with a
-  wireframe.
+- Do not redesign visual styling deeply before behavior parity is secure.
 
 ## Verification Checklist
 
 Use this checklist throughout the migration:
 
+- This file is the single canonical migration plan.
+- No active migration doc points to React as the Tauri frontend.
 - Existing egui app remains runnable until final cutover.
 - Tauri app launches on Windows.
-- Global hotkey opens the palette.
+- Global hotkey opens and hides the palette.
 - Ignored app passthrough still works.
 - Palette search result ordering is unchanged.
 - Shortcut commands focus the correct target and send keys.
 - Plugin commands still execute through the WASM host.
-- Settings save to existing AppData paths.
+- Settings save to existing AppData paths once Phase 6 lands.
 - Extension reload does not replace the last good registry on failure.
 - Long-running idle behavior stays quiet in CPU, memory, and thread count.
