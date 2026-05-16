@@ -5,6 +5,9 @@ import {
   CommandExecutionResult,
   HotkeyStatus,
   RuntimeStatus,
+  RuntimeSettings,
+  RuntimeSettingsSaveResult,
+  RuntimeSettingsSaveRequest,
   WindowLifecycleStatus,
   createPaletteApi,
   commandExecutionShouldHidePalette,
@@ -18,6 +21,10 @@ import {
   nextGuideStatus,
   nextWindowLifecycleStatus,
   paletteKeyAction,
+  runtimeSettingsAreDirty,
+  runtimeSettingsSaveRequestFromDraft,
+  applyRuntimeSettingsSaveResult,
+  discardRuntimeSettingsDraft,
   nextSelectedCommandId,
   shouldStartGuideForCommand,
   shouldHidePaletteForWindowBlur,
@@ -55,6 +62,19 @@ const rows: CommandRow[] = [
     },
   },
 ];
+
+const runtimeSettings: RuntimeSettings = {
+  activation_hint: "Ctrl+Shift+P",
+  command_behavior: "execute",
+  appearance_theme: "system",
+  github: {
+    owner: "Greg-Lim",
+    repo: "omni-palette-desktop",
+    branch: "main",
+    catalog_path: "extensions/registry/catalog.v1.json",
+    enabled: false,
+  },
+};
 
 describe("palette api", () => {
   it("calls the backend bootstrap command and preserves runtime status", async () => {
@@ -225,6 +245,68 @@ describe("palette api", () => {
       { command: "start_guide", args: { commandId: "chrome-new-tab" } },
       { command: "cancel_guide", args: undefined },
       { command: "get_guide_status", args: undefined },
+    ]);
+  });
+
+  it("calls the backend settings commands and preserves payloads", async () => {
+    const runtimeStatus: RuntimeStatus = {
+      config_path: "C:/Users/example/AppData/Roaming/OmniPalette/config.toml",
+      config_error: null,
+      activation_hint: "Ctrl+Shift+P",
+      command_behavior: "execute",
+      application_count: 4,
+      ignored_process_count: 1,
+      plugin_count: 1,
+      plugin_application_count: 1,
+    };
+    const saveRequest: RuntimeSettingsSaveRequest = runtimeSettingsSaveRequestFromDraft({
+      ...runtimeSettings,
+      command_behavior: "guide",
+      appearance_theme: "dark",
+    });
+    const saveResult: RuntimeSettingsSaveResult = {
+      status: "succeeded",
+      message: "Settings saved",
+      config: { ...runtimeSettings, command_behavior: "guide", appearance_theme: "dark" },
+      runtime_status: { ...runtimeStatus, command_behavior: "guide" },
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (command === "get_settings_bootstrap") {
+        return {
+          config: runtimeSettings,
+          config_path: runtimeStatus.config_path,
+          config_error: null,
+          runtime_status: runtimeStatus,
+        } as T;
+      }
+      if (command === "save_runtime_settings") {
+        return saveResult as T;
+      }
+      return {
+        status: "succeeded",
+        message: "Reloaded extensions: 4 applications, 1 ignored processes",
+        runtime_status: runtimeStatus,
+      } as T;
+    });
+
+    expect(await api.getSettingsBootstrap()).toEqual({
+      config: runtimeSettings,
+      config_path: runtimeStatus.config_path,
+      config_error: null,
+      runtime_status: runtimeStatus,
+    });
+    expect(await api.saveRuntimeSettings(saveRequest)).toEqual(saveResult);
+    expect(await api.reloadRuntimeState()).toEqual({
+      status: "succeeded",
+      message: "Reloaded extensions: 4 applications, 1 ignored processes",
+      runtime_status: runtimeStatus,
+    });
+    expect(calls).toEqual([
+      { command: "get_settings_bootstrap", args: undefined },
+      { command: "save_runtime_settings", args: { request: saveRequest } },
+      { command: "reload_runtime_state", args: undefined },
     ]);
   });
 });
@@ -505,6 +587,77 @@ describe("guide command activation", () => {
     expect(
       shouldStartGuideForCommand({ ...runtimeStatus, command_behavior: "execute" }, rows[1]),
     ).toBe(false);
+  });
+});
+
+describe("runtime settings helpers", () => {
+  it("detects dirty editable settings and ignores activation display text", () => {
+    expect(runtimeSettingsAreDirty(runtimeSettings, runtimeSettings)).toBe(false);
+    expect(
+      runtimeSettingsAreDirty(runtimeSettings, {
+        ...runtimeSettings,
+        activation_hint: "Ctrl+Space",
+      }),
+    ).toBe(false);
+    expect(
+      runtimeSettingsAreDirty(runtimeSettings, {
+        ...runtimeSettings,
+        command_behavior: "guide",
+      }),
+    ).toBe(true);
+  });
+
+  it("builds save requests without activation shortcut fields", () => {
+    expect(runtimeSettingsSaveRequestFromDraft(runtimeSettings)).toEqual({
+      command_behavior: "execute",
+      appearance_theme: "system",
+      github: runtimeSettings.github,
+    });
+    expect(runtimeSettingsSaveRequestFromDraft(runtimeSettings)).not.toHaveProperty(
+      "activation_hint",
+    );
+  });
+
+  it("updates saved and draft settings only after successful save", () => {
+    const success: RuntimeSettingsSaveResult = {
+      status: "succeeded",
+      message: "Settings saved",
+      config: { ...runtimeSettings, command_behavior: "guide" },
+      runtime_status: {
+        config_path: null,
+        config_error: null,
+        activation_hint: "Ctrl+Shift+P",
+        command_behavior: "guide",
+        application_count: 0,
+        ignored_process_count: 0,
+        plugin_count: 0,
+        plugin_application_count: 0,
+      },
+    };
+    const failure: RuntimeSettingsSaveResult = {
+      ...success,
+      status: "failed",
+      message: "APPDATA is not set",
+      config: runtimeSettings,
+    };
+    const dirtyDraft = { ...runtimeSettings, command_behavior: "guide" as const };
+
+    expect(applyRuntimeSettingsSaveResult(runtimeSettings, dirtyDraft, success)).toEqual({
+      saved: success.config,
+      draft: success.config,
+      message: "Settings saved",
+      failed: false,
+    });
+    expect(applyRuntimeSettingsSaveResult(runtimeSettings, dirtyDraft, failure)).toEqual({
+      saved: runtimeSettings,
+      draft: dirtyDraft,
+      message: "APPDATA is not set",
+      failed: true,
+    });
+  });
+
+  it("discards runtime settings draft back to saved values", () => {
+    expect(discardRuntimeSettingsDraft(runtimeSettings)).toEqual(runtimeSettings);
   });
 });
 

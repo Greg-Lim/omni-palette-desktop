@@ -53,6 +53,58 @@ export type RuntimeStatus = {
   plugin_application_count: number;
 };
 
+export type AppearanceTheme = "system" | "light" | "dark";
+
+export type GitHubCatalogSource = {
+  owner: string;
+  repo: string;
+  branch: string;
+  catalog_path: string;
+  enabled: boolean;
+};
+
+export type RuntimeSettings = {
+  activation_hint: string;
+  command_behavior: CommandBehavior;
+  appearance_theme: AppearanceTheme;
+  github: GitHubCatalogSource;
+};
+
+export type SettingsBootstrap = {
+  config: RuntimeSettings;
+  config_path: string | null;
+  config_error: string | null;
+  runtime_status: RuntimeStatus;
+};
+
+export type RuntimeSettingsSaveRequest = {
+  command_behavior: CommandBehavior;
+  appearance_theme: AppearanceTheme;
+  github: GitHubCatalogSource;
+};
+
+export type RuntimeSettingsResultStatus = "succeeded" | "failed";
+
+export type RuntimeSettingsSaveResult = {
+  status: RuntimeSettingsResultStatus;
+  message: string;
+  config: RuntimeSettings;
+  runtime_status: RuntimeStatus;
+};
+
+export type RuntimeReloadResult = {
+  status: RuntimeSettingsResultStatus;
+  message: string;
+  runtime_status: RuntimeStatus;
+};
+
+export type RuntimeSettingsApplyResult = {
+  saved: RuntimeSettings;
+  draft: RuntimeSettings;
+  message: string;
+  failed: boolean;
+};
+
 export type PaletteBootstrap = {
   session_id: string;
   backend_status: string;
@@ -162,6 +214,10 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
       invokeCommand<GuideStatus>("start_guide", { commandId }),
     cancelGuide: () => invokeCommand<GuideStatus>("cancel_guide"),
     getGuideStatus: () => invokeCommand<GuideStatus>("get_guide_status"),
+    getSettingsBootstrap: () => invokeCommand<SettingsBootstrap>("get_settings_bootstrap"),
+    saveRuntimeSettings: (request: RuntimeSettingsSaveRequest) =>
+      invokeCommand<RuntimeSettingsSaveResult>("save_runtime_settings", { request }),
+    reloadRuntimeState: () => invokeCommand<RuntimeReloadResult>("reload_runtime_state"),
   };
 }
 
@@ -223,6 +279,60 @@ export function shouldHidePaletteForWindowBlur(
   status: WindowLifecycleStatus | null,
 ): boolean {
   return status?.visible === true;
+}
+
+export function runtimeSettingsSaveRequestFromDraft(
+  draft: RuntimeSettings,
+): RuntimeSettingsSaveRequest {
+  return {
+    command_behavior: draft.command_behavior,
+    appearance_theme: draft.appearance_theme,
+    github: { ...draft.github },
+  };
+}
+
+export function runtimeSettingsAreDirty(
+  saved: RuntimeSettings | null,
+  draft: RuntimeSettings | null,
+): boolean {
+  if (!saved || !draft) {
+    return false;
+  }
+
+  return (
+    JSON.stringify(runtimeSettingsSaveRequestFromDraft(saved)) !==
+    JSON.stringify(runtimeSettingsSaveRequestFromDraft(draft))
+  );
+}
+
+export function applyRuntimeSettingsSaveResult(
+  saved: RuntimeSettings,
+  draft: RuntimeSettings,
+  result: RuntimeSettingsSaveResult,
+): RuntimeSettingsApplyResult {
+  if (result.status === "succeeded") {
+    const next = discardRuntimeSettingsDraft(result.config);
+    return {
+      saved: next,
+      draft: discardRuntimeSettingsDraft(next),
+      message: result.message,
+      failed: false,
+    };
+  }
+
+  return {
+    saved,
+    draft,
+    message: result.message,
+    failed: true,
+  };
+}
+
+export function discardRuntimeSettingsDraft(saved: RuntimeSettings): RuntimeSettings {
+  return {
+    ...saved,
+    github: { ...saved.github },
+  };
 }
 
 export function highlightedLabelSegments(

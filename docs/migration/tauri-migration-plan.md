@@ -9,13 +9,12 @@
 
 ## Migration Status
 
-- Current phase: Phase 5B - Guide Mode And Refined Palette Positioning is
-  implemented and being verified.
-- Next phase after Phase 5B verification: Phase 6 - Settings And Extension
-  Management.
+- Current migration position: Phase 6A - Runtime Settings Foundation is
+  complete.
+- Next phase: Phase 6A.1 - Palette And Settings Surface Separation.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
-  Phase 4D, Phase 5A, and Phase 5B.
-- Last updated: 2026-05-14.
+  Phase 4D, Phase 5A, Phase 5B, and Phase 6A.
+- Last updated: 2026-05-16.
 - Update this section whenever the migration moves to a new phase.
 
 ## Goal
@@ -41,6 +40,12 @@ egui app stays runnable until the Tauri version reaches functional parity.
   - `start_guide`
   - `cancel_guide`
   - `get_guide_status`
+  - `get_settings_bootstrap`
+  - `save_runtime_settings`
+  - `reload_runtime_state`
+- Temporary development shell: through Phase 6A only, the Tauri `main` window
+  may render Palette and Settings as tabs inside one Svelte shell. This is a
+  migration shortcut, not the target UX.
 - The existing egui app remains the production UI until final Tauri cutover.
 
 ## Direction
@@ -55,13 +60,37 @@ egui app stays runnable until the Tauri version reaches functional parity.
 - Do not reintroduce React dependencies or React-specific migration work.
 - Do not remove egui/eframe until Phase 8 final cutover.
 
+## egui surface behavior baseline
+
+The Tauri migration must converge on these egui surface boundaries:
+
+- Hotkey activation opens and hides the compact palette surface only.
+- The palette surface is a hidden-by-default, decorationless, always-on-top
+  viewport sized around visible command rows.
+- Settings is a separate surface opened by a separate settings event/action.
+- In egui, `UiSignal::Show` opens the palette, while
+  `PlatformUiAction::OpenSettings` marks `SettingsState` open and shows the
+  `omni_palette_settings` settings viewport.
+- The palette may include an "Open settings for Omni Palette" fixed action, but
+  choosing it hides the palette and opens/focuses the separate settings surface.
+- Settings must not remain embedded in the hotkey palette surface for final
+  parity or cutover.
+
+Temporary Tauri deviation:
+
+- The one-window tabbed Tauri shell is allowed only as the Phase 6A temporary
+  development shell.
+- The tabbed shell ends at Phase 6A. Phase 6A.1 must split Palette and Settings
+  into distinct Tauri surfaces before Phase 6B begins.
+
 ## File And Folder Inventory
 
 ### Tauri Frontend
 
 - `apps/desktop-tauri/src/App.svelte`
-  - Main Svelte palette shell, status strip, placeholder settings view, command
-    rows, keyboard navigation, execution, and lifecycle event handling.
+  - Phase 6A temporary Svelte shell with Palette and Settings tabs. Phase 6A.1
+    must reduce the hotkey `main` window to palette-only behavior and move
+    Settings into its own Tauri surface.
 - `apps/desktop-tauri/src/Guide.svelte`
   - Compact guide-mode window rendered only for the Tauri `guide` window.
 - `apps/desktop-tauri/src/commands.ts`
@@ -122,7 +151,8 @@ Status: complete.
 
 - Rebuilt the previous frontend wireframe as `App.svelte`.
 - Kept the palette shell, query input, command rows, selected row state, status
-  strip, settings placeholder, loading/error states, and execution result state.
+  strip, temporary settings tab, loading/error states, and execution result
+  state.
 - Kept `commands.ts` as the frontend API boundary.
 
 ### Phase 3: Svelte Parity Verification
@@ -199,9 +229,79 @@ Out of scope, still deferred:
 - Settings UI, shortcut recorder UI, extension management, tray behavior, debug
   overlay, packaging cutover, and egui removal.
 
+### Phase 6A: Runtime Settings Foundation
+
+Status: complete.
+
+Completed:
+
+- Added `get_settings_bootstrap`, `save_runtime_settings`, and
+  `reload_runtime_state` invokes.
+- Added a shared runtime config save path that writes the existing AppData TOML
+  shape and updates in-memory runtime config only after successful saves.
+- Added saveable Svelte controls for command behavior, appearance theme, GitHub
+  catalog source, config status, discard, and reload.
+- Kept activation shortcut display-only.
+- Kept marketplace install/uninstall, extension toggles, extension-specific
+  settings, tray work, diagnostics, packaging cutover, and egui removal out of
+  scope.
+
 ## Remaining Phases
 
-### Phase 6: Settings And Extension Management
+### Phase 6A.1: Palette And Settings Surface Separation
+
+Purpose:
+
+- Restore egui-like separation between the hotkey palette and Settings before
+  adding more settings features.
+
+Scope:
+
+- Split the Tauri `main` hotkey window into a palette-only surface.
+- Move the Phase 6A runtime settings UI into a separate hidden-by-default Tauri
+  `settings` window/component.
+- Keep existing settings DTOs and invokes unchanged:
+  `get_settings_bootstrap`, `save_runtime_settings`, and `reload_runtime_state`.
+- Add a settings-window open path, likely `show_settings_window`, that
+  shows/focuses the `settings` window without opening the palette.
+- Restore an egui-like "Open settings" palette action that hides the palette,
+  closes the active palette session, and opens/focuses Settings.
+- Keep activation shortcut recording, tray behavior, marketplace install,
+  extension toggles, diagnostics, and cutover out of scope.
+
+Acceptance criteria:
+
+- Pressing the global hotkey shows only the compact palette surface.
+- The hotkey palette surface does not render Settings tabs, settings forms, or
+  backend/status development chrome.
+- Opening Settings uses a distinct `settings` Tauri window/surface.
+- Settings saves and reloads through the Phase 6A invokes without changing their
+  wire shapes.
+- Closing or hiding the palette does not close the Settings surface unless a
+  later phase explicitly adds that behavior.
+
+### Phase 6B: Activation Shortcut Settings
+
+Purpose:
+
+- Add activation shortcut editing after palette/settings surface separation is
+  stable.
+
+Scope:
+
+- Activation shortcut display and recorder.
+- Save shortcut edits to the existing runtime config shape.
+- Refresh Tauri hotkey listener state after a successful shortcut save.
+- Preserve ignored-app passthrough and guide hotkey behavior.
+
+Acceptance criteria:
+
+- Shortcut edits persist to `%APPDATA%\OmniPalette\config.toml`.
+- The Tauri hotkey listener uses the updated shortcut without restarting the
+  app.
+- Invalid or conflicting shortcuts fail gracefully and keep the prior shortcut.
+
+### Phase 6C: Extension Management And Extension Settings
 
 Purpose:
 
@@ -210,9 +310,6 @@ Purpose:
 
 Scope:
 
-- Runtime settings display/save.
-- Activation shortcut display and recorder.
-- Appearance/theme setting.
 - Marketplace catalog refresh/install.
 - Installed extension enable/disable/uninstall.
 - Bundled extension enable/disable.
@@ -284,7 +381,8 @@ Use this checklist throughout the migration:
 - No active migration doc points to React as the Tauri frontend.
 - Existing egui app remains runnable until final cutover.
 - Tauri app launches on Windows.
-- Global hotkey opens and hides the palette.
+- Global hotkey opens and hides the palette-only surface.
+- Settings opens as a distinct surface, not inside the hotkey palette.
 - Ignored app passthrough still works.
 - Palette search result ordering is unchanged.
 - Shortcut commands focus the correct target and send keys.

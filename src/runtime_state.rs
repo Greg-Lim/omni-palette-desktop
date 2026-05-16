@@ -47,7 +47,7 @@ impl RuntimeStateLoadOptions {
 pub struct OmniRuntimeState {
     registry: SharedRegistry,
     ignored_process_names: SharedIgnoredProcessNames,
-    runtime_config_load: RuntimeConfigLoad,
+    runtime_config_load: Arc<RwLock<RuntimeConfigLoad>>,
     runtime_paths: RuntimePaths,
     bundled_extensions_root: PathBuf,
     user_extensions_root: Option<PathBuf>,
@@ -71,7 +71,7 @@ impl OmniRuntimeState {
         Self {
             registry: Arc::new(RwLock::new(registry)),
             ignored_process_names: Arc::new(RwLock::new(ignored_process_names)),
-            runtime_config_load,
+            runtime_config_load: Arc::new(RwLock::new(runtime_config_load)),
             runtime_paths: options.runtime_paths,
             bundled_extensions_root: options.bundled_extensions_root,
             user_extensions_root: options.user_extensions_root,
@@ -83,8 +83,41 @@ impl OmniRuntimeState {
         Arc::clone(&self.registry)
     }
 
-    pub fn config(&self) -> &RuntimeConfig {
-        &self.runtime_config_load.config
+    pub fn config(&self) -> RuntimeConfig {
+        self.config_load().config
+    }
+
+    pub fn config_load(&self) -> RuntimeConfigLoad {
+        self.runtime_config_load
+            .read()
+            .map(|load| load.clone())
+            .unwrap_or_else(|err| RuntimeConfigLoad {
+                config: RuntimeConfig::default(),
+                user_config_error: Some(format!("Runtime config lock poisoned: {err}")),
+            })
+    }
+
+    pub fn config_path(&self) -> Option<PathBuf> {
+        self.runtime_paths.config_path.clone()
+    }
+
+    pub fn save_runtime_config(&self, config: RuntimeConfig) -> Result<String, String> {
+        let path = self.runtime_paths.config_path.as_ref().ok_or_else(|| {
+            "APPDATA is not set, so Omni Palette cannot save user settings.".to_string()
+        })?;
+
+        config.save_user_config(path)?;
+
+        let mut runtime_config_load = self
+            .runtime_config_load
+            .write()
+            .map_err(|err| format!("Runtime config lock poisoned: {err}"))?;
+        *runtime_config_load = RuntimeConfigLoad {
+            config,
+            user_config_error: None,
+        };
+
+        Ok("Settings saved".to_string())
     }
 
     pub fn is_ignored_process_name(&self, process_name: &str) -> bool {
@@ -99,6 +132,7 @@ impl OmniRuntimeState {
     }
 
     pub fn status(&self) -> RuntimeStatusDto {
+        let runtime_config_load = self.config_load();
         let (application_count, plugin_count, plugin_application_count) = self
             .registry
             .read()
@@ -124,9 +158,9 @@ impl OmniRuntimeState {
                 .config_path
                 .as_ref()
                 .map(|path| path.display().to_string()),
-            config_error: self.runtime_config_load.user_config_error.clone(),
-            activation_hint: self.runtime_config_load.config.activation.to_string(),
-            command_behavior: self.runtime_config_load.config.command_behavior,
+            config_error: runtime_config_load.user_config_error,
+            activation_hint: runtime_config_load.config.activation.to_string(),
+            command_behavior: runtime_config_load.config.command_behavior,
             application_count,
             ignored_process_count,
             plugin_count,
@@ -214,7 +248,10 @@ fn dev_config_path_for_bundled_root(bundled_extensions_root: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::runtime::RuntimePaths, domain::action::Os};
+    use crate::{
+        config::runtime::{CommandBehavior, GitHubExtensionSource, RuntimePaths, ThemeMode},
+        domain::action::Os,
+    };
 
     #[test]
     fn ignored_process_lookup_normalizes_configured_names() {
@@ -236,6 +273,72 @@ mod tests {
         assert!(runtime.is_ignored_process_name("CODE.EXE"));
         assert!(!runtime.is_ignored_process_name("notepad.exe"));
         assert!(!runtime.is_ignored_process_name(""));
+    }
+
+    #[test]
+    fn saving_runtime_config_updates_shared_snapshot_and_status() {
+        let root = runtime_test_root("save-runtime-config");
+        let config_path = root.join("config.toml");
+        let runtime = OmniRuntimeState::load(RuntimeStateLoadOptions {
+            bundled_extensions_root: root.clone(),
+            user_extensions_root: None,
+            dev_config_path: root.join("missing-dev-config.toml"),
+            runtime_paths: RuntimePaths {
+                config_path: Some(config_path.clone()),
+                local_cache_root: None,
+            },
+            current_os: Os::Windows,
+        });
+        let mut next_config = runtime.config();
+        next_config.command_behavior = CommandBehavior::Guide;
+        next_config.appearance.theme = ThemeMode::Light;
+        next_config.github = GitHubExtensionSource {
+            owner: "Example".to_string(),
+            repo: "omni-extensions".to_string(),
+            branch: "stable".to_string(),
+            catalog_path: "catalog.json".to_string(),
+            enabled: true,
+        };
+
+        let message = runtime
+            .save_runtime_config(next_config.clone())
+            .expect("config save should succeed");
+
+        assert_eq!(message, "Settings saved");
+        assert_eq!(runtime.config(), next_config);
+        assert_eq!(runtime.status().command_behavior, CommandBehavior::Guide);
+        let saved = std::fs::read_to_string(config_path).expect("config should be written");
+        assert!(saved.contains("behavior = \"guide\""));
+        assert!(saved.contains("theme = \"light\""));
+        assert!(saved.contains("owner = \"Example\""));
+    }
+
+    #[test]
+    fn saving_runtime_config_without_config_path_fails_without_updating_snapshot() {
+        let root = runtime_test_root("save-runtime-config-missing-path");
+        let runtime = OmniRuntimeState::load(RuntimeStateLoadOptions {
+            bundled_extensions_root: root.clone(),
+            user_extensions_root: None,
+            dev_config_path: root.join("missing-dev-config.toml"),
+            runtime_paths: RuntimePaths {
+                config_path: None,
+                local_cache_root: None,
+            },
+            current_os: Os::Windows,
+        });
+        let original = runtime.config();
+        let mut next_config = original.clone();
+        next_config.command_behavior = CommandBehavior::Guide;
+
+        let err = runtime
+            .save_runtime_config(next_config)
+            .expect_err("missing path should fail");
+
+        assert_eq!(
+            err,
+            "APPDATA is not set, so Omni Palette cannot save user settings."
+        );
+        assert_eq!(runtime.config(), original);
     }
 
     fn runtime_test_root(name: &str) -> PathBuf {

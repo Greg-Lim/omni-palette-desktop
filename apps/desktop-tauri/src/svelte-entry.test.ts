@@ -31,4 +31,14 @@ describe("Svelte frontend entrypoint", () => {
     expect(mainSource).toContain("getCurrentWindow().label");
     expect(mainSource).toContain("mount(Component,");
   });
+
+  it("renders Phase 6A settings controls without shortcut recording", () => {
+    const appSource = readFileSync(join(srcDir, "App.svelte"), "utf8");
+
+    expect(appSource).toContain("Activation shortcut");
+    expect(appSource).toContain("Command behavior");
+    expect(appSource).toContain("Catalog source");
+    expect(appSource).toContain("Save settings");
+    expect(appSource).not.toContain("Record");
+  });
 });
