@@ -110,6 +110,51 @@ export type RuntimeReloadResult = {
   runtime_status: RuntimeStatus;
 };
 
+export type ExtensionKind = "static" | "wasm_plugin";
+
+export type ExtensionRow = {
+  id: string;
+  source_id: string;
+  name: string;
+  version: string;
+  kind: ExtensionKind;
+  enabled: boolean;
+  can_uninstall: boolean;
+  has_settings: boolean;
+};
+
+export type ExtensionsBootstrap = {
+  bundled_extensions: ExtensionRow[];
+  downloaded_extensions: ExtensionRow[];
+  install_root: string | null;
+  install_root_error: string | null;
+  runtime_status: RuntimeStatus;
+};
+
+export type ExtensionEnabledRequest = {
+  extension_id: string;
+  source_id: string;
+  enabled: boolean;
+};
+
+export type ExtensionTargetRequest = {
+  extension_id: string;
+  source_id: string;
+};
+
+export type ExtensionMutationResult = {
+  status: RuntimeSettingsResultStatus;
+  message: string;
+  extensions: ExtensionsBootstrap;
+  runtime_status: RuntimeStatus;
+};
+
+export type ExtensionMutationApplyResult = {
+  extensions: ExtensionsBootstrap;
+  message: string;
+  failed: boolean;
+};
+
 export type SettingsWindowStatus = {
   status: RuntimeSettingsResultStatus;
   message: string;
@@ -244,6 +289,12 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
     saveRuntimeSettings: (request: RuntimeSettingsSaveRequest) =>
       invokeCommand<RuntimeSettingsSaveResult>("save_runtime_settings", { request }),
     reloadRuntimeState: () => invokeCommand<RuntimeReloadResult>("reload_runtime_state"),
+    getExtensionsBootstrap: () =>
+      invokeCommand<ExtensionsBootstrap>("get_extensions_bootstrap"),
+    setExtensionEnabled: (request: ExtensionEnabledRequest) =>
+      invokeCommand<ExtensionMutationResult>("set_extension_enabled", { request }),
+    uninstallExtension: (request: ExtensionTargetRequest) =>
+      invokeCommand<ExtensionMutationResult>("uninstall_extension", { request }),
     showSettingsWindow: () => invokeCommand<SettingsWindowStatus>("show_settings_window"),
   };
 }
@@ -425,6 +476,25 @@ export function discardRuntimeSettingsDraft(saved: RuntimeSettings): RuntimeSett
     ...saved,
     activation_shortcut: { ...saved.activation_shortcut },
     github: { ...saved.github },
+  };
+}
+
+export function applyExtensionMutationResult(
+  current: ExtensionsBootstrap,
+  result: ExtensionMutationResult,
+): ExtensionMutationApplyResult {
+  if (result.status === "succeeded") {
+    return {
+      extensions: result.extensions,
+      message: result.message,
+      failed: false,
+    };
+  }
+
+  return {
+    extensions: current,
+    message: result.message,
+    failed: true,
   };
 }
 

@@ -45,7 +45,7 @@ describe("Svelte frontend entrypoint", () => {
     expect(appSource).not.toContain("Save settings");
   });
 
-  it("renders Phase 6A settings controls in the settings surface", () => {
+  it("renders Phase 6C settings navigation and surfaces in the settings window", () => {
     const settingsPath = join(srcDir, "Settings.svelte");
 
     expect(existsSync(settingsPath)).toBe(true);
@@ -55,11 +55,18 @@ describe("Svelte frontend entrypoint", () => {
     }
 
     const settingsSource = readFileSync(settingsPath, "utf8");
+    expect(settingsSource).toContain("General");
+    expect(settingsSource).toContain("Manage Extensions");
+    expect(settingsSource).toContain("Marketplace");
     expect(settingsSource).toContain("Activation shortcut");
     expect(settingsSource).toContain("Record");
     expect(settingsSource).toContain("Reset");
     expect(settingsSource).toContain("Command behavior");
+    expect(settingsSource).toContain("Bundled Defaults");
+    expect(settingsSource).toContain("Downloaded Extensions");
+    expect(settingsSource).toContain("No downloaded extensions installed yet.");
     expect(settingsSource).toContain("Catalog source");
+    expect(settingsSource).toContain("Catalog refresh and install arrive in Phase 6C.2");
     expect(settingsSource).toContain("Save settings");
   });
 

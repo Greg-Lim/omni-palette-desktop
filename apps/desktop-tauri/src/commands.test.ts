@@ -4,6 +4,8 @@ import {
   ActivationShortcut,
   CommandRow,
   CommandExecutionResult,
+  ExtensionMutationResult,
+  ExtensionsBootstrap,
   HotkeyStatus,
   RuntimeStatus,
   RuntimeSettings,
@@ -14,6 +16,7 @@ import {
   OPEN_SETTINGS_COMMAND_ID,
   REFRESH_EXTENSIONS_COMMAND_ID,
   activationShortcutFromKeyboardEvent,
+  applyExtensionMutationResult,
   createPaletteApi,
   commandExecutionShouldHidePalette,
   formatHotkeyStatus,
@@ -117,6 +120,35 @@ const runtimeStatus: RuntimeStatus = {
   ignored_process_count: 0,
   plugin_count: 3,
   plugin_application_count: 3,
+};
+
+const extensionsBootstrap: ExtensionsBootstrap = {
+  bundled_extensions: [
+    {
+      id: "auto_typer",
+      source_id: "bundled",
+      name: "Auto Typer",
+      version: "0.1.0",
+      kind: "static",
+      enabled: true,
+      can_uninstall: false,
+      has_settings: false,
+    },
+    {
+      id: "ahk_agent",
+      source_id: "bundled",
+      name: "AHK",
+      version: "0.1.0",
+      kind: "wasm_plugin",
+      enabled: false,
+      can_uninstall: false,
+      has_settings: true,
+    },
+  ],
+  downloaded_extensions: [],
+  install_root: "C:/Users/example/AppData/Roaming/OmniPalette/extensions",
+  install_root_error: null,
+  runtime_status: runtimeStatus,
 };
 
 describe("palette api", () => {
@@ -374,6 +406,47 @@ describe("palette api", () => {
 
     expect(calls).toEqual([{ command: "show_settings_window", args: undefined }]);
     expect(status).toEqual(settingsWindowStatus);
+  });
+
+  it("calls the backend extension management commands and preserves payloads", async () => {
+    const enabledResult: ExtensionMutationResult = {
+      status: "succeeded",
+      message: "Disabled Auto Typer",
+      extensions: {
+        ...extensionsBootstrap,
+        bundled_extensions: [
+          { ...extensionsBootstrap.bundled_extensions[0], enabled: false },
+          extensionsBootstrap.bundled_extensions[1],
+        ],
+      },
+      runtime_status: runtimeStatus,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (command === "get_extensions_bootstrap") {
+        return extensionsBootstrap as T;
+      }
+      return enabledResult as T;
+    });
+    const enableRequest = {
+      extension_id: "auto_typer",
+      source_id: "bundled",
+      enabled: false,
+    };
+    const uninstallRequest = {
+      extension_id: "chrome",
+      source_id: "github",
+    };
+
+    expect(await api.getExtensionsBootstrap()).toEqual(extensionsBootstrap);
+    expect(await api.setExtensionEnabled(enableRequest)).toEqual(enabledResult);
+    expect(await api.uninstallExtension(uninstallRequest)).toEqual(enabledResult);
+    expect(calls).toEqual([
+      { command: "get_extensions_bootstrap", args: undefined },
+      { command: "set_extension_enabled", args: { request: enableRequest } },
+      { command: "uninstall_extension", args: { request: uninstallRequest } },
+    ]);
   });
 });
 
@@ -908,6 +981,39 @@ describe("runtime settings helpers", () => {
 
   it("discards runtime settings draft back to saved values", () => {
     expect(discardRuntimeSettingsDraft(runtimeSettings)).toEqual(runtimeSettings);
+  });
+});
+
+describe("extension management helpers", () => {
+  it("applies successful extension mutations and preserves rows after failures", () => {
+    const success: ExtensionMutationResult = {
+      status: "succeeded",
+      message: "Disabled Auto Typer",
+      extensions: {
+        ...extensionsBootstrap,
+        bundled_extensions: [
+          { ...extensionsBootstrap.bundled_extensions[0], enabled: false },
+          extensionsBootstrap.bundled_extensions[1],
+        ],
+      },
+      runtime_status: runtimeStatus,
+    };
+    const failure: ExtensionMutationResult = {
+      ...success,
+      status: "failed",
+      message: "Bundled extensions can be disabled, but not uninstalled.",
+    };
+
+    expect(applyExtensionMutationResult(extensionsBootstrap, success)).toEqual({
+      extensions: success.extensions,
+      message: "Disabled Auto Typer",
+      failed: false,
+    });
+    expect(applyExtensionMutationResult(extensionsBootstrap, failure)).toEqual({
+      extensions: extensionsBootstrap,
+      message: "Bundled extensions can be disabled, but not uninstalled.",
+      failed: true,
+    });
   });
 });
 

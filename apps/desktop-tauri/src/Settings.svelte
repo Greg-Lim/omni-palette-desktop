@@ -1,9 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  import type { ActivationShortcut, RuntimeSettings } from "./commands";
+  import type {
+    ActivationShortcut,
+    ExtensionRow,
+    ExtensionsBootstrap,
+    RuntimeSettings,
+  } from "./commands";
   import {
     activationShortcutFromKeyboardEvent,
+    applyExtensionMutationResult,
     applyRuntimeSettingsSaveResult,
     discardRuntimeSettingsDraft,
     formatActivationShortcut,
@@ -12,15 +18,21 @@
     runtimeSettingsSaveRequestFromDraft,
   } from "./commands";
 
+  type SettingsPage = "general" | "extensions" | "marketplace";
+
+  let activeSettingsPage: SettingsPage = "general";
   let settingsSaved: RuntimeSettings | null = null;
   let settingsDraft: RuntimeSettings | null = null;
   let defaultActivationShortcut: ActivationShortcut | null = null;
+  let extensionsBootstrap: ExtensionsBootstrap | null = null;
   let settingsConfigPath: string | null = null;
   let settingsConfigError: string | null = null;
   let settingsLoading = true;
+  let extensionsLoading = true;
   let settingsSaving = false;
   let settingsReloading = false;
   let recordingActivationShortcut = false;
+  let extensionMutationKey: string | null = null;
   let settingsMessage: string | null = null;
   let settingsFailed = false;
 
@@ -28,6 +40,7 @@
 
   onMount(() => {
     loadSettingsBootstrap();
+    loadExtensionsBootstrap();
   });
 
   function loadSettingsBootstrap() {
@@ -49,6 +62,22 @@
       })
       .finally(() => {
         settingsLoading = false;
+      });
+  }
+
+  function loadExtensionsBootstrap() {
+    extensionsLoading = true;
+    paletteApi
+      .getExtensionsBootstrap()
+      .then((bootstrap) => {
+        extensionsBootstrap = bootstrap;
+      })
+      .catch((error: unknown) => {
+        settingsMessage = errorMessage(error);
+        settingsFailed = true;
+      })
+      .finally(() => {
+        extensionsLoading = false;
       });
   }
 
@@ -180,6 +209,7 @@
         settingsMessage = `Settings saved; reload failed: ${result.message}`;
         settingsFailed = true;
       }
+      await loadExtensionsBootstrap();
     } catch (error: unknown) {
       settingsMessage = `Settings saved; reload failed: ${errorMessage(error)}`;
       settingsFailed = true;
@@ -204,9 +234,10 @@
     settingsReloading = true;
     paletteApi
       .reloadRuntimeState()
-      .then((result) => {
+      .then(async (result) => {
         settingsMessage = result.message;
         settingsFailed = result.status === "failed";
+        await loadExtensionsBootstrap();
       })
       .catch((error: unknown) => {
         settingsMessage = errorMessage(error);
@@ -215,6 +246,77 @@
       .finally(() => {
         settingsReloading = false;
       });
+  }
+
+  function setExtensionEnabled(extension: ExtensionRow, enabled: boolean) {
+    if (!extensionsBootstrap || extensionMutationKey) {
+      return;
+    }
+
+    const mutationKey = extensionKey(extension);
+    extensionMutationKey = mutationKey;
+    paletteApi
+      .setExtensionEnabled({
+        extension_id: extension.id,
+        source_id: extension.source_id,
+        enabled,
+      })
+      .then((result) => {
+        if (!extensionsBootstrap) {
+          return;
+        }
+
+        const applied = applyExtensionMutationResult(extensionsBootstrap, result);
+        extensionsBootstrap = applied.extensions;
+        settingsMessage = applied.message;
+        settingsFailed = applied.failed;
+      })
+      .catch((error: unknown) => {
+        settingsMessage = errorMessage(error);
+        settingsFailed = true;
+      })
+      .finally(() => {
+        extensionMutationKey = null;
+      });
+  }
+
+  function uninstallExtension(extension: ExtensionRow) {
+    if (!extensionsBootstrap || extensionMutationKey || !extension.can_uninstall) {
+      return;
+    }
+
+    const mutationKey = extensionKey(extension);
+    extensionMutationKey = mutationKey;
+    paletteApi
+      .uninstallExtension({
+        extension_id: extension.id,
+        source_id: extension.source_id,
+      })
+      .then((result) => {
+        if (!extensionsBootstrap) {
+          return;
+        }
+
+        const applied = applyExtensionMutationResult(extensionsBootstrap, result);
+        extensionsBootstrap = applied.extensions;
+        settingsMessage = applied.message;
+        settingsFailed = applied.failed;
+      })
+      .catch((error: unknown) => {
+        settingsMessage = errorMessage(error);
+        settingsFailed = true;
+      })
+      .finally(() => {
+        extensionMutationKey = null;
+      });
+  }
+
+  function extensionKey(extension: ExtensionRow): string {
+    return `${extension.source_id}/${extension.id}`;
+  }
+
+  function extensionKindLabel(extension: ExtensionRow): string {
+    return extension.kind === "wasm_plugin" ? "Plugin" : "Static";
   }
 
   function inputValue(event: Event): string {
@@ -232,34 +334,98 @@
 
 <svelte:window onkeydown={handleActivationShortcutKeydown} />
 
-<main class="min-h-screen bg-zinc-950 p-6 text-zinc-100">
-  <section class="mx-auto max-w-4xl rounded-lg border border-zinc-700 bg-zinc-900">
-    <div class="border-b border-zinc-700 p-4">
-      <div class="flex items-start justify-between gap-4">
+<main class="min-h-screen bg-zinc-950 text-zinc-100">
+  <section class="flex min-h-screen">
+    <aside class="w-56 border-r border-zinc-800 bg-zinc-900 p-4">
+      <h1 class="text-lg font-semibold">Omni Palette</h1>
+      <p class="text-sm text-zinc-400">Preferences</p>
+      <nav class="mt-6 grid gap-2">
+        <button
+          class={[
+            "rounded border px-3 py-2 text-left text-sm",
+            activeSettingsPage === "general"
+              ? "border-amber-500 bg-zinc-800 text-zinc-100"
+              : "border-transparent text-zinc-300",
+          ].join(" ")}
+          onclick={() => (activeSettingsPage = "general")}
+          type="button"
+        >
+          <span class="block font-medium">General</span>
+          <span class="block text-xs text-zinc-500">Shortcut and config</span>
+        </button>
+        <button
+          class={[
+            "rounded border px-3 py-2 text-left text-sm",
+            activeSettingsPage === "extensions"
+              ? "border-amber-500 bg-zinc-800 text-zinc-100"
+              : "border-transparent text-zinc-300",
+          ].join(" ")}
+          onclick={() => (activeSettingsPage = "extensions")}
+          type="button"
+        >
+          <span class="block font-medium">Manage Extensions</span>
+          <span class="block text-xs text-zinc-500">Enable and remove</span>
+        </button>
+        <button
+          class={[
+            "rounded border px-3 py-2 text-left text-sm",
+            activeSettingsPage === "marketplace"
+              ? "border-amber-500 bg-zinc-800 text-zinc-100"
+              : "border-transparent text-zinc-300",
+          ].join(" ")}
+          onclick={() => (activeSettingsPage = "marketplace")}
+          type="button"
+        >
+          <span class="block font-medium">Marketplace</span>
+          <span class="block text-xs text-zinc-500">Browse and install</span>
+        </button>
+      </nav>
+    </aside>
+
+    <div class="flex-1 p-6">
+      <header class="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 class="text-xl font-semibold">Settings</h1>
-          <p class="mt-1 text-sm text-zinc-400">
-            {settingsConfigPath ?? "Config path unavailable"}
-          </p>
+          {#if activeSettingsPage === "general"}
+            <h2 class="text-2xl font-semibold">General</h2>
+            <p class="mt-1 text-sm text-zinc-400">
+              Control how Omni Palette opens and where preferences are stored.
+            </p>
+          {:else if activeSettingsPage === "extensions"}
+            <h2 class="text-2xl font-semibold">Installed Extensions</h2>
+            <p class="mt-1 text-sm text-zinc-400">
+              Manage extensions that are available on this device.
+            </p>
+          {:else}
+            <h2 class="text-2xl font-semibold">Extension Marketplace</h2>
+            <p class="mt-1 text-sm text-zinc-400">
+              Configure the catalog source for future extension installs.
+            </p>
+          {/if}
         </div>
         <button
-          class="rounded border border-zinc-700 px-3 py-1 text-sm text-zinc-100 disabled:text-zinc-600"
+          class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
           disabled={settingsReloading}
           onclick={reloadRuntimeState}
           type="button"
         >
           {settingsReloading ? "Reloading..." : "Reload extensions"}
         </button>
-      </div>
+      </header>
+
       {#if settingsConfigError}
-        <p class="mt-3 rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-200">
+        <p class="mb-4 rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-200">
           {settingsConfigError}
+        </p>
+      {/if}
+      {#if extensionsBootstrap?.install_root_error}
+        <p class="mb-4 rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-200">
+          {extensionsBootstrap.install_root_error}
         </p>
       {/if}
       {#if settingsMessage}
         <p
           class={[
-            "mt-3 rounded border px-3 py-2 text-sm",
+            "mb-4 rounded border px-3 py-2 text-sm",
             settingsFailed
               ? "border-red-800 bg-red-950 text-red-200"
               : "border-emerald-800 bg-emerald-950 text-emerald-200",
@@ -268,173 +434,312 @@
           {settingsMessage}
         </p>
       {/if}
-    </div>
 
-    {#if settingsLoading || !settingsDraft}
-      <div class="p-6 text-sm text-zinc-400">Loading settings...</div>
-    {:else}
-      <div class="space-y-6 p-4">
-        <div class="grid gap-2">
-          <span class="text-sm font-medium text-zinc-200">Activation shortcut</span>
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">
-              {formatActivationShortcut(settingsDraft.activation_shortcut)}
-            </span>
-            <button
-              class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
-              disabled={recordingActivationShortcut}
-              onclick={recordActivationShortcut}
-              type="button"
-            >
-              {recordingActivationShortcut ? "Recording..." : "Record"}
-            </button>
-            <button
-              class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
-              disabled={!defaultActivationShortcut}
-              onclick={resetActivationShortcut}
-              type="button"
-            >
-              Reset
-            </button>
-          </div>
+      {#if settingsLoading || !settingsDraft}
+        <div class="rounded border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
+          Loading settings...
         </div>
+      {:else}
+        {#if activeSettingsPage === "general"}
+          <div class="space-y-6">
+            <fieldset class="rounded border border-zinc-800 bg-zinc-900 p-4">
+              <legend class="px-1 text-sm font-medium text-zinc-200">Appearance</legend>
+              <div class="mt-3 flex flex-wrap gap-2">
+                {#each ["system", "light", "dark"] as theme}
+                  <label
+                    class={[
+                      "rounded border px-3 py-2 text-sm capitalize",
+                      settingsDraft.appearance_theme === theme
+                        ? "border-amber-500 bg-zinc-800 text-zinc-100"
+                        : "border-zinc-700 text-zinc-300",
+                    ].join(" ")}
+                  >
+                    <input
+                      checked={settingsDraft.appearance_theme === theme}
+                      class="sr-only"
+                      name="appearance-theme"
+                      onchange={() =>
+                        updateAppearanceTheme(theme as RuntimeSettings["appearance_theme"])}
+                      type="radio"
+                    />
+                    {theme}
+                  </label>
+                {/each}
+              </div>
+            </fieldset>
 
-        <fieldset class="grid gap-3">
-          <legend class="text-sm font-medium text-zinc-200">Command behavior</legend>
-          <div class="flex flex-wrap gap-2">
-            <label
-              class={[
-                "rounded border px-3 py-2 text-sm",
-                settingsDraft.command_behavior === "execute"
-                  ? "border-amber-500 bg-zinc-800 text-zinc-100"
-                  : "border-zinc-700 text-zinc-300",
-              ].join(" ")}
-            >
-              <input
-                checked={settingsDraft.command_behavior === "execute"}
-                class="sr-only"
-                name="command-behavior"
-                onchange={() => updateCommandBehavior("execute")}
-                type="radio"
-              />
-              Execute
-            </label>
-            <label
-              class={[
-                "rounded border px-3 py-2 text-sm",
-                settingsDraft.command_behavior === "guide"
-                  ? "border-amber-500 bg-zinc-800 text-zinc-100"
-                  : "border-zinc-700 text-zinc-300",
-              ].join(" ")}
-            >
-              <input
-                checked={settingsDraft.command_behavior === "guide"}
-                class="sr-only"
-                name="command-behavior"
-                onchange={() => updateCommandBehavior("guide")}
-                type="radio"
-              />
-              Guide
-            </label>
+            <fieldset class="rounded border border-zinc-800 bg-zinc-900 p-4">
+              <legend class="px-1 text-sm font-medium text-zinc-200">
+                Activation shortcut
+              </legend>
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <span
+                  class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300"
+                >
+                  {formatActivationShortcut(settingsDraft.activation_shortcut)}
+                </span>
+                <button
+                  class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+                  disabled={recordingActivationShortcut}
+                  onclick={recordActivationShortcut}
+                  type="button"
+                >
+                  {recordingActivationShortcut ? "Recording..." : "Record"}
+                </button>
+                <button
+                  class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+                  disabled={!defaultActivationShortcut}
+                  onclick={resetActivationShortcut}
+                  type="button"
+                >
+                  Reset
+                </button>
+              </div>
+            </fieldset>
+
+            <fieldset class="rounded border border-zinc-800 bg-zinc-900 p-4">
+              <legend class="px-1 text-sm font-medium text-zinc-200">Command behavior</legend>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <label
+                  class={[
+                    "rounded border px-3 py-2 text-sm",
+                    settingsDraft.command_behavior === "execute"
+                      ? "border-amber-500 bg-zinc-800 text-zinc-100"
+                      : "border-zinc-700 text-zinc-300",
+                  ].join(" ")}
+                >
+                  <input
+                    checked={settingsDraft.command_behavior === "execute"}
+                    class="sr-only"
+                    name="command-behavior"
+                    onchange={() => updateCommandBehavior("execute")}
+                    type="radio"
+                  />
+                  Execute
+                </label>
+                <label
+                  class={[
+                    "rounded border px-3 py-2 text-sm",
+                    settingsDraft.command_behavior === "guide"
+                      ? "border-amber-500 bg-zinc-800 text-zinc-100"
+                      : "border-zinc-700 text-zinc-300",
+                  ].join(" ")}
+                >
+                  <input
+                    checked={settingsDraft.command_behavior === "guide"}
+                    class="sr-only"
+                    name="command-behavior"
+                    onchange={() => updateCommandBehavior("guide")}
+                    type="radio"
+                  />
+                  Guide
+                </label>
+              </div>
+            </fieldset>
+
+            <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
+              <h3 class="text-sm font-medium text-zinc-200">Storage</h3>
+              <p class="mt-3 rounded border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">
+                {settingsConfigPath ?? "Config path unavailable"}
+              </p>
+            </section>
           </div>
-        </fieldset>
+        {:else if activeSettingsPage === "extensions"}
+          {#if extensionsLoading || !extensionsBootstrap}
+            <div class="rounded border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
+              Loading extensions...
+            </div>
+          {:else}
+            <div class="space-y-6">
+              <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
+                <h3 class="text-lg font-medium">Bundled Defaults</h3>
+                <p class="text-sm text-zinc-400">
+                  Built into Omni Palette. They can be disabled, but not uninstalled.
+                </p>
+                <div class="mt-4 grid gap-3">
+                  {#each extensionsBootstrap.bundled_extensions as extension}
+                    <article class="rounded border border-zinc-800 bg-zinc-950 p-4">
+                      <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h4 class="font-medium">
+                            {extension.name}
+                            <span class="text-xs text-zinc-500">{extension.version}</span>
+                          </h4>
+                          <div class="mt-1 flex flex-wrap gap-2 text-xs text-zinc-400">
+                            <span>Bundled</span>
+                            <span>{extensionKindLabel(extension)}</span>
+                            <span>{extension.enabled ? "Enabled" : "Disabled"}</span>
+                          </div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                          <label class="flex items-center gap-2 text-sm text-zinc-300">
+                            <input
+                              checked={extension.enabled}
+                              disabled={extensionMutationKey === extensionKey(extension)}
+                              onchange={(event) =>
+                                setExtensionEnabled(extension, checkedValue(event))}
+                              type="checkbox"
+                            />
+                            {extension.enabled ? "Enabled" : "Disabled"}
+                          </label>
+                          {#if extension.has_settings}
+                            <button
+                              class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-500"
+                              disabled
+                              title="Extension settings panels arrive in Phase 6C.3."
+                              type="button"
+                            >
+                              Settings
+                            </button>
+                          {/if}
+                        </div>
+                      </div>
+                    </article>
+                  {/each}
+                </div>
+              </section>
 
-        <fieldset class="grid gap-3">
-          <legend class="text-sm font-medium text-zinc-200">Theme</legend>
-          <div class="flex flex-wrap gap-2">
-            {#each ["system", "light", "dark"] as theme}
-              <label
-                class={[
-                  "rounded border px-3 py-2 text-sm capitalize",
-                  settingsDraft.appearance_theme === theme
-                    ? "border-amber-500 bg-zinc-800 text-zinc-100"
-                    : "border-zinc-700 text-zinc-300",
-                ].join(" ")}
-              >
+              <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
+                <h3 class="text-lg font-medium">Downloaded Extensions</h3>
+                <p class="text-sm text-zinc-400">Installed from your configured catalog.</p>
+                {#if extensionsBootstrap.downloaded_extensions.length === 0}
+                  <p class="mt-4 rounded border border-zinc-800 bg-zinc-950 px-3 py-4 text-sm text-zinc-400">
+                    No downloaded extensions installed yet.
+                  </p>
+                {:else}
+                  <div class="mt-4 grid gap-3">
+                    {#each extensionsBootstrap.downloaded_extensions as extension}
+                      <article class="rounded border border-zinc-800 bg-zinc-950 p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h4 class="font-medium">
+                              {extension.name}
+                              <span class="text-xs text-zinc-500">{extension.version}</span>
+                            </h4>
+                            <div class="mt-1 flex flex-wrap gap-2 text-xs text-zinc-400">
+                              <span>Downloaded</span>
+                              <span>{extensionKindLabel(extension)}</span>
+                              <span>{extension.enabled ? "Enabled" : "Disabled"}</span>
+                            </div>
+                          </div>
+                          <div class="flex flex-wrap items-center gap-2">
+                            <label class="flex items-center gap-2 text-sm text-zinc-300">
+                              <input
+                                checked={extension.enabled}
+                                disabled={extensionMutationKey === extensionKey(extension)}
+                                onchange={(event) =>
+                                  setExtensionEnabled(extension, checkedValue(event))}
+                                type="checkbox"
+                              />
+                              {extension.enabled ? "Enabled" : "Disabled"}
+                            </label>
+                            {#if extension.has_settings}
+                              <button
+                                class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-500"
+                                disabled
+                                title="Extension settings panels arrive in Phase 6C.3."
+                                type="button"
+                              >
+                                Settings
+                              </button>
+                            {/if}
+                            <button
+                              class="rounded border border-red-800 px-3 py-2 text-sm text-red-200 disabled:text-zinc-600"
+                              disabled={extensionMutationKey === extensionKey(extension)}
+                              onclick={() => uninstallExtension(extension)}
+                              type="button"
+                            >
+                              Uninstall
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    {/each}
+                  </div>
+                {/if}
+              </section>
+            </div>
+          {/if}
+        {:else}
+          <div class="space-y-6">
+            <fieldset class="rounded border border-zinc-800 bg-zinc-900 p-4">
+              <legend class="px-1 text-sm font-medium text-zinc-200">Catalog source</legend>
+              <p class="mb-4 text-sm text-zinc-400">
+                Catalog refresh and install arrive in Phase 6C.2.
+              </p>
+              <label class="flex items-center gap-3 text-sm text-zinc-300">
                 <input
-                  checked={settingsDraft.appearance_theme === theme}
-                  class="sr-only"
-                  name="appearance-theme"
-                  onchange={() => updateAppearanceTheme(theme as RuntimeSettings["appearance_theme"])}
-                  type="radio"
+                  checked={settingsDraft.github.enabled}
+                  class="h-4 w-4 rounded border-zinc-700 bg-zinc-950"
+                  onchange={(event) => updateCatalogEnabled(checkedValue(event))}
+                  type="checkbox"
                 />
-                {theme}
+                Enable GitHub catalog source
               </label>
-            {/each}
+              <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                <label class="grid gap-1 text-sm text-zinc-300">
+                  Owner
+                  <input
+                    class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-amber-500"
+                    value={settingsDraft.github.owner}
+                    oninput={(event) => updateCatalogText("owner", inputValue(event))}
+                  />
+                </label>
+                <label class="grid gap-1 text-sm text-zinc-300">
+                  Repo
+                  <input
+                    class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-amber-500"
+                    value={settingsDraft.github.repo}
+                    oninput={(event) => updateCatalogText("repo", inputValue(event))}
+                  />
+                </label>
+                <label class="grid gap-1 text-sm text-zinc-300">
+                  Branch
+                  <input
+                    class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-amber-500"
+                    value={settingsDraft.github.branch}
+                    oninput={(event) => updateCatalogText("branch", inputValue(event))}
+                  />
+                </label>
+                <label class="grid gap-1 text-sm text-zinc-300">
+                  Catalog path
+                  <input
+                    class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-amber-500"
+                    value={settingsDraft.github.catalog_path}
+                    oninput={(event) => updateCatalogText("catalog_path", inputValue(event))}
+                  />
+                </label>
+              </div>
+            </fieldset>
           </div>
-        </fieldset>
+        {/if}
 
-        <fieldset class="grid gap-3">
-          <legend class="text-sm font-medium text-zinc-200">Catalog source</legend>
-          <label class="flex items-center gap-3 text-sm text-zinc-300">
-            <input
-              checked={settingsDraft.github.enabled}
-              class="h-4 w-4 rounded border-zinc-700 bg-zinc-950"
-              onchange={(event) => updateCatalogEnabled(checkedValue(event))}
-              type="checkbox"
-            />
-            Enable GitHub catalog source
-          </label>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="grid gap-1 text-sm text-zinc-300">
-              Owner
-              <input
-                class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-amber-500"
-                value={settingsDraft.github.owner}
-                oninput={(event) => updateCatalogText("owner", inputValue(event))}
-              />
-            </label>
-            <label class="grid gap-1 text-sm text-zinc-300">
-              Repo
-              <input
-                class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-amber-500"
-                value={settingsDraft.github.repo}
-                oninput={(event) => updateCatalogText("repo", inputValue(event))}
-              />
-            </label>
-            <label class="grid gap-1 text-sm text-zinc-300">
-              Branch
-              <input
-                class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-amber-500"
-                value={settingsDraft.github.branch}
-                oninput={(event) => updateCatalogText("branch", inputValue(event))}
-              />
-            </label>
-            <label class="grid gap-1 text-sm text-zinc-300">
-              Catalog path
-              <input
-                class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-amber-500"
-                value={settingsDraft.github.catalog_path}
-                oninput={(event) => updateCatalogText("catalog_path", inputValue(event))}
-              />
-            </label>
+        {#if activeSettingsPage !== "extensions"}
+          <div class="mt-6 flex items-center justify-between gap-3 border-t border-zinc-800 pt-4">
+            <span class="text-sm text-zinc-400">
+              {settingsDirty ? "Unsaved changes" : "Settings are current"}
+            </span>
+            <div class="flex gap-2">
+              <button
+                class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+                disabled={!settingsDirty || settingsSaving}
+                onclick={discardSettingsChanges}
+                type="button"
+              >
+                Discard
+              </button>
+              <button
+                class="rounded bg-amber-600 px-3 py-2 text-sm font-medium text-white disabled:bg-zinc-700 disabled:text-zinc-400"
+                disabled={!settingsDirty || settingsSaving}
+                onclick={saveRuntimeSettings}
+                type="button"
+              >
+                {settingsSaving ? "Saving..." : "Save settings"}
+              </button>
+            </div>
           </div>
-        </fieldset>
-      </div>
-
-      <div class="flex items-center justify-between gap-3 border-t border-zinc-700 p-4">
-        <span class="text-sm text-zinc-400">
-          {settingsDirty ? "Unsaved changes" : "Settings are current"}
-        </span>
-        <div class="flex gap-2">
-          <button
-            class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
-            disabled={!settingsDirty || settingsSaving}
-            onclick={discardSettingsChanges}
-            type="button"
-          >
-            Discard
-          </button>
-          <button
-            class="rounded bg-amber-600 px-3 py-2 text-sm font-medium text-white disabled:bg-zinc-700 disabled:text-zinc-400"
-            disabled={!settingsDirty || settingsSaving}
-            onclick={saveRuntimeSettings}
-            type="button"
-          >
-            {settingsSaving ? "Saving..." : "Save settings"}
-          </button>
-        </div>
-      </div>
-    {/if}
+        {/if}
+      {/if}
+    </div>
   </section>
 </main>

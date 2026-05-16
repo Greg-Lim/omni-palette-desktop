@@ -2,6 +2,7 @@ pub mod backend_contract;
 pub mod config;
 pub mod core;
 pub mod domain;
+pub mod extension_management;
 pub mod runtime_state;
 pub mod platform {
     pub mod hotkey_actions;

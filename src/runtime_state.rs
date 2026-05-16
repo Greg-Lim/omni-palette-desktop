@@ -101,6 +101,18 @@ impl OmniRuntimeState {
         self.runtime_paths.config_path.clone()
     }
 
+    pub fn bundled_extensions_root(&self) -> PathBuf {
+        self.bundled_extensions_root.clone()
+    }
+
+    pub fn user_extensions_root(&self) -> Option<PathBuf> {
+        self.user_extensions_root.clone()
+    }
+
+    pub fn current_os(&self) -> Os {
+        self.current_os
+    }
+
     pub fn save_runtime_config(&self, config: RuntimeConfig) -> Result<String, String> {
         let path = self.runtime_paths.config_path.as_ref().ok_or_else(|| {
             "APPDATA is not set, so Omni Palette cannot save user settings.".to_string()

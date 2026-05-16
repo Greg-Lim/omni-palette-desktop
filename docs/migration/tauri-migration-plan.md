@@ -9,12 +9,13 @@
 
 ## Migration Status
 
-- Current migration position: Phase 6B - Activation Shortcut Settings is
+- Current migration position: Phase 6C.1 - Settings Sidebar And Installed
+  Extensions Foundation is
   complete.
-- Next phase: Phase 6C - Extension Management And Extension Settings.
+- Next phase: Phase 6C.2 - Marketplace Catalog Refresh And Install.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
   Phase 4D, Phase 5A, Phase 5B, Phase 6A, Phase 6A.1, Phase 6A.2, and
-  Phase 6B.
+  Phase 6B, and Phase 6C.1.
 - Last updated: 2026-05-16.
 - Update this section whenever the migration moves to a new phase.
 
@@ -45,11 +46,21 @@ egui app stays runnable until the Tauri version reaches functional parity.
   - `save_runtime_settings`
   - `reload_runtime_state`
   - `show_settings_window`
+  - `get_extensions_bootstrap`
+  - `set_extension_enabled`
+  - `uninstall_extension`
 - The temporary Phase 6A tabbed shell has been split: the Tauri `main` window is
   palette-only, and Settings renders in a distinct hidden-by-default `settings`
   window.
 - Settings can record, reset, save, and immediately refresh the active Tauri
   activation shortcut through the existing hotkey listener path.
+- Settings has egui-style navigation for General, Manage Extensions, and
+  Marketplace.
+- Manage Extensions lists bundled and downloaded extensions, supports
+  enable/disable mutations, supports downloaded uninstall, and reloads runtime
+  state after successful mutations.
+- Marketplace contains the Phase 6A catalog source controls, while catalog
+  refresh, search, and install remain deferred to Phase 6C.2.
 - The existing egui app remains the production UI until final Tauri cutover.
 
 ## Direction
@@ -362,31 +373,81 @@ Completed:
   UI, tray work, styling polish, packaging cutover, and egui removal out of
   scope.
 
+### Phase 6C.1: Settings Sidebar And Installed Extensions Foundation
+
+Status: complete.
+
+Completed:
+
+- Added egui-style Settings sidebar navigation for General, Manage Extensions,
+  and Marketplace.
+- Kept Phase 6B activation shortcut, appearance, command behavior, storage,
+  save, and discard controls on General.
+- Moved GitHub catalog source controls to Marketplace while deferring catalog
+  refresh, search, and install to Phase 6C.2.
+- Added a shared Rust extension-management snapshot path for bundled static
+  extensions, bundled WASM plugins, downloaded install state, enabled/disabled
+  state, settings availability flags, and install-root errors.
+- Added Tauri invokes for extension bootstrap, enable/disable, and uninstall.
+- Added bundled and downloaded extension sections, enabled/disabled badges,
+  toggles, disabled extension Settings placeholders, and downloaded empty state
+  to the Svelte Settings window.
+- Reloaded runtime state after successful extension mutations and returned
+  controlled failures without replacing the previous UI rows.
+- Kept catalog refresh/search/install, extension-specific settings panels,
+  debug overlay UI, tray work, styling polish, packaging cutover, and egui
+  removal out of scope.
+
 ## Remaining Phases
 
-### Phase 6C: Extension Management And Extension Settings
+### Phase 6C.2: Marketplace Catalog Refresh And Install
 
 Purpose:
 
-- Rebuild the settings and extension management surface in Svelte after palette
-  behavior is stable.
+- Restore the egui Marketplace workflow on top of the Phase 6C.1 Settings
+  sidebar and extension-management foundation.
 
 Scope:
 
-- Settings sidebar navigation for General, Manage Extensions, and Marketplace.
-- Installed Extensions page with bundled and downloaded sections.
-- Marketplace catalog source save, refresh, search, and install.
-- Installed extension enable/disable/uninstall.
-- Bundled extension enable/disable.
-- Extension-specific settings panels.
-- Runtime reload after settings changes where the egui app does so today.
+- Marketplace catalog source save remains available.
+- Refresh Catalog fetches the configured GitHub catalog.
+- Reload Extensions keeps using the runtime reload path.
+- Available Extensions supports catalog search.
+- Catalog rows show name, version, description, and Install.
+- Installing catalog extensions updates install state, reloads runtime state,
+  and updates the Manage Extensions downloaded list.
+- Do not add extension-specific settings panels in this phase.
 
 Acceptance criteria:
 
-- Runtime config saves to the same AppData location.
-- Extension install state saves to the same AppData location.
-- Extension settings save to the same AppData location.
-- Saving settings refreshes runtime state where it does today.
+- Marketplace controls match the embedded egui Marketplace reference at the
+  feature level.
+- Catalog refresh failures are controlled and keep the previous catalog results.
+- Extension install state saves to the existing AppData location.
+- Successful installs reload runtime state and appear under Downloaded
+  Extensions.
+
+### Phase 6C.3: Extension-Specific Settings Panels
+
+Purpose:
+
+- Restore per-extension settings surfaces after the core extension install and
+  enablement flows are stable.
+
+Scope:
+
+- Open extension Settings buttons for extensions that expose settings.
+- Load static extension settings schemas and WASM-provided settings schemas.
+- Save extension-specific settings to the existing AppData settings path.
+- Reload runtime state after extension settings changes where egui does so
+  today.
+- Keep Debug popup/overlay in Phase 7.
+
+Acceptance criteria:
+
+- Extension settings save to the same AppData location as egui.
+- Extensions without settings do not show an actionable Settings button.
+- Extension settings failures are controlled and do not corrupt saved settings.
 
 ### Phase 7: Debug Overlay And Diagnostics
 
