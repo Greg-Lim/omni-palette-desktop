@@ -11,7 +11,8 @@
 
 - Current migration position: Phase 6A.1 - Palette And Settings Surface
   Separation is complete.
-- Next phase: Phase 6B - Activation Shortcut Settings.
+- Next phase: Phase 6A.2 - Palette Fixed Action Parity, then Phase 6B -
+  Activation Shortcut Settings.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
   Phase 4D, Phase 5A, Phase 5B, Phase 6A, and Phase 6A.1.
 - Last updated: 2026-05-16.
@@ -83,6 +84,64 @@ Resolved temporary Tauri deviation:
   development shell.
 - Phase 6A.1 split Palette and Settings into distinct Tauri surfaces before
   Phase 6B.
+
+## egui Reference Screenshots
+
+These screenshots are the feature and surface-structure baseline for the
+Tauri/Svelte migration. Styling polish is not required in the current phase,
+but visible controls, rows, commands, actions, pages, and state indicators
+should not be dropped.
+
+![egui palette reference](assets/egui-palette-reference.png)
+
+![egui settings general reference](assets/egui-settings-general-reference.png)
+
+![egui settings installed extensions reference](assets/egui-settings-installed-extensions-reference.png)
+
+![egui settings marketplace reference](assets/egui-settings-marketplace-reference.png)
+
+## Feature Parity Checklist From References
+
+Palette reference:
+
+- Command search input remains the primary hotkey surface.
+- Visible command rows include command labels and right-aligned shortcut text
+  when present.
+- Backend command rows include `Omni Palette: Reload extensions`.
+- Fixed footer actions include `Refresh extensions`.
+- Fixed footer actions include `Open settings for Omni Palette`.
+- Choosing the settings fixed action hides the palette and opens/focuses the
+  separate Settings window.
+
+General Settings reference:
+
+- Settings uses a distinct window with sidebar navigation.
+- General page includes Appearance theme selection.
+- General page includes Activation shortcut display, Record, and Reset.
+- General page includes Command Behavior selection for Execute and Guide.
+- General page includes Debug popup access.
+- General page includes Storage/config path status.
+- General page includes status, Save Settings, and Discard Changes controls.
+
+Installed Extensions reference:
+
+- Manage Extensions page lists bundled defaults separately from downloaded
+  extensions.
+- Bundled extensions show enabled/disabled badges, plugin/source labels, and
+  enable/disable toggles.
+- Extension Settings buttons appear for extensions that expose settings.
+- Downloaded extensions section shows installed items or the empty state.
+- Downloaded extensions can be enabled/disabled and removed where supported.
+
+Marketplace reference:
+
+- Marketplace page includes GitHub catalog source enable toggle and editable
+  owner, repo, branch, and catalog path fields.
+- Marketplace page includes Save Source, Refresh Catalog, and Reload Extensions
+  actions.
+- Available Extensions section includes catalog search.
+- Available extension rows include name, version, description, and Install
+  action.
 
 ## File And Folder Inventory
 
@@ -262,10 +321,34 @@ Completed:
 - Added `show_settings_window` to show/focus the `settings` window.
 - Restored an egui-like "Open settings for Omni Palette" fixed palette action
   that hides the palette before opening/focusing Settings.
+- Still missing exact egui fixed footer parity for `Refresh extensions`; track
+  that in the next palette parity cleanup before cutover.
 - Kept activation shortcut recording, tray behavior, marketplace install,
   extension toggles, diagnostics, and cutover out of scope.
 
 ## Remaining Phases
+
+### Phase 6A.2: Palette Fixed Action Parity
+
+Purpose:
+
+- Close the small palette fixed-action gap found from the egui palette
+  reference before continuing deeper Settings work.
+
+Scope:
+
+- Add an egui-like fixed `Refresh extensions` footer action in the Tauri
+  palette.
+- Keep the existing backend `Omni Palette: Reload extensions` command row.
+- Preserve the fixed `Open settings for Omni Palette` row and separate Settings
+  window behavior.
+
+Acceptance criteria:
+
+- Tauri palette exposes both fixed footer actions from the egui reference.
+- `Refresh extensions` reloads runtime state and reports success or failure
+  without opening Settings.
+- Keyboard navigation and click activation include both fixed footer actions.
 
 ### Phase 6B: Activation Shortcut Settings
 
@@ -277,6 +360,7 @@ Purpose:
 Scope:
 
 - Activation shortcut display and recorder.
+- Reset shortcut control matching the egui General Settings behavior.
 - Save shortcut edits to the existing runtime config shape.
 - Refresh Tauri hotkey listener state after a successful shortcut save.
 - Preserve ignored-app passthrough and guide hotkey behavior.
@@ -297,7 +381,9 @@ Purpose:
 
 Scope:
 
-- Marketplace catalog refresh/install.
+- Settings sidebar navigation for General, Manage Extensions, and Marketplace.
+- Installed Extensions page with bundled and downloaded sections.
+- Marketplace catalog source save, refresh, search, and install.
 - Installed extension enable/disable/uninstall.
 - Bundled extension enable/disable.
 - Extension-specific settings panels.
@@ -318,6 +404,7 @@ Purpose:
 
 Scope:
 
+- Restore the General Settings Debug popup entry point.
 - Port debug overlay data to Tauri events or commands.
 - Preserve periodic debug snapshots in debug builds.
 - Keep runtime telemetry logs.
@@ -347,6 +434,8 @@ Scope:
 Acceptance criteria:
 
 - Tauri app covers the current user workflows.
+- Tauri palette and Settings surfaces have been checked against the embedded
+  egui reference screenshots for missing features and controls.
 - `cargo test` passes.
 - Frontend checks pass.
 - No egui/eframe production dependency remains.
@@ -370,10 +459,18 @@ Use this checklist throughout the migration:
 - Tauri app launches on Windows.
 - Global hotkey opens and hides the palette-only surface.
 - Settings opens as a distinct surface, not inside the hotkey palette.
+- Palette exposes both fixed footer actions: `Refresh extensions` and
+  `Open settings for Omni Palette`.
 - Ignored app passthrough still works.
 - Palette search result ordering is unchanged.
 - Shortcut commands focus the correct target and send keys.
 - Plugin commands still execute through the WASM host.
+- Settings General page covers Appearance, Activation, Command Behavior, Debug,
+  Storage, save, discard, and status controls.
+- Settings Manage Extensions page covers bundled and downloaded extension
+  enablement, status, settings, and empty states.
+- Settings Marketplace page covers catalog source, refresh, reload, search, and
+  install controls.
 - Settings save to existing AppData paths once Phase 6 lands.
 - Extension reload does not replace the last good registry on failure.
 - Long-running idle behavior stays quiet in CPU, memory, and thread count.
