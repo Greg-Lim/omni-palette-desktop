@@ -9,12 +9,12 @@
 
 ## Migration Status
 
-- Current migration position: Phase 6A.1 - Palette And Settings Surface
-  Separation is complete.
-- Next phase: Phase 6A.2 - Palette Fixed Action Parity, then Phase 6B -
-  Activation Shortcut Settings.
+- Current migration position: Phase 6B - Activation Shortcut Settings is
+  complete.
+- Next phase: Phase 6C - Extension Management And Extension Settings.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
-  Phase 4D, Phase 5A, Phase 5B, Phase 6A, and Phase 6A.1.
+  Phase 4D, Phase 5A, Phase 5B, Phase 6A, Phase 6A.1, Phase 6A.2, and
+  Phase 6B.
 - Last updated: 2026-05-16.
 - Update this section whenever the migration moves to a new phase.
 
@@ -48,6 +48,8 @@ egui app stays runnable until the Tauri version reaches functional parity.
 - The temporary Phase 6A tabbed shell has been split: the Tauri `main` window is
   palette-only, and Settings renders in a distinct hidden-by-default `settings`
   window.
+- Settings can record, reset, save, and immediately refresh the active Tauri
+  activation shortcut through the existing hotkey listener path.
 - The existing egui app remains the production UI until final Tauri cutover.
 
 ## Direction
@@ -321,56 +323,46 @@ Completed:
 - Added `show_settings_window` to show/focus the `settings` window.
 - Restored an egui-like "Open settings for Omni Palette" fixed palette action
   that hides the palette before opening/focusing Settings.
-- Still missing exact egui fixed footer parity for `Refresh extensions`; track
-  that in the next palette parity cleanup before cutover.
 - Kept activation shortcut recording, tray behavior, marketplace install,
   extension toggles, diagnostics, and cutover out of scope.
 
-## Remaining Phases
-
 ### Phase 6A.2: Palette Fixed Action Parity
 
-Purpose:
+Status: complete.
 
-- Close the small palette fixed-action gap found from the egui palette
-  reference before continuing deeper Settings work.
+Completed:
 
-Scope:
-
-- Add an egui-like fixed `Refresh extensions` footer action in the Tauri
+- Added an egui-like fixed `Refresh extensions` footer action in the Tauri
   palette.
-- Keep the existing backend `Omni Palette: Reload extensions` command row.
-- Preserve the fixed `Open settings for Omni Palette` row and separate Settings
+- Kept the existing backend `Omni Palette: Reload extensions` command row.
+- Preserved the fixed `Open settings for Omni Palette` row and separate Settings
   window behavior.
-
-Acceptance criteria:
-
-- Tauri palette exposes both fixed footer actions from the egui reference.
-- `Refresh extensions` reloads runtime state and reports success or failure
-  without opening Settings.
-- Keyboard navigation and click activation include both fixed footer actions.
+- Reused the existing `reload_runtime_state` invoke.
+- Kept activation shortcut recording, settings page work, marketplace work,
+  debug overlay work, and styling polish out of scope.
 
 ### Phase 6B: Activation Shortcut Settings
 
-Purpose:
+Status: complete.
 
-- Add activation shortcut editing after palette/settings surface separation is
-  stable.
+Completed:
 
-Scope:
+- Added structured activation shortcut DTOs to settings bootstrap and save
+  requests while preserving `activation_hint` display compatibility.
+- Added backend save handling for activation shortcut changes, including hotkey
+  listener update, controlled failure when registration fails, and rollback if
+  config persistence fails after listener update.
+- Updated `get_hotkey_status` activation metadata after successful shortcut
+  changes.
+- Replaced the read-only Svelte Settings shortcut display with Record and Reset
+  controls.
+- Added browser keyboard-event mapping for supported Rust shortcut keys and
+  ignored modifier-only or unsupported keydown events while recording.
+- Kept Settings sidebar/extension management, marketplace work, debug overlay
+  UI, tray work, styling polish, packaging cutover, and egui removal out of
+  scope.
 
-- Activation shortcut display and recorder.
-- Reset shortcut control matching the egui General Settings behavior.
-- Save shortcut edits to the existing runtime config shape.
-- Refresh Tauri hotkey listener state after a successful shortcut save.
-- Preserve ignored-app passthrough and guide hotkey behavior.
-
-Acceptance criteria:
-
-- Shortcut edits persist to `%APPDATA%\OmniPalette\config.toml`.
-- The Tauri hotkey listener uses the updated shortcut without restarting the
-  app.
-- Invalid or conflicting shortcuts fail gracefully and keep the prior shortcut.
+## Remaining Phases
 
 ### Phase 6C: Extension Management And Extension Settings
 
@@ -471,6 +463,7 @@ Use this checklist throughout the migration:
   enablement, status, settings, and empty states.
 - Settings Marketplace page covers catalog source, refresh, reload, search, and
   install controls.
-- Settings save to existing AppData paths once Phase 6 lands.
+- Runtime settings save to existing AppData paths, including activation
+  shortcut, command behavior, theme, and catalog source.
 - Extension reload does not replace the last good registry on failure.
 - Long-running idle behavior stays quiet in CPU, memory, and thread count.

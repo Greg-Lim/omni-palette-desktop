@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  import type { RuntimeSettings } from "./commands";
+  import type { ActivationShortcut, RuntimeSettings } from "./commands";
   import {
+    activationShortcutFromKeyboardEvent,
     applyRuntimeSettingsSaveResult,
     discardRuntimeSettingsDraft,
+    formatActivationShortcut,
     paletteApi,
     runtimeSettingsAreDirty,
     runtimeSettingsSaveRequestFromDraft,
@@ -12,11 +14,13 @@
 
   let settingsSaved: RuntimeSettings | null = null;
   let settingsDraft: RuntimeSettings | null = null;
+  let defaultActivationShortcut: ActivationShortcut | null = null;
   let settingsConfigPath: string | null = null;
   let settingsConfigError: string | null = null;
   let settingsLoading = true;
   let settingsSaving = false;
   let settingsReloading = false;
+  let recordingActivationShortcut = false;
   let settingsMessage: string | null = null;
   let settingsFailed = false;
 
@@ -33,6 +37,7 @@
       .then((bootstrap) => {
         settingsSaved = discardRuntimeSettingsDraft(bootstrap.config);
         settingsDraft = discardRuntimeSettingsDraft(bootstrap.config);
+        defaultActivationShortcut = { ...bootstrap.default_activation_shortcut };
         settingsConfigPath = bootstrap.config_path;
         settingsConfigError = bootstrap.config_error;
         settingsMessage = null;
@@ -82,6 +87,55 @@
     updateSettingsDraft((draft) => {
       draft.github[field] = value;
     });
+  }
+
+  function recordActivationShortcut() {
+    recordingActivationShortcut = true;
+    settingsMessage = "Press the new activation shortcut";
+    settingsFailed = false;
+  }
+
+  function resetActivationShortcut() {
+    if (!defaultActivationShortcut) {
+      return;
+    }
+
+    updateActivationShortcut(defaultActivationShortcut);
+    recordingActivationShortcut = false;
+    settingsMessage = `Reset to ${formatActivationShortcut(defaultActivationShortcut)}`;
+    settingsFailed = false;
+  }
+
+  function updateActivationShortcut(shortcut: ActivationShortcut) {
+    const nextShortcut = {
+      ...shortcut,
+      display_text: formatActivationShortcut(shortcut),
+    };
+    updateSettingsDraft((draft) => {
+      draft.activation_shortcut = nextShortcut;
+      draft.activation_hint = nextShortcut.display_text;
+    });
+  }
+
+  function handleActivationShortcutKeydown(event: KeyboardEvent) {
+    if (!recordingActivationShortcut) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const shortcut = activationShortcutFromKeyboardEvent(event);
+    if (!shortcut) {
+      settingsMessage = "Press a supported non-modifier shortcut key";
+      settingsFailed = false;
+      return;
+    }
+
+    updateActivationShortcut(shortcut);
+    recordingActivationShortcut = false;
+    settingsMessage = `Recorded ${formatActivationShortcut(shortcut)}`;
+    settingsFailed = false;
   }
 
   function saveRuntimeSettings() {
@@ -176,6 +230,8 @@
   }
 </script>
 
+<svelte:window onkeydown={handleActivationShortcutKeydown} />
+
 <main class="min-h-screen bg-zinc-950 p-6 text-zinc-100">
   <section class="mx-auto max-w-4xl rounded-lg border border-zinc-700 bg-zinc-900">
     <div class="border-b border-zinc-700 p-4">
@@ -220,9 +276,27 @@
       <div class="space-y-6 p-4">
         <div class="grid gap-2">
           <span class="text-sm font-medium text-zinc-200">Activation shortcut</span>
-          <span class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">
-            {settingsDraft.activation_hint}
-          </span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">
+              {formatActivationShortcut(settingsDraft.activation_shortcut)}
+            </span>
+            <button
+              class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+              disabled={recordingActivationShortcut}
+              onclick={recordActivationShortcut}
+              type="button"
+            >
+              {recordingActivationShortcut ? "Recording..." : "Record"}
+            </button>
+            <button
+              class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+              disabled={!defaultActivationShortcut}
+              onclick={resetActivationShortcut}
+              type="button"
+            >
+              Reset
+            </button>
+          </div>
         </div>
 
         <fieldset class="grid gap-3">

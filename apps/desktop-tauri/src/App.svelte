@@ -17,6 +17,7 @@
     commandExecutionShouldHidePalette,
     highlightedLabelSegments,
     isOpenSettingsCommand,
+    isRefreshExtensionsCommand,
     nextKeyboardSelectedCommandId,
     nextGuideStatus,
     nextSelectedCommandId,
@@ -25,6 +26,7 @@
     paletteKeyAction,
     paletteApi,
     paletteRowsWithFixedActions,
+    refreshExtensionsFromPalette,
     shouldStartGuideForCommand,
     shouldHidePaletteForWindowBlur,
     shouldRefreshCommandsForWindowLifecycleEvent,
@@ -150,6 +152,27 @@
     }
 
     selectedId = commandId;
+    if (isRefreshExtensionsCommand(commandId)) {
+      executionResult = null;
+      refreshExtensionsFromPalette(paletteApi)
+        .then((result) => {
+          executionResult = {
+            status: result.status === "succeeded" ? "succeeded" : "failed",
+            message: result.message,
+          };
+          if (result.status === "succeeded") {
+            hidePaletteWindow();
+          }
+        })
+        .catch((error: unknown) => {
+          executionResult = {
+            status: "failed",
+            message: errorMessage(error),
+          };
+        });
+      return;
+    }
+
     if (isOpenSettingsCommand(commandId)) {
       executionResult = null;
       openSettingsFromPalette(paletteApi)

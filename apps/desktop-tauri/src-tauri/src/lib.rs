@@ -11,7 +11,10 @@ use omni_palette::{
         PaletteSnapshotDto,
     },
     config::runtime::{CommandBehavior, GitHubExtensionSource, RuntimeConfig, ThemeMode},
-    domain::action::Os,
+    domain::{
+        action::Os,
+        hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
+    },
     runtime_state::{OmniRuntimeState, RuntimeStateLoadOptions, RuntimeStatusDto},
 };
 use serde::{Deserialize, Serialize};
@@ -42,7 +45,7 @@ pub struct HealthCheckPayload {
 fn health_check() -> HealthCheckPayload {
     HealthCheckPayload {
         app_name: "Omni Palette",
-        phase: "Phase 6A.1 - Palette And Settings Surface Separation",
+        phase: "Phase 6B - Activation Shortcut Settings",
         status: "ok",
     }
 }
@@ -81,8 +84,46 @@ impl From<GitHubExtensionSourceDto> for GitHubExtensionSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivationShortcutDto {
+    pub control: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub win: bool,
+    pub key: Key,
+    pub display_text: String,
+}
+
+impl From<KeyboardShortcut> for ActivationShortcutDto {
+    fn from(shortcut: KeyboardShortcut) -> Self {
+        Self {
+            control: shortcut.modifier.control,
+            shift: shortcut.modifier.shift,
+            alt: shortcut.modifier.alt,
+            win: shortcut.modifier.win,
+            key: shortcut.key,
+            display_text: shortcut.to_string(),
+        }
+    }
+}
+
+impl ActivationShortcutDto {
+    fn to_shortcut(&self) -> KeyboardShortcut {
+        KeyboardShortcut {
+            modifier: HotkeyModifiers {
+                control: self.control,
+                shift: self.shift,
+                alt: self.alt,
+                win: self.win,
+            },
+            key: self.key,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeSettingsDto {
     pub activation_hint: String,
+    pub activation_shortcut: ActivationShortcutDto,
     pub command_behavior: CommandBehavior,
     pub appearance_theme: ThemeMode,
     pub github: GitHubExtensionSourceDto,
@@ -91,6 +132,7 @@ pub struct RuntimeSettingsDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsBootstrapDto {
     pub config: RuntimeSettingsDto,
+    pub default_activation_shortcut: ActivationShortcutDto,
     pub config_path: Option<String>,
     pub config_error: Option<String>,
     pub runtime_status: RuntimeStatusDto,
@@ -98,6 +140,7 @@ pub struct SettingsBootstrapDto {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeSettingsSaveRequestDto {
+    pub activation_shortcut: ActivationShortcutDto,
     pub command_behavior: CommandBehavior,
     pub appearance_theme: ThemeMode,
     pub github: GitHubExtensionSourceDto,
@@ -125,9 +168,20 @@ pub struct RuntimeReloadResultDto {
     pub runtime_status: RuntimeStatusDto,
 }
 
+pub trait ActivationShortcutUpdater: Send + Sync {
+    fn update_activation_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String>;
+}
+
+impl ActivationShortcutUpdater for HotkeyBridge {
+    fn update_activation_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
+        HotkeyBridge::update_activation_shortcut(self, shortcut)
+    }
+}
+
 fn runtime_settings_from_config(config: RuntimeConfig) -> RuntimeSettingsDto {
     RuntimeSettingsDto {
         activation_hint: config.activation.to_string(),
+        activation_shortcut: ActivationShortcutDto::from(config.activation),
         command_behavior: config.command_behavior,
         appearance_theme: config.appearance.theme,
         github: GitHubExtensionSourceDto::from(config.github),
@@ -138,6 +192,9 @@ fn settings_bootstrap_from_runtime(runtime: &OmniRuntimeState) -> SettingsBootst
     let config_load = runtime.config_load();
     SettingsBootstrapDto {
         config: runtime_settings_from_config(config_load.config),
+        default_activation_shortcut: ActivationShortcutDto::from(
+            RuntimeConfig::default_activation_shortcut(),
+        ),
         config_path: runtime
             .config_path()
             .as_ref()
@@ -149,12 +206,29 @@ fn settings_bootstrap_from_runtime(runtime: &OmniRuntimeState) -> SettingsBootst
 
 fn save_runtime_settings_for_runtime(
     runtime: &OmniRuntimeState,
+    activation_updater: &dyn ActivationShortcutUpdater,
     request: RuntimeSettingsSaveRequestDto,
 ) -> RuntimeSettingsSaveResultDto {
-    let mut next_config = runtime.config();
+    let previous_config = runtime.config();
+    let previous_activation = previous_config.activation;
+    let next_activation = request.activation_shortcut.to_shortcut();
+    let activation_changed = previous_activation != next_activation;
+    let mut next_config = previous_config.clone();
+    next_config.activation = next_activation;
     next_config.command_behavior = request.command_behavior;
     next_config.appearance.theme = request.appearance_theme;
     next_config.github = request.github.into();
+
+    if activation_changed {
+        if let Err(err) = activation_updater.update_activation_shortcut(next_activation) {
+            return RuntimeSettingsSaveResultDto {
+                status: RuntimeSettingsResultStatusDto::Failed,
+                message: format!("Could not update activation shortcut: {err}"),
+                config: runtime_settings_from_config(runtime.config()),
+                runtime_status: runtime.status(),
+            };
+        }
+    }
 
     match runtime.save_runtime_config(next_config) {
         Ok(message) => RuntimeSettingsSaveResultDto {
@@ -163,12 +237,28 @@ fn save_runtime_settings_for_runtime(
             config: runtime_settings_from_config(runtime.config()),
             runtime_status: runtime.status(),
         },
-        Err(message) => RuntimeSettingsSaveResultDto {
-            status: RuntimeSettingsResultStatusDto::Failed,
-            message,
-            config: runtime_settings_from_config(runtime.config()),
-            runtime_status: runtime.status(),
-        },
+        Err(message) => {
+            if activation_changed {
+                let rollback_result =
+                    activation_updater.update_activation_shortcut(previous_activation);
+                if let Err(rollback_err) = rollback_result {
+                    return RuntimeSettingsSaveResultDto {
+                        status: RuntimeSettingsResultStatusDto::Failed,
+                        message: format!(
+                            "{message}; additionally failed to restore previous activation shortcut: {rollback_err}"
+                        ),
+                        config: runtime_settings_from_config(runtime.config()),
+                        runtime_status: runtime.status(),
+                    };
+                }
+            }
+            RuntimeSettingsSaveResultDto {
+                status: RuntimeSettingsResultStatusDto::Failed,
+                message,
+                config: runtime_settings_from_config(runtime.config()),
+                runtime_status: runtime.status(),
+            }
+        }
     }
 }
 
@@ -272,7 +362,7 @@ fn save_runtime_settings(
     request: RuntimeSettingsSaveRequestDto,
     state: State<'_, AppState>,
 ) -> RuntimeSettingsSaveResultDto {
-    save_runtime_settings_for_runtime(&state.runtime_state, request)
+    save_runtime_settings_for_runtime(&state.runtime_state, state.hotkey_bridge.as_ref(), request)
 }
 
 #[tauri::command]
@@ -394,21 +484,19 @@ mod tests {
     use crate::settings_window::SettingsWindowController;
 
     use omni_palette::{
-        config::runtime::{CommandBehavior, GitHubExtensionSource, RuntimePaths, ThemeMode},
+        config::runtime::{CommandBehavior, RuntimePaths, ThemeMode},
+        domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
         runtime_state::RuntimeStateLoadOptions,
     };
 
     use super::*;
 
     #[test]
-    fn health_check_reports_phase_six_surface_separation() {
+    fn health_check_reports_phase_six_activation_shortcut_settings() {
         let payload = health_check();
 
         assert_eq!(payload.app_name, "Omni Palette");
-        assert_eq!(
-            payload.phase,
-            "Phase 6A.1 - Palette And Settings Surface Separation"
-        );
+        assert_eq!(payload.phase, "Phase 6B - Activation Shortcut Settings");
         assert_eq!(payload.status, "ok");
     }
 
@@ -451,6 +539,14 @@ mod tests {
         let bootstrap = settings_bootstrap_from_runtime(&runtime);
 
         assert_eq!(bootstrap.config.activation_hint, "Ctrl+Shift+P");
+        assert_eq!(
+            bootstrap.config.activation_shortcut,
+            ActivationShortcutDto::from(ctrl_shift_p_shortcut())
+        );
+        assert_eq!(
+            bootstrap.default_activation_shortcut,
+            ActivationShortcutDto::from(ctrl_shift_p_shortcut())
+        );
         assert_eq!(bootstrap.config.command_behavior, CommandBehavior::Execute);
         assert_eq!(bootstrap.config.appearance_theme, ThemeMode::System);
         assert_eq!(bootstrap.config.github.enabled, false);
@@ -465,19 +561,14 @@ mod tests {
     #[test]
     fn save_runtime_settings_updates_editable_fields_and_preserves_activation() {
         let runtime = runtime_state_for_settings("save-runtime-settings", true);
-        let request = RuntimeSettingsSaveRequestDto {
-            command_behavior: CommandBehavior::Guide,
-            appearance_theme: ThemeMode::Dark,
-            github: GitHubExtensionSourceDto {
-                owner: "Example".to_string(),
-                repo: "extensions".to_string(),
-                branch: "stable".to_string(),
-                catalog_path: "catalog.json".to_string(),
-                enabled: true,
-            },
-        };
+        let updater = RecordingActivationShortcutUpdater::default();
+        let request = runtime_settings_save_request(
+            ctrl_shift_p_shortcut(),
+            CommandBehavior::Guide,
+            ThemeMode::Dark,
+        );
 
-        let result = save_runtime_settings_for_runtime(&runtime, request);
+        let result = save_runtime_settings_for_runtime(&runtime, &updater, request);
 
         assert_eq!(result.status, RuntimeSettingsResultStatusDto::Succeeded);
         assert_eq!(result.message, "Settings saved");
@@ -486,18 +577,41 @@ mod tests {
         assert_eq!(result.config.activation_hint, "Ctrl+Shift+P");
         assert_eq!(runtime.config().activation.to_string(), "Ctrl+Shift+P");
         assert_eq!(runtime.status().command_behavior, CommandBehavior::Guide);
+        assert_eq!(updater.updates(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn save_runtime_settings_updates_activation_and_hotkey_listener() {
+        let runtime = runtime_state_for_settings("save-runtime-settings-activation", true);
+        let updater = RecordingActivationShortcutUpdater::default();
+        let next_shortcut = ctrl_alt_space_shortcut();
+        let request =
+            runtime_settings_save_request(next_shortcut, CommandBehavior::Guide, ThemeMode::Dark);
+
+        let result = save_runtime_settings_for_runtime(&runtime, &updater, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert_eq!(result.config.activation_hint, "Ctrl+Alt+Space");
+        assert_eq!(
+            result.config.activation_shortcut,
+            ActivationShortcutDto::from(next_shortcut)
+        );
+        assert_eq!(runtime.config().activation, next_shortcut);
+        assert_eq!(runtime.status().activation_hint, "Ctrl+Alt+Space");
+        assert_eq!(updater.updates(), vec!["Ctrl+Alt+Space".to_string()]);
     }
 
     #[test]
     fn failed_runtime_settings_save_does_not_update_config() {
         let runtime = runtime_state_for_settings("save-runtime-settings-missing-path", false);
-        let request = RuntimeSettingsSaveRequestDto {
-            command_behavior: CommandBehavior::Guide,
-            appearance_theme: ThemeMode::Light,
-            github: GitHubExtensionSourceDto::from(GitHubExtensionSource::default()),
-        };
+        let updater = RecordingActivationShortcutUpdater::default();
+        let request = runtime_settings_save_request(
+            ctrl_shift_p_shortcut(),
+            CommandBehavior::Guide,
+            ThemeMode::Light,
+        );
 
-        let result = save_runtime_settings_for_runtime(&runtime, request);
+        let result = save_runtime_settings_for_runtime(&runtime, &updater, request);
 
         assert_eq!(result.status, RuntimeSettingsResultStatusDto::Failed);
         assert_eq!(
@@ -505,6 +619,53 @@ mod tests {
             "APPDATA is not set, so Omni Palette cannot save user settings."
         );
         assert_eq!(runtime.config().command_behavior, CommandBehavior::Execute);
+        assert_eq!(updater.updates(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn hotkey_update_failure_does_not_save_activation_or_config() {
+        let runtime = runtime_state_for_settings("save-runtime-settings-hotkey-failure", true);
+        let updater = RecordingActivationShortcutUpdater::failing();
+        let request = runtime_settings_save_request(
+            ctrl_alt_space_shortcut(),
+            CommandBehavior::Guide,
+            ThemeMode::Dark,
+        );
+
+        let result = save_runtime_settings_for_runtime(&runtime, &updater, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Failed);
+        assert_eq!(
+            result.message,
+            "Could not update activation shortcut: register failed"
+        );
+        assert_eq!(runtime.config().activation, ctrl_shift_p_shortcut());
+        assert_eq!(runtime.config().command_behavior, CommandBehavior::Execute);
+        assert_eq!(updater.updates(), vec!["Ctrl+Alt+Space".to_string()]);
+    }
+
+    #[test]
+    fn config_save_failure_rolls_back_hotkey_update() {
+        let runtime = runtime_state_for_settings("save-runtime-settings-rollback", false);
+        let updater = RecordingActivationShortcutUpdater::default();
+        let request = runtime_settings_save_request(
+            ctrl_alt_space_shortcut(),
+            CommandBehavior::Guide,
+            ThemeMode::Dark,
+        );
+
+        let result = save_runtime_settings_for_runtime(&runtime, &updater, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Failed);
+        assert_eq!(
+            result.message,
+            "APPDATA is not set, so Omni Palette cannot save user settings."
+        );
+        assert_eq!(runtime.config().activation, ctrl_shift_p_shortcut());
+        assert_eq!(
+            updater.updates(),
+            vec!["Ctrl+Alt+Space".to_string(), "Ctrl+Shift+P".to_string()]
+        );
     }
 
     #[test]
@@ -578,6 +739,84 @@ mod tests {
         fn focus(&self) -> Result<(), String> {
             self.log.lock().expect("log should lock").push("focus");
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingActivationShortcutUpdater {
+        updates: Mutex<Vec<KeyboardShortcut>>,
+        fail: bool,
+    }
+
+    impl RecordingActivationShortcutUpdater {
+        fn failing() -> Self {
+            Self {
+                updates: Mutex::new(Vec::new()),
+                fail: true,
+            }
+        }
+
+        fn updates(&self) -> Vec<String> {
+            self.updates
+                .lock()
+                .expect("updates should lock")
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        }
+    }
+
+    impl ActivationShortcutUpdater for RecordingActivationShortcutUpdater {
+        fn update_activation_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
+            self.updates
+                .lock()
+                .expect("updates should lock")
+                .push(shortcut);
+            if self.fail {
+                return Err("register failed".to_string());
+            }
+            Ok(())
+        }
+    }
+
+    fn runtime_settings_save_request(
+        activation_shortcut: KeyboardShortcut,
+        command_behavior: CommandBehavior,
+        appearance_theme: ThemeMode,
+    ) -> RuntimeSettingsSaveRequestDto {
+        RuntimeSettingsSaveRequestDto {
+            activation_shortcut: ActivationShortcutDto::from(activation_shortcut),
+            command_behavior,
+            appearance_theme,
+            github: GitHubExtensionSourceDto {
+                owner: "Example".to_string(),
+                repo: "extensions".to_string(),
+                branch: "stable".to_string(),
+                catalog_path: "catalog.json".to_string(),
+                enabled: true,
+            },
+        }
+    }
+
+    fn ctrl_shift_p_shortcut() -> KeyboardShortcut {
+        KeyboardShortcut {
+            modifier: HotkeyModifiers {
+                control: true,
+                shift: true,
+                ..Default::default()
+            },
+            key: Key::KeyP,
+        }
+    }
+
+    fn ctrl_alt_space_shortcut() -> KeyboardShortcut {
+        KeyboardShortcut {
+            modifier: HotkeyModifiers {
+                control: true,
+                alt: true,
+                ..Default::default()
+            },
+            key: Key::Space,
         }
     }
 }

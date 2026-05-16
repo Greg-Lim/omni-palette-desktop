@@ -96,6 +96,12 @@ impl HotkeyStatusStore {
         state.last_error = None;
     }
 
+    fn update_activation_hint(&self, activation_hint: String) {
+        let mut state = self.inner.lock().expect("hotkey status should lock");
+        state.activation_hint = activation_hint;
+        state.last_error = None;
+    }
+
     fn record_activation(
         &self,
         shortcut: KeyboardShortcut,
@@ -197,6 +203,9 @@ impl HotkeyEventSink for TauriHotkeyEventSink {
 
 trait HotkeyForwarder: Send + Sync {
     fn forward_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String>;
+    fn update_activation_shortcut(&self, _shortcut: KeyboardShortcut) -> Result<(), String> {
+        Ok(())
+    }
     fn forward_guide_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
         self.forward_shortcut(shortcut)
     }
@@ -218,6 +227,10 @@ impl HotkeyForwarder for WindowsHotkeyForwarder {
     fn forward_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
         self.passthrough.forward_shortcut(shortcut);
         Ok(())
+    }
+
+    fn update_activation_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
+        self.passthrough.update_shortcut(shortcut)
     }
 
     fn forward_guide_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
@@ -280,7 +293,7 @@ impl StoppableHotkeyListener for WindowsHotkeyListenerHandle {
 
 pub struct HotkeyBridge {
     status: HotkeyStatusStore,
-    activation_shortcut: KeyboardShortcut,
+    activation_shortcut: Mutex<KeyboardShortcut>,
     forwarder: Option<Arc<dyn HotkeyForwarder>>,
     handle: Mutex<Option<Box<dyn StoppableHotkeyListener>>>,
     bridge_thread: Mutex<Option<JoinHandle<()>>>,
@@ -371,7 +384,7 @@ impl HotkeyBridge {
 
         Self {
             status,
-            activation_shortcut,
+            activation_shortcut: Mutex::new(activation_shortcut),
             forwarder: Some(forwarder),
             handle: Mutex::new(Some(handle)),
             bridge_thread: Mutex::new(Some(bridge_thread)),
@@ -387,7 +400,7 @@ impl HotkeyBridge {
         status.record_error(message);
         Self {
             status,
-            activation_shortcut,
+            activation_shortcut: Mutex::new(activation_shortcut),
             forwarder: None,
             handle: Mutex::new(None),
             bridge_thread: Mutex::new(None),
@@ -398,6 +411,20 @@ impl HotkeyBridge {
         self.status.snapshot()
     }
 
+    pub fn update_activation_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
+        let Some(forwarder) = &self.forwarder else {
+            return Err("Global hotkey listener is not running".to_string());
+        };
+
+        forwarder.update_activation_shortcut(shortcut)?;
+        *self
+            .activation_shortcut
+            .lock()
+            .expect("activation shortcut should lock") = shortcut;
+        self.status.update_activation_hint(shortcut.to_string());
+        Ok(())
+    }
+
     pub fn enable_guide_hotkeys(
         &self,
         captured_shortcut: Option<KeyboardShortcut>,
@@ -405,8 +432,12 @@ impl HotkeyBridge {
         let Some(forwarder) = &self.forwarder else {
             return Ok(());
         };
+        let activation_shortcut = *self
+            .activation_shortcut
+            .lock()
+            .expect("activation shortcut should lock");
         let captured_shortcut =
-            captured_shortcut.filter(|shortcut| *shortcut != self.activation_shortcut);
+            captured_shortcut.filter(|shortcut| *shortcut != activation_shortcut);
         forwarder.set_guide_cancel_hotkey(true)?;
         forwarder.set_guide_shortcut_hotkey(captured_shortcut)
     }
@@ -506,7 +537,7 @@ fn is_guide_cancel_shortcut(shortcut: KeyboardShortcut) -> bool {
 mod tests {
     use std::{
         path::PathBuf,
-        sync::{Arc, Mutex},
+        sync::{mpsc, Arc, Mutex},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -769,6 +800,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn updating_activation_shortcut_refreshes_forwarder_status_and_guide_filter() {
+        let runtime = runtime_with_ignored_processes(&[]);
+        let (_tx, rx) = mpsc::channel();
+        let forwarder = Arc::new(RecordingForwarder::default());
+        let bridge = HotkeyBridge::from_started(
+            "Ctrl+Shift+P".to_string(),
+            Box::new(RecordingHotkeyListenerHandle),
+            rx,
+            runtime,
+            forwarder.clone(),
+            Arc::new(RecordingEventSink::default()),
+            Arc::new(RecordingActivationHandler::default()),
+            Arc::new(RecordingActiveProcessProvider),
+        );
+
+        bridge
+            .update_activation_shortcut(ctrl_t_shortcut())
+            .expect("activation shortcut should update");
+        bridge
+            .enable_guide_hotkeys(Some(ctrl_t_shortcut()))
+            .expect("guide hotkeys should update");
+
+        assert_eq!(bridge.status().activation_hint, "Ctrl+T");
+        assert_eq!(forwarder.activation_updates(), vec!["Ctrl+T".to_string()]);
+        assert_eq!(
+            forwarder.guide_control_calls(),
+            vec!["set_guide_cancel:true", "set_guide_shortcut:none"]
+        );
+        drop(_tx);
+        drop(bridge);
+    }
+
     #[derive(Default)]
     struct RecordingEventSink {
         events: Mutex<Vec<HotkeyEventPayloadDto>>,
@@ -882,6 +946,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingForwarder {
         shortcuts: Mutex<Vec<String>>,
+        activation_updates: Mutex<Vec<String>>,
         guide_calls: Mutex<Vec<String>>,
     }
 
@@ -899,6 +964,13 @@ mod tests {
                 .expect("guide calls should lock")
                 .clone()
         }
+
+        fn activation_updates(&self) -> Vec<String> {
+            self.activation_updates
+                .lock()
+                .expect("activation updates should lock")
+                .clone()
+        }
     }
 
     impl HotkeyForwarder for RecordingForwarder {
@@ -906,6 +978,14 @@ mod tests {
             self.shortcuts
                 .lock()
                 .expect("shortcuts should lock")
+                .push(shortcut.to_string());
+            Ok(())
+        }
+
+        fn update_activation_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
+            self.activation_updates
+                .lock()
+                .expect("activation updates should lock")
                 .push(shortcut.to_string());
             Ok(())
         }
@@ -938,6 +1018,23 @@ mod tests {
                 .expect("guide calls should lock")
                 .push(format!("set_guide_shortcut:{shortcut}"));
             Ok(())
+        }
+    }
+
+    struct RecordingHotkeyListenerHandle;
+
+    impl StoppableHotkeyListener for RecordingHotkeyListenerHandle {
+        fn stop(self: Box<Self>) {}
+    }
+
+    struct RecordingActiveProcessProvider;
+
+    impl ActiveProcessProvider for RecordingActiveProcessProvider {
+        fn active_window_context(&self) -> ActiveWindowContext {
+            ActiveWindowContext {
+                context: empty_context(),
+                process_name: None,
+            }
         }
     }
 

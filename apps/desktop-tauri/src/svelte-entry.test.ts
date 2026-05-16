@@ -38,6 +38,7 @@ describe("Svelte frontend entrypoint", () => {
     const appSource = readFileSync(join(srcDir, "App.svelte"), "utf8");
 
     expect(appSource).toContain("openSettingsFromPalette");
+    expect(appSource).toContain("refreshExtensionsFromPalette");
     expect(appSource).not.toContain("Backend:");
     expect(appSource).not.toContain("activeView");
     expect(appSource).not.toContain("Activation shortcut");
@@ -55,10 +56,11 @@ describe("Svelte frontend entrypoint", () => {
 
     const settingsSource = readFileSync(settingsPath, "utf8");
     expect(settingsSource).toContain("Activation shortcut");
+    expect(settingsSource).toContain("Record");
+    expect(settingsSource).toContain("Reset");
     expect(settingsSource).toContain("Command behavior");
     expect(settingsSource).toContain("Catalog source");
     expect(settingsSource).toContain("Save settings");
-    expect(settingsSource).not.toContain("Record");
   });
 
   it("declares separate palette, settings, and guide Tauri windows", () => {

@@ -63,8 +63,18 @@ export type GitHubCatalogSource = {
   enabled: boolean;
 };
 
+export type ActivationShortcut = {
+  control: boolean;
+  shift: boolean;
+  alt: boolean;
+  win: boolean;
+  key: string;
+  display_text: string;
+};
+
 export type RuntimeSettings = {
   activation_hint: string;
+  activation_shortcut: ActivationShortcut;
   command_behavior: CommandBehavior;
   appearance_theme: AppearanceTheme;
   github: GitHubCatalogSource;
@@ -72,12 +82,14 @@ export type RuntimeSettings = {
 
 export type SettingsBootstrap = {
   config: RuntimeSettings;
+  default_activation_shortcut: ActivationShortcut;
   config_path: string | null;
   config_error: string | null;
   runtime_status: RuntimeStatus;
 };
 
 export type RuntimeSettingsSaveRequest = {
+  activation_shortcut: ActivationShortcut;
   command_behavior: CommandBehavior;
   appearance_theme: AppearanceTheme;
   github: GitHubCatalogSource;
@@ -237,7 +249,24 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
 }
 
 export const paletteApi = createPaletteApi();
+export const REFRESH_EXTENSIONS_COMMAND_ID = "fixed-refresh-extensions";
 export const OPEN_SETTINGS_COMMAND_ID = "open-settings";
+
+export function refreshExtensionsCommandRow(): CommandRow {
+  return {
+    id: REFRESH_EXTENSIONS_COMMAND_ID,
+    label: "Refresh extensions",
+    shortcut_text: "",
+    guide_hint: null,
+    focus_state: "global",
+    priority: "medium",
+    favorite: false,
+    tags: ["extensions", "reload"],
+    original_order: Number.MAX_SAFE_INTEGER - 1,
+    score: 0,
+    label_matches: [],
+  };
+}
 
 export function openSettingsCommandRow(): CommandRow {
   return {
@@ -256,11 +285,21 @@ export function openSettingsCommandRow(): CommandRow {
 }
 
 export function paletteRowsWithFixedActions(commands: CommandRow[]): CommandRow[] {
-  return [...commands, openSettingsCommandRow()];
+  return [...commands, refreshExtensionsCommandRow(), openSettingsCommandRow()];
+}
+
+export function isRefreshExtensionsCommand(commandId: string): boolean {
+  return commandId === REFRESH_EXTENSIONS_COMMAND_ID;
 }
 
 export function isOpenSettingsCommand(commandId: string): boolean {
   return commandId === OPEN_SETTINGS_COMMAND_ID;
+}
+
+export async function refreshExtensionsFromPalette(
+  api: Pick<ReturnType<typeof createPaletteApi>, "reloadRuntimeState"> = paletteApi,
+): Promise<RuntimeReloadResult> {
+  return api.reloadRuntimeState();
 }
 
 export async function openSettingsFromPalette(
@@ -337,6 +376,7 @@ export function runtimeSettingsSaveRequestFromDraft(
   draft: RuntimeSettings,
 ): RuntimeSettingsSaveRequest {
   return {
+    activation_shortcut: { ...draft.activation_shortcut },
     command_behavior: draft.command_behavior,
     appearance_theme: draft.appearance_theme,
     github: { ...draft.github },
@@ -383,8 +423,167 @@ export function applyRuntimeSettingsSaveResult(
 export function discardRuntimeSettingsDraft(saved: RuntimeSettings): RuntimeSettings {
   return {
     ...saved,
+    activation_shortcut: { ...saved.activation_shortcut },
     github: { ...saved.github },
   };
+}
+
+type KeyboardEventLike = Pick<
+  KeyboardEvent,
+  "code" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey"
+>;
+
+const KEY_DISPLAY_NAMES: Record<string, string> = {
+  Key0: "0",
+  Key1: "1",
+  Key2: "2",
+  Key3: "3",
+  Key4: "4",
+  Key5: "5",
+  Key6: "6",
+  Key7: "7",
+  Key8: "8",
+  Key9: "9",
+  Semicolon: ";",
+  Equal: "=",
+  Comma: ",",
+  Minus: "-",
+  Period: ".",
+  Slash: "/",
+  Backquote: "`",
+  BracketLeft: "[",
+  Backslash: "\\",
+  BracketRight: "]",
+  Quote: "'",
+  Enter: "Enter",
+  Space: "Space",
+  Tab: "Tab",
+  Escape: "Esc",
+  Delete: "Del",
+  Backspace: "Backspace",
+  Home: "Home",
+  End: "End",
+  PageUp: "PgUp",
+  PageDown: "PgDn",
+  Insert: "Ins",
+  PrintScreen: "PrtSc",
+  ScrollLock: "ScrLk",
+  Pause: "Pause",
+  LeftArrow: "Left",
+  RightArrow: "Right",
+  UpArrow: "Up",
+  DownArrow: "Down",
+};
+
+const SPECIAL_KEY_BY_BROWSER_CODE: Record<string, string> = {
+  Semicolon: "Semicolon",
+  Equal: "Equal",
+  Comma: "Comma",
+  Minus: "Minus",
+  Period: "Period",
+  Slash: "Slash",
+  Backquote: "Grave",
+  BracketLeft: "LeftBracket",
+  Backslash: "Backslash",
+  BracketRight: "RightBracket",
+  Quote: "Apostrophe",
+  Enter: "Enter",
+  Space: "Space",
+  Tab: "Tab",
+  Escape: "Escape",
+  Delete: "Delete",
+  Backspace: "BackSpace",
+  Home: "Home",
+  End: "End",
+  PageUp: "PageUp",
+  PageDown: "PageDown",
+  Insert: "Insert",
+  PrintScreen: "PrintScreen",
+  ScrollLock: "ScrollLock",
+  Pause: "Pause",
+  ArrowLeft: "LeftArrow",
+  ArrowRight: "RightArrow",
+  ArrowUp: "UpArrow",
+  ArrowDown: "DownArrow",
+};
+
+const KEY_DISPLAY_BY_RUNTIME_KEY: Record<string, string> = {
+  ...KEY_DISPLAY_NAMES,
+  Grave: "`",
+  LeftBracket: "[",
+  RightBracket: "]",
+  Apostrophe: "'",
+  BackSpace: "Backspace",
+};
+
+export function activationShortcutFromKeyboardEvent(
+  event: KeyboardEventLike,
+): ActivationShortcut | null {
+  const key = runtimeShortcutKeyFromBrowserCode(event.code);
+  if (!key) {
+    return null;
+  }
+
+  const shortcut: ActivationShortcut = {
+    control: event.ctrlKey,
+    shift: event.shiftKey,
+    alt: event.altKey,
+    win: event.metaKey,
+    key,
+    display_text: "",
+  };
+  shortcut.display_text = formatActivationShortcut(shortcut);
+  return shortcut;
+}
+
+export function formatActivationShortcut(shortcut: ActivationShortcut): string {
+  const parts: string[] = [];
+  if (shortcut.control) {
+    parts.push("Ctrl");
+  }
+  if (shortcut.shift) {
+    parts.push("Shift");
+  }
+  if (shortcut.alt) {
+    parts.push("Alt");
+  }
+  if (shortcut.win) {
+    parts.push("Win");
+  }
+
+  const keyDisplay = keyDisplayName(shortcut.key);
+  if (!keyDisplay) {
+    return shortcut.display_text || shortcut.key;
+  }
+
+  parts.push(keyDisplay);
+  return parts.join("+");
+}
+
+function runtimeShortcutKeyFromBrowserCode(code: string): string | null {
+  if (/^Key[A-Z]$/.test(code)) {
+    return code;
+  }
+
+  const digitMatch = /^Digit([0-9])$/.exec(code);
+  if (digitMatch) {
+    return `Key${digitMatch[1]}`;
+  }
+
+  const functionKeyMatch = /^F([1-9]|1[0-2])$/.exec(code);
+  if (functionKeyMatch) {
+    return code;
+  }
+
+  return SPECIAL_KEY_BY_BROWSER_CODE[code] ?? null;
+}
+
+function keyDisplayName(key: string): string | null {
+  if (/^Key[A-Z]$/.test(key)) {
+    return key.slice(3);
+  }
+
+  return KEY_DISPLAY_BY_RUNTIME_KEY[key] ?? null;
 }
 
 export function highlightedLabelSegments(

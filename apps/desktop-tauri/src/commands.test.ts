@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+  ActivationShortcut,
   CommandRow,
   CommandExecutionResult,
   HotkeyStatus,
@@ -11,9 +12,12 @@ import {
   SettingsWindowStatus,
   WindowLifecycleStatus,
   OPEN_SETTINGS_COMMAND_ID,
+  REFRESH_EXTENSIONS_COMMAND_ID,
+  activationShortcutFromKeyboardEvent,
   createPaletteApi,
   commandExecutionShouldHidePalette,
   formatHotkeyStatus,
+  formatActivationShortcut,
   formatGuideStatus,
   formatRuntimeStatus,
   formatWindowLifecycleStatus,
@@ -28,10 +32,13 @@ import {
   applyRuntimeSettingsSaveResult,
   discardRuntimeSettingsDraft,
   isOpenSettingsCommand,
+  isRefreshExtensionsCommand,
   nextSelectedCommandId,
   openSettingsCommandRow,
   openSettingsFromPalette,
   paletteRowsWithFixedActions,
+  refreshExtensionsCommandRow,
+  refreshExtensionsFromPalette,
   shouldStartGuideForCommand,
   shouldHidePaletteForWindowBlur,
   shouldRefreshCommandsForWindowLifecycleEvent,
@@ -69,8 +76,27 @@ const rows: CommandRow[] = [
   },
 ];
 
+const defaultActivationShortcut: ActivationShortcut = {
+  control: true,
+  shift: true,
+  alt: false,
+  win: false,
+  key: "KeyP",
+  display_text: "Ctrl+Shift+P",
+};
+
+const ctrlAltSpaceShortcut: ActivationShortcut = {
+  control: true,
+  shift: false,
+  alt: true,
+  win: false,
+  key: "Space",
+  display_text: "Ctrl+Alt+Space",
+};
+
 const runtimeSettings: RuntimeSettings = {
   activation_hint: "Ctrl+Shift+P",
+  activation_shortcut: defaultActivationShortcut,
   command_behavior: "execute",
   appearance_theme: "system",
   github: {
@@ -80,6 +106,17 @@ const runtimeSettings: RuntimeSettings = {
     catalog_path: "extensions/registry/catalog.v1.json",
     enabled: false,
   },
+};
+
+const runtimeStatus: RuntimeStatus = {
+  config_path: "C:/Users/example/AppData/Roaming/OmniPalette/config.toml",
+  config_error: null,
+  activation_hint: "Ctrl+Shift+P",
+  command_behavior: "execute",
+  application_count: 4,
+  ignored_process_count: 0,
+  plugin_count: 3,
+  plugin_application_count: 3,
 };
 
 describe("palette api", () => {
@@ -282,6 +319,7 @@ describe("palette api", () => {
       if (command === "get_settings_bootstrap") {
         return {
           config: runtimeSettings,
+          default_activation_shortcut: defaultActivationShortcut,
           config_path: runtimeStatus.config_path,
           config_error: null,
           runtime_status: runtimeStatus,
@@ -299,6 +337,7 @@ describe("palette api", () => {
 
     expect(await api.getSettingsBootstrap()).toEqual({
       config: runtimeSettings,
+      default_activation_shortcut: defaultActivationShortcut,
       config_path: runtimeStatus.config_path,
       config_error: null,
       runtime_status: runtimeStatus,
@@ -575,22 +614,51 @@ describe("nextKeyboardSelectedCommandId", () => {
   });
 });
 
-describe("settings fixed action", () => {
-  it("adds a stable open-settings row after backend commands", () => {
+describe("palette fixed actions", () => {
+  it("adds stable refresh and open-settings rows after backend commands", () => {
     const withFixedActions = paletteRowsWithFixedActions(rows);
 
     expect(withFixedActions.map((row) => row.id)).toEqual([
       "reload-extensions",
       "chrome-new-tab",
+      REFRESH_EXTENSIONS_COMMAND_ID,
       OPEN_SETTINGS_COMMAND_ID,
     ]);
+    expect(refreshExtensionsCommandRow()).toMatchObject({
+      id: REFRESH_EXTENSIONS_COMMAND_ID,
+      label: "Refresh extensions",
+      guide_hint: null,
+      tags: ["extensions", "reload"],
+    });
     expect(openSettingsCommandRow()).toMatchObject({
       id: OPEN_SETTINGS_COMMAND_ID,
       label: "Open settings for Omni Palette",
       guide_hint: null,
     });
+    expect(isRefreshExtensionsCommand(REFRESH_EXTENSIONS_COMMAND_ID)).toBe(true);
+    expect(isRefreshExtensionsCommand("reload-extensions")).toBe(false);
     expect(isOpenSettingsCommand(OPEN_SETTINGS_COMMAND_ID)).toBe(true);
     expect(isOpenSettingsCommand("chrome-new-tab")).toBe(false);
+  });
+
+  it("refreshes extensions through the runtime reload invoke and preserves the payload", async () => {
+    const reloadResult = {
+      status: "succeeded" as const,
+      message: "Reloaded extensions: 4 applications, 0 ignored processes, 3 plugins",
+      runtime_status: runtimeStatus,
+    };
+    const calls: string[] = [];
+    const api = {
+      reloadRuntimeState: async () => {
+        calls.push("reload");
+        return reloadResult;
+      },
+    };
+
+    const result = await refreshExtensionsFromPalette(api);
+
+    expect(calls).toEqual(["reload"]);
+    expect(result).toEqual(reloadResult);
   });
 
   it("opens settings from the palette only after hiding the palette", async () => {
@@ -676,14 +744,15 @@ describe("guide command activation", () => {
 });
 
 describe("runtime settings helpers", () => {
-  it("detects dirty editable settings and ignores activation display text", () => {
+  it("detects dirty editable settings including activation shortcut changes", () => {
     expect(runtimeSettingsAreDirty(runtimeSettings, runtimeSettings)).toBe(false);
     expect(
       runtimeSettingsAreDirty(runtimeSettings, {
         ...runtimeSettings,
         activation_hint: "Ctrl+Space",
+        activation_shortcut: ctrlAltSpaceShortcut,
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       runtimeSettingsAreDirty(runtimeSettings, {
         ...runtimeSettings,
@@ -692,8 +761,9 @@ describe("runtime settings helpers", () => {
     ).toBe(true);
   });
 
-  it("builds save requests without activation shortcut fields", () => {
+  it("builds save requests with activation shortcut fields", () => {
     expect(runtimeSettingsSaveRequestFromDraft(runtimeSettings)).toEqual({
+      activation_shortcut: defaultActivationShortcut,
       command_behavior: "execute",
       appearance_theme: "system",
       github: runtimeSettings.github,
@@ -701,6 +771,101 @@ describe("runtime settings helpers", () => {
     expect(runtimeSettingsSaveRequestFromDraft(runtimeSettings)).not.toHaveProperty(
       "activation_hint",
     );
+  });
+
+  it("formats activation shortcuts from structured DTOs", () => {
+    expect(formatActivationShortcut(defaultActivationShortcut)).toBe("Ctrl+Shift+P");
+    expect(formatActivationShortcut(ctrlAltSpaceShortcut)).toBe("Ctrl+Alt+Space");
+  });
+
+  it("captures supported browser keyboard events as activation shortcuts", () => {
+    expect(
+      activationShortcutFromKeyboardEvent({
+        code: "KeyP",
+        ctrlKey: true,
+        shiftKey: true,
+        altKey: false,
+        metaKey: false,
+      }),
+    ).toEqual(defaultActivationShortcut);
+    expect(
+      activationShortcutFromKeyboardEvent({
+        code: "Digit1",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        metaKey: true,
+      }),
+    ).toEqual({
+      control: true,
+      shift: false,
+      alt: false,
+      win: true,
+      key: "Key1",
+      display_text: "Ctrl+Win+1",
+    });
+    expect(
+      activationShortcutFromKeyboardEvent({
+        code: "Space",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: true,
+        metaKey: false,
+      }),
+    ).toEqual(ctrlAltSpaceShortcut);
+    expect(
+      activationShortcutFromKeyboardEvent({
+        code: "Escape",
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: true,
+        metaKey: false,
+      }),
+    ).toEqual({
+      control: false,
+      shift: false,
+      alt: true,
+      win: false,
+      key: "Escape",
+      display_text: "Alt+Esc",
+    });
+    expect(
+      activationShortcutFromKeyboardEvent({
+        code: "ArrowLeft",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+      }),
+    ).toEqual({
+      control: true,
+      shift: false,
+      alt: false,
+      win: false,
+      key: "LeftArrow",
+      display_text: "Ctrl+Left",
+    });
+  });
+
+  it("ignores modifier-only and unsupported keys while recording activation shortcuts", () => {
+    expect(
+      activationShortcutFromKeyboardEvent({
+        code: "ControlLeft",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+      }),
+    ).toBeNull();
+    expect(
+      activationShortcutFromKeyboardEvent({
+        code: "AudioVolumeUp",
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+      }),
+    ).toBeNull();
   });
 
   it("updates saved and draft settings only after successful save", () => {
