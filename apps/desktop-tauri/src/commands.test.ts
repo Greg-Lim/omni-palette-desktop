@@ -8,7 +8,9 @@ import {
   RuntimeSettings,
   RuntimeSettingsSaveResult,
   RuntimeSettingsSaveRequest,
+  SettingsWindowStatus,
   WindowLifecycleStatus,
+  OPEN_SETTINGS_COMMAND_ID,
   createPaletteApi,
   commandExecutionShouldHidePalette,
   formatHotkeyStatus,
@@ -25,7 +27,11 @@ import {
   runtimeSettingsSaveRequestFromDraft,
   applyRuntimeSettingsSaveResult,
   discardRuntimeSettingsDraft,
+  isOpenSettingsCommand,
   nextSelectedCommandId,
+  openSettingsCommandRow,
+  openSettingsFromPalette,
+  paletteRowsWithFixedActions,
   shouldStartGuideForCommand,
   shouldHidePaletteForWindowBlur,
   shouldRefreshCommandsForWindowLifecycleEvent,
@@ -309,6 +315,27 @@ describe("palette api", () => {
       { command: "reload_runtime_state", args: undefined },
     ]);
   });
+
+  it("calls the backend settings window command and preserves payload", async () => {
+    const settingsWindowStatus: SettingsWindowStatus = {
+      status: "succeeded",
+      message: "Settings window shown",
+      visible: true,
+      show_count: 1,
+      focus_count: 1,
+      last_error: null,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return settingsWindowStatus as T;
+    });
+
+    const status = await api.showSettingsWindow();
+
+    expect(calls).toEqual([{ command: "show_settings_window", args: undefined }]);
+    expect(status).toEqual(settingsWindowStatus);
+  });
 });
 
 describe("formatRuntimeStatus", () => {
@@ -545,6 +572,64 @@ describe("nextKeyboardSelectedCommandId", () => {
 
   it("clears selection when there are no rows", () => {
     expect(nextKeyboardSelectedCommandId("chrome-new-tab", [], 1)).toBe("");
+  });
+});
+
+describe("settings fixed action", () => {
+  it("adds a stable open-settings row after backend commands", () => {
+    const withFixedActions = paletteRowsWithFixedActions(rows);
+
+    expect(withFixedActions.map((row) => row.id)).toEqual([
+      "reload-extensions",
+      "chrome-new-tab",
+      OPEN_SETTINGS_COMMAND_ID,
+    ]);
+    expect(openSettingsCommandRow()).toMatchObject({
+      id: OPEN_SETTINGS_COMMAND_ID,
+      label: "Open settings for Omni Palette",
+      guide_hint: null,
+    });
+    expect(isOpenSettingsCommand(OPEN_SETTINGS_COMMAND_ID)).toBe(true);
+    expect(isOpenSettingsCommand("chrome-new-tab")).toBe(false);
+  });
+
+  it("opens settings from the palette only after hiding the palette", async () => {
+    const windowStatus: WindowLifecycleStatus = {
+      visible: false,
+      show_count: 1,
+      hide_count: 1,
+      focus_count: 1,
+      position_count: 1,
+      last_action: "hidden",
+      last_error: null,
+    };
+    const settingsStatus: SettingsWindowStatus = {
+      status: "succeeded",
+      message: "Settings window shown",
+      visible: true,
+      show_count: 1,
+      focus_count: 1,
+      last_error: null,
+    };
+    const calls: string[] = [];
+    const api = {
+      hidePaletteWindow: async () => {
+        calls.push("hide");
+        return windowStatus;
+      },
+      showSettingsWindow: async () => {
+        calls.push("settings");
+        return settingsStatus;
+      },
+    };
+
+    const result = await openSettingsFromPalette(api);
+
+    expect(calls).toEqual(["hide", "settings"]);
+    expect(result).toEqual({
+      window_status: windowStatus,
+      settings_status: settingsStatus,
+    });
   });
 });
 

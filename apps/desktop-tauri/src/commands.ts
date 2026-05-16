@@ -98,6 +98,20 @@ export type RuntimeReloadResult = {
   runtime_status: RuntimeStatus;
 };
 
+export type SettingsWindowStatus = {
+  status: RuntimeSettingsResultStatus;
+  message: string;
+  visible: boolean;
+  show_count: number;
+  focus_count: number;
+  last_error: string | null;
+};
+
+export type OpenSettingsFromPaletteResult = {
+  window_status: WindowLifecycleStatus;
+  settings_status: SettingsWindowStatus;
+};
+
 export type RuntimeSettingsApplyResult = {
   saved: RuntimeSettings;
   draft: RuntimeSettings;
@@ -218,10 +232,48 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
     saveRuntimeSettings: (request: RuntimeSettingsSaveRequest) =>
       invokeCommand<RuntimeSettingsSaveResult>("save_runtime_settings", { request }),
     reloadRuntimeState: () => invokeCommand<RuntimeReloadResult>("reload_runtime_state"),
+    showSettingsWindow: () => invokeCommand<SettingsWindowStatus>("show_settings_window"),
   };
 }
 
 export const paletteApi = createPaletteApi();
+export const OPEN_SETTINGS_COMMAND_ID = "open-settings";
+
+export function openSettingsCommandRow(): CommandRow {
+  return {
+    id: OPEN_SETTINGS_COMMAND_ID,
+    label: "Open settings for Omni Palette",
+    shortcut_text: "Settings",
+    guide_hint: null,
+    focus_state: "global",
+    priority: "medium",
+    favorite: false,
+    tags: ["settings"],
+    original_order: Number.MAX_SAFE_INTEGER,
+    score: 0,
+    label_matches: [],
+  };
+}
+
+export function paletteRowsWithFixedActions(commands: CommandRow[]): CommandRow[] {
+  return [...commands, openSettingsCommandRow()];
+}
+
+export function isOpenSettingsCommand(commandId: string): boolean {
+  return commandId === OPEN_SETTINGS_COMMAND_ID;
+}
+
+export async function openSettingsFromPalette(
+  api: Pick<ReturnType<typeof createPaletteApi>, "hidePaletteWindow" | "showSettingsWindow"> =
+    paletteApi,
+): Promise<OpenSettingsFromPaletteResult> {
+  const windowStatus = await api.hidePaletteWindow();
+  const settingsStatus = await api.showSettingsWindow();
+  return {
+    window_status: windowStatus,
+    settings_status: settingsStatus,
+  };
+}
 
 export function nextSelectedCommandId(currentId: string, commands: CommandRow[]): string {
   if (commands.some((command) => command.id === currentId)) {

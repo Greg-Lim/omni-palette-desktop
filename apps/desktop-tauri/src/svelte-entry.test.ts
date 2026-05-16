@@ -28,17 +28,64 @@ describe("Svelte frontend entrypoint", () => {
     expect(mainSource).toContain('from "svelte"');
     expect(mainSource).toContain('from "./App.svelte"');
     expect(mainSource).toContain('from "./Guide.svelte"');
+    expect(mainSource).toContain('from "./Settings.svelte"');
     expect(mainSource).toContain("getCurrentWindow().label");
+    expect(mainSource).toContain('label === "settings"');
     expect(mainSource).toContain("mount(Component,");
   });
 
-  it("renders Phase 6A settings controls without shortcut recording", () => {
+  it("keeps settings controls out of the hotkey palette surface", () => {
     const appSource = readFileSync(join(srcDir, "App.svelte"), "utf8");
 
-    expect(appSource).toContain("Activation shortcut");
-    expect(appSource).toContain("Command behavior");
-    expect(appSource).toContain("Catalog source");
-    expect(appSource).toContain("Save settings");
-    expect(appSource).not.toContain("Record");
+    expect(appSource).toContain("openSettingsFromPalette");
+    expect(appSource).not.toContain("Backend:");
+    expect(appSource).not.toContain("activeView");
+    expect(appSource).not.toContain("Activation shortcut");
+    expect(appSource).not.toContain("Save settings");
+  });
+
+  it("renders Phase 6A settings controls in the settings surface", () => {
+    const settingsPath = join(srcDir, "Settings.svelte");
+
+    expect(existsSync(settingsPath)).toBe(true);
+
+    if (!existsSync(settingsPath)) {
+      return;
+    }
+
+    const settingsSource = readFileSync(settingsPath, "utf8");
+    expect(settingsSource).toContain("Activation shortcut");
+    expect(settingsSource).toContain("Command behavior");
+    expect(settingsSource).toContain("Catalog source");
+    expect(settingsSource).toContain("Save settings");
+    expect(settingsSource).not.toContain("Record");
+  });
+
+  it("declares separate palette, settings, and guide Tauri windows", () => {
+    const config = JSON.parse(
+      readFileSync(join(appRoot, "src-tauri", "tauri.conf.json"), "utf8"),
+    );
+    const windows = config.app.windows as Array<Record<string, unknown>>;
+    const mainWindow = windows.find((window) => window.label === "main");
+    const settingsWindow = windows.find((window) => window.label === "settings");
+    const guideWindow = windows.find((window) => window.label === "guide");
+
+    expect(mainWindow).toMatchObject({
+      label: "main",
+      width: 780,
+      decorations: false,
+      visible: false,
+    });
+    expect(settingsWindow).toMatchObject({
+      label: "settings",
+      title: "Omni Palette Settings",
+      decorations: true,
+      resizable: true,
+      visible: false,
+    });
+    expect(guideWindow).toMatchObject({
+      label: "guide",
+      visible: false,
+    });
   });
 });

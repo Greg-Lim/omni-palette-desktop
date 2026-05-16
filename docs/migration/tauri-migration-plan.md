@@ -9,11 +9,11 @@
 
 ## Migration Status
 
-- Current migration position: Phase 6A - Runtime Settings Foundation is
-  complete.
-- Next phase: Phase 6A.1 - Palette And Settings Surface Separation.
+- Current migration position: Phase 6A.1 - Palette And Settings Surface
+  Separation is complete.
+- Next phase: Phase 6B - Activation Shortcut Settings.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
-  Phase 4D, Phase 5A, Phase 5B, and Phase 6A.
+  Phase 4D, Phase 5A, Phase 5B, Phase 6A, and Phase 6A.1.
 - Last updated: 2026-05-16.
 - Update this section whenever the migration moves to a new phase.
 
@@ -43,9 +43,10 @@ egui app stays runnable until the Tauri version reaches functional parity.
   - `get_settings_bootstrap`
   - `save_runtime_settings`
   - `reload_runtime_state`
-- Temporary development shell: through Phase 6A only, the Tauri `main` window
-  may render Palette and Settings as tabs inside one Svelte shell. This is a
-  migration shortcut, not the target UX.
+  - `show_settings_window`
+- The temporary Phase 6A tabbed shell has been split: the Tauri `main` window is
+  palette-only, and Settings renders in a distinct hidden-by-default `settings`
+  window.
 - The existing egui app remains the production UI until final Tauri cutover.
 
 ## Direction
@@ -76,21 +77,22 @@ The Tauri migration must converge on these egui surface boundaries:
 - Settings must not remain embedded in the hotkey palette surface for final
   parity or cutover.
 
-Temporary Tauri deviation:
+Resolved temporary Tauri deviation:
 
-- The one-window tabbed Tauri shell is allowed only as the Phase 6A temporary
+- The one-window tabbed Tauri shell was allowed only as the Phase 6A temporary
   development shell.
-- The tabbed shell ends at Phase 6A. Phase 6A.1 must split Palette and Settings
-  into distinct Tauri surfaces before Phase 6B begins.
+- Phase 6A.1 split Palette and Settings into distinct Tauri surfaces before
+  Phase 6B.
 
 ## File And Folder Inventory
 
 ### Tauri Frontend
 
 - `apps/desktop-tauri/src/App.svelte`
-  - Phase 6A temporary Svelte shell with Palette and Settings tabs. Phase 6A.1
-    must reduce the hotkey `main` window to palette-only behavior and move
-    Settings into its own Tauri surface.
+  - Palette-only hotkey surface for the Tauri `main` window, command rows,
+    keyboard navigation, execution, guide start, and the fixed settings action.
+- `apps/desktop-tauri/src/Settings.svelte`
+  - Runtime settings surface rendered only for the Tauri `settings` window.
 - `apps/desktop-tauri/src/Guide.svelte`
   - Compact guide-mode window rendered only for the Tauri `guide` window.
 - `apps/desktop-tauri/src/commands.ts`
@@ -246,39 +248,24 @@ Completed:
   settings, tray work, diagnostics, packaging cutover, and egui removal out of
   scope.
 
-## Remaining Phases
-
 ### Phase 6A.1: Palette And Settings Surface Separation
 
-Purpose:
+Status: complete.
 
-- Restore egui-like separation between the hotkey palette and Settings before
-  adding more settings features.
+Completed:
 
-Scope:
-
-- Split the Tauri `main` hotkey window into a palette-only surface.
-- Move the Phase 6A runtime settings UI into a separate hidden-by-default Tauri
-  `settings` window/component.
-- Keep existing settings DTOs and invokes unchanged:
-  `get_settings_bootstrap`, `save_runtime_settings`, and `reload_runtime_state`.
-- Add a settings-window open path, likely `show_settings_window`, that
-  shows/focuses the `settings` window without opening the palette.
-- Restore an egui-like "Open settings" palette action that hides the palette,
-  closes the active palette session, and opens/focuses Settings.
-- Keep activation shortcut recording, tray behavior, marketplace install,
+- Split the Tauri `main` hotkey window into a palette-only surface without
+  Settings tabs, settings forms, or backend/status development chrome.
+- Moved the Phase 6A runtime settings UI into a separate hidden-by-default
+  Tauri `settings` window/component.
+- Kept existing settings DTOs and invokes unchanged.
+- Added `show_settings_window` to show/focus the `settings` window.
+- Restored an egui-like "Open settings for Omni Palette" fixed palette action
+  that hides the palette before opening/focusing Settings.
+- Kept activation shortcut recording, tray behavior, marketplace install,
   extension toggles, diagnostics, and cutover out of scope.
 
-Acceptance criteria:
-
-- Pressing the global hotkey shows only the compact palette surface.
-- The hotkey palette surface does not render Settings tabs, settings forms, or
-  backend/status development chrome.
-- Opening Settings uses a distinct `settings` Tauri window/surface.
-- Settings saves and reloads through the Phase 6A invokes without changing their
-  wire shapes.
-- Closing or hiding the palette does not close the Settings surface unless a
-  later phase explicitly adds that behavior.
+## Remaining Phases
 
 ### Phase 6B: Activation Shortcut Settings
 

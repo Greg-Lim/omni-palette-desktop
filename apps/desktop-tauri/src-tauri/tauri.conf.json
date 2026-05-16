@@ -14,8 +14,19 @@
       {
         "title": "Omni Palette",
         "label": "main",
+        "width": 780,
+        "height": 500,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
+      },
+      {
+        "title": "Omni Palette Settings",
+        "label": "settings",
         "width": 960,
-        "height": 640,
+        "height": 680,
         "resizable": true,
         "decorations": true,
         "visible": false

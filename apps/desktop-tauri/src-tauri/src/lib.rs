@@ -1,5 +1,6 @@
 mod guide_lifecycle;
 mod hotkey_bridge;
+mod settings_window;
 mod window_lifecycle;
 
 use std::{path::PathBuf, sync::Arc, thread};
@@ -18,6 +19,7 @@ use tauri::{Manager, State};
 
 use crate::guide_lifecycle::{GuideLifecycle, GuideRuntimeCommand, GuideStatusDto, GUIDE_DURATION};
 use crate::hotkey_bridge::{HotkeyBridge, HotkeyStatusDto, PaletteActivationHandler};
+use crate::settings_window::{SettingsWindow, SettingsWindowStatusDto};
 use crate::window_lifecycle::{WindowLifecycle, WindowLifecycleStatusDto};
 
 struct AppState {
@@ -25,6 +27,7 @@ struct AppState {
     runtime_state: OmniRuntimeState,
     hotkey_bridge: Arc<HotkeyBridge>,
     window_lifecycle: Arc<WindowLifecycle>,
+    settings_window: Arc<SettingsWindow>,
     guide_lifecycle: Arc<GuideLifecycle>,
 }
 
@@ -39,7 +42,7 @@ pub struct HealthCheckPayload {
 fn health_check() -> HealthCheckPayload {
     HealthCheckPayload {
         app_name: "Omni Palette",
-        phase: "Phase 6A - Runtime Settings Foundation",
+        phase: "Phase 6A.1 - Palette And Settings Surface Separation",
         status: "ok",
     }
 }
@@ -277,6 +280,11 @@ fn reload_runtime_state(state: State<'_, AppState>) -> RuntimeReloadResultDto {
     reload_runtime_state_for_runtime(&state.runtime_state)
 }
 
+#[tauri::command]
+fn show_settings_window(state: State<'_, AppState>) -> SettingsWindowStatusDto {
+    state.settings_window.show_settings_window()
+}
+
 struct ActivationRouter {
     window_lifecycle: Arc<WindowLifecycle>,
     guide_lifecycle: Arc<GuideLifecycle>,
@@ -324,6 +332,7 @@ pub fn run() {
                 Arc::clone(&backend),
                 app.handle().clone(),
             ));
+            let settings_window = Arc::new(SettingsWindow::for_tauri(app.handle().clone()));
             let guide_lifecycle = Arc::new(GuideLifecycle::for_tauri(
                 runtime_state.config().activation.to_string(),
                 Arc::clone(&window_lifecycle),
@@ -344,6 +353,7 @@ pub fn run() {
                 runtime_state: runtime_state.clone(),
                 hotkey_bridge,
                 window_lifecycle,
+                settings_window,
                 guide_lifecycle,
             });
             Ok(())
@@ -361,7 +371,8 @@ pub fn run() {
             get_guide_status,
             get_settings_bootstrap,
             save_runtime_settings,
-            reload_runtime_state
+            reload_runtime_state,
+            show_settings_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
@@ -378,6 +389,10 @@ fn bundled_extensions_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::settings_window::SettingsWindowController;
+
     use omni_palette::{
         config::runtime::{CommandBehavior, GitHubExtensionSource, RuntimePaths, ThemeMode},
         runtime_state::RuntimeStateLoadOptions,
@@ -386,12 +401,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_check_reports_phase_six_runtime_settings() {
+    fn health_check_reports_phase_six_surface_separation() {
         let payload = health_check();
 
         assert_eq!(payload.app_name, "Omni Palette");
-        assert_eq!(payload.phase, "Phase 6A - Runtime Settings Foundation");
+        assert_eq!(
+            payload.phase,
+            "Phase 6A.1 - Palette And Settings Surface Separation"
+        );
         assert_eq!(payload.status, "ok");
+    }
+
+    #[test]
+    fn show_settings_window_shows_and_focuses_settings_window() {
+        let controller = Arc::new(RecordingSettingsWindowController::default());
+        let settings_window = SettingsWindow::new(controller.clone());
+
+        let status = settings_window.show_settings_window();
+
+        assert_eq!(status.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert!(status.visible);
+        assert_eq!(status.show_count, 1);
+        assert_eq!(status.focus_count, 1);
+        assert_eq!(status.last_error, None);
+        assert_eq!(controller.log(), vec!["show", "focus"]);
+    }
+
+    #[test]
+    fn show_settings_window_failure_returns_controlled_error() {
+        let controller = Arc::new(RecordingSettingsWindowController::failing_show());
+        let settings_window = SettingsWindow::new(controller);
+
+        let status = settings_window.show_settings_window();
+
+        assert_eq!(status.status, RuntimeSettingsResultStatusDto::Failed);
+        assert!(!status.visible);
+        assert_eq!(status.show_count, 0);
+        assert_eq!(status.focus_count, 0);
+        assert_eq!(
+            status.last_error,
+            Some("Failed to show settings window: show failed".to_string())
+        );
     }
 
     #[test]
@@ -495,5 +545,39 @@ mod tests {
             },
             current_os: Os::Windows,
         })
+    }
+
+    #[derive(Default)]
+    struct RecordingSettingsWindowController {
+        log: Mutex<Vec<&'static str>>,
+        fail_on_show: bool,
+    }
+
+    impl RecordingSettingsWindowController {
+        fn failing_show() -> Self {
+            Self {
+                log: Mutex::new(Vec::new()),
+                fail_on_show: true,
+            }
+        }
+
+        fn log(&self) -> Vec<&'static str> {
+            self.log.lock().expect("log should lock").clone()
+        }
+    }
+
+    impl SettingsWindowController for RecordingSettingsWindowController {
+        fn show(&self) -> Result<(), String> {
+            self.log.lock().expect("log should lock").push("show");
+            if self.fail_on_show {
+                return Err("show failed".to_string());
+            }
+            Ok(())
+        }
+
+        fn focus(&self) -> Result<(), String> {
+            self.log.lock().expect("log should lock").push("focus");
+            Ok(())
+        }
     }
 }
