@@ -9,12 +9,12 @@
 
 ## Migration Status
 
-- Current migration position: Phase 6C.3 - Extension-Specific Settings Panels
+- Current migration position: Phase 7 - Debug Overlay And Diagnostics
   is complete.
-- Next phase: Phase 7 - Debug Overlay And Diagnostics.
+- Next phase: Phase 8 - Cutover And egui Removal.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
   Phase 4D, Phase 5A, Phase 5B, Phase 6A, Phase 6A.1, Phase 6A.2, and
-  Phase 6B, Phase 6C.1, Phase 6C.2, and Phase 6C.3.
+  Phase 6B, Phase 6C.1, Phase 6C.2, Phase 6C.3, and Phase 7.
 - Last updated: 2026-05-17.
 - Update this section whenever the migration moves to a new phase.
 
@@ -52,6 +52,10 @@ egui app stays runnable until the Tauri version reaches functional parity.
   - `install_catalog_extension`
   - `get_extension_settings`
   - `save_extension_settings`
+  - `show_debug_overlay`
+  - `close_debug_overlay`
+  - `get_debug_overlay_status`
+  - `get_debug_snapshot`
 - The temporary Phase 6A tabbed shell has been split: the Tauri `main` window is
   palette-only, and Settings renders in a distinct hidden-by-default `settings`
   window.
@@ -70,6 +74,10 @@ egui app stays runnable until the Tauri version reaches functional parity.
   static extensions, downloaded static extensions, and bundled WASM plugins that
   expose settings. These panels save to the existing AppData extension settings
   TOML path and reload runtime state after successful saves.
+- General Settings includes a `Pop up debugger` action that opens a separate
+  hidden-by-default `debug` window with foreground context, interaction tags,
+  ignored-app status, command candidate counts, palette filter rows, and
+  background windows.
 - The existing egui app remains the production UI until final Tauri cutover.
 
 ## Direction
@@ -453,22 +461,34 @@ Completed:
 
 ### Phase 7: Debug Overlay And Diagnostics
 
+Status: complete.
+
 Purpose:
 
 - Restore developer diagnostics after the core user-facing path is working.
 
-Scope:
+Completed:
 
-- Restore the General Settings Debug popup entry point.
-- Port debug overlay data to Tauri events or commands.
-- Preserve periodic debug snapshots in debug builds.
+- Restored the General Settings Debug popup entry point without making runtime
+  settings dirty.
+- Added a separate hidden-by-default Tauri `debug` window and Svelte
+  `DebugOverlay` surface.
+- Added Tauri debug invokes: `show_debug_overlay`, `close_debug_overlay`,
+  `get_debug_overlay_status`, and `get_debug_snapshot`.
+- Added debug overlay lifecycle status with injectable controller coverage for
+  show/focus/hide and controlled failures.
+- Added debug snapshot DTOs for foreground window, active interaction tags,
+  text-input state, ignored-app status, command candidate counts, latest
+  palette filter rows, and capped background windows.
+- Preserved periodic-style refresh in the Svelte debug window through polling
+  while the window is open.
 - Keep runtime telemetry logs.
 - Keep debug UI secondary to palette and settings parity.
 
 Acceptance criteria:
 
-- Debug context can show active process, context tags, command ranking inputs,
-  ignored-app status, and command rows.
+- Debug context can show active process, context tags, command candidate counts,
+  ignored-app status, and latest palette rows.
 - Debug telemetry remains useful for long-running stability investigations.
 
 ### Phase 8: Cutover And egui Removal

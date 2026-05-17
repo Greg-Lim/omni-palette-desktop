@@ -288,6 +288,19 @@
       });
   }
 
+  function showDebugOverlay() {
+    paletteApi
+      .showDebugOverlay()
+      .then((status) => {
+        settingsMessage = status.message;
+        settingsFailed = status.status === "failed";
+      })
+      .catch((error: unknown) => {
+        settingsMessage = errorMessage(error);
+        settingsFailed = true;
+      });
+  }
+
   function refreshExtensionCatalog() {
     if (!settingsDraft || catalogRefreshing) {
       return;
@@ -828,6 +841,19 @@
                 </label>
               </div>
             </fieldset>
+
+            <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
+              <h3 class="text-sm font-medium text-zinc-200">Debug</h3>
+              <div class="mt-3">
+                <button
+                  class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100"
+                  onclick={showDebugOverlay}
+                  type="button"
+                >
+                  Pop up debugger
+                </button>
+              </div>
+            </section>
 
             <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
               <h3 class="text-sm font-medium text-zinc-200">Storage</h3>

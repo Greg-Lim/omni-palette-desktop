@@ -29,8 +29,10 @@ describe("Svelte frontend entrypoint", () => {
     expect(mainSource).toContain('from "./App.svelte"');
     expect(mainSource).toContain('from "./Guide.svelte"');
     expect(mainSource).toContain('from "./Settings.svelte"');
+    expect(mainSource).toContain('from "./DebugOverlay.svelte"');
     expect(mainSource).toContain("getCurrentWindow().label");
     expect(mainSource).toContain('label === "settings"');
+    expect(mainSource).toContain('label === "debug"');
     expect(mainSource).toContain("mount(Component,");
   });
 
@@ -62,6 +64,8 @@ describe("Svelte frontend entrypoint", () => {
     expect(settingsSource).toContain("Record");
     expect(settingsSource).toContain("Reset");
     expect(settingsSource).toContain("Command behavior");
+    expect(settingsSource).toContain("Pop up debugger");
+    expect(settingsSource).toContain("showDebugOverlay");
     expect(settingsSource).toContain("Bundled Defaults");
     expect(settingsSource).toContain("Downloaded Extensions");
     expect(settingsSource).toContain("No downloaded extensions installed yet.");
@@ -80,6 +84,25 @@ describe("Svelte frontend entrypoint", () => {
     expect(settingsSource).not.toContain("Extension settings panels arrive in Phase 6C.3.");
   });
 
+  it("renders a separate debug overlay surface", () => {
+    const debugPath = join(srcDir, "DebugOverlay.svelte");
+
+    expect(existsSync(debugPath)).toBe(true);
+
+    if (!existsSync(debugPath)) {
+      return;
+    }
+
+    const debugSource = readFileSync(debugPath, "utf8");
+    expect(debugSource).toContain("getDebugSnapshot");
+    expect(debugSource).toContain("closeDebugOverlay");
+    expect(debugSource).toContain("Foreground");
+    expect(debugSource).toContain("Interaction");
+    expect(debugSource).toContain("Command Candidates");
+    expect(debugSource).toContain("Palette Filter");
+    expect(debugSource).toContain("Background Windows");
+  });
+
   it("declares separate palette, settings, and guide Tauri windows", () => {
     const config = JSON.parse(
       readFileSync(join(appRoot, "src-tauri", "tauri.conf.json"), "utf8"),
@@ -88,6 +111,7 @@ describe("Svelte frontend entrypoint", () => {
     const mainWindow = windows.find((window) => window.label === "main");
     const settingsWindow = windows.find((window) => window.label === "settings");
     const guideWindow = windows.find((window) => window.label === "guide");
+    const debugWindow = windows.find((window) => window.label === "debug");
 
     expect(mainWindow).toMatchObject({
       label: "main",
@@ -104,6 +128,13 @@ describe("Svelte frontend entrypoint", () => {
     });
     expect(guideWindow).toMatchObject({
       label: "guide",
+      visible: false,
+    });
+    expect(debugWindow).toMatchObject({
+      label: "debug",
+      title: "Omni Palette Debug",
+      decorations: true,
+      resizable: true,
       visible: false,
     });
   });

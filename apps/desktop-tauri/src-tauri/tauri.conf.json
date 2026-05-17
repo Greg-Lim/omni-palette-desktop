@@ -42,6 +42,16 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": false
+      },
+      {
+        "title": "Omni Palette Debug",
+        "label": "debug",
+        "width": 420,
+        "height": 640,
+        "resizable": true,
+        "decorations": true,
+        "alwaysOnTop": true,
+        "visible": false
       }
     ],
     "security": {

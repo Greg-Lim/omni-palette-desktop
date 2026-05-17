@@ -1,3 +1,4 @@
+mod debug_overlay;
 mod guide_lifecycle;
 mod hotkey_bridge;
 mod settings_window;
@@ -34,18 +35,23 @@ use omni_palette::{
         plugins::load_plugin_settings_schema_from_manifest,
     },
     domain::{
-        action::Os,
+        action::{ContextRoot, Os},
         hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
     },
     extension_management::{
         extension_management_snapshot, set_extension_enabled as set_runtime_extension_enabled,
         uninstall_extension as uninstall_runtime_extension, ExtensionManagementSnapshot,
     },
+    platform::platform_interface::{get_all_context, RawWindowHandleExt},
     runtime_state::{OmniRuntimeState, RuntimeStateLoadOptions, RuntimeStatusDto},
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
+use crate::debug_overlay::{
+    DebugCommandCandidateDto, DebugDiagnosticsState, DebugOverlay, DebugOverlayStatusDto,
+    DebugSnapshotDto,
+};
 use crate::guide_lifecycle::{GuideLifecycle, GuideRuntimeCommand, GuideStatusDto, GUIDE_DURATION};
 use crate::hotkey_bridge::{HotkeyBridge, HotkeyStatusDto, PaletteActivationHandler};
 use crate::settings_window::{SettingsWindow, SettingsWindowStatusDto};
@@ -54,11 +60,13 @@ use crate::window_lifecycle::{WindowLifecycle, WindowLifecycleStatusDto};
 struct AppState {
     backend: Arc<PaletteBackend>,
     runtime_state: OmniRuntimeState,
-    hotkey_bridge: Arc<HotkeyBridge>,
+    hotkey_bridge: Arc<ManagedHotkeyBridge>,
     window_lifecycle: Arc<WindowLifecycle>,
     settings_window: Arc<SettingsWindow>,
     guide_lifecycle: Arc<GuideLifecycle>,
     marketplace: Arc<MarketplaceState>,
+    debug_overlay: Arc<DebugOverlay>,
+    debug_diagnostics: Arc<DebugDiagnosticsState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -68,11 +76,63 @@ pub struct HealthCheckPayload {
     pub status: &'static str,
 }
 
+struct ManagedHotkeyBridge {
+    activation_hint: String,
+    inner: Mutex<Option<Arc<HotkeyBridge>>>,
+}
+
+impl ManagedHotkeyBridge {
+    fn new(activation_hint: String) -> Self {
+        Self {
+            activation_hint,
+            inner: Mutex::new(None),
+        }
+    }
+
+    fn install(&self, bridge: Arc<HotkeyBridge>) {
+        *self.inner.lock().expect("hotkey bridge should lock") = Some(bridge);
+    }
+
+    fn status(&self) -> HotkeyStatusDto {
+        self.with_bridge(|bridge| bridge.status())
+            .unwrap_or(HotkeyStatusDto {
+                running: false,
+                activation_hint: self.activation_hint.clone(),
+                activation_count: 0,
+                ignored_passthrough_count: 0,
+                last_event: None,
+                last_error: None,
+            })
+    }
+
+    fn enable_guide_hotkeys(
+        &self,
+        captured_shortcut: Option<KeyboardShortcut>,
+    ) -> Result<(), String> {
+        self.with_bridge(|bridge| bridge.enable_guide_hotkeys(captured_shortcut))
+            .unwrap_or(Ok(()))
+    }
+
+    fn clear_guide_hotkeys(&self) -> Result<(), String> {
+        self.with_bridge(|bridge| bridge.clear_guide_hotkeys())
+            .unwrap_or(Ok(()))
+    }
+
+    fn with_bridge<T>(&self, operation: impl FnOnce(&HotkeyBridge) -> T) -> Option<T> {
+        let bridge = self
+            .inner
+            .lock()
+            .expect("hotkey bridge should lock")
+            .clone()?;
+        Some(operation(&bridge))
+    }
+}
+
 #[tauri::command]
 fn health_check() -> HealthCheckPayload {
     HealthCheckPayload {
         app_name: "Omni Palette",
-        phase: "Phase 6C.3 - Extension-Specific Settings Panels",
+        phase: "Phase 7 - Debug Overlay And Diagnostics",
         status: "ok",
     }
 }
@@ -435,6 +495,13 @@ pub trait ActivationShortcutUpdater: Send + Sync {
 impl ActivationShortcutUpdater for HotkeyBridge {
     fn update_activation_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
         HotkeyBridge::update_activation_shortcut(self, shortcut)
+    }
+}
+
+impl ActivationShortcutUpdater for ManagedHotkeyBridge {
+    fn update_activation_shortcut(&self, shortcut: KeyboardShortcut) -> Result<(), String> {
+        self.with_bridge(|bridge| bridge.update_activation_shortcut(shortcut))
+            .unwrap_or_else(|| Err("Global hotkey listener is not ready".to_string()))
     }
 }
 
@@ -1174,12 +1241,22 @@ fn extension_install_message(
 
 #[tauri::command]
 fn get_palette_bootstrap(state: State<'_, AppState>) -> PaletteBootstrapDto {
-    state.backend.get_palette_bootstrap()
+    let bootstrap = state.backend.get_palette_bootstrap();
+    state
+        .debug_diagnostics
+        .record_palette_snapshot(&PaletteSnapshotDto {
+            session_id: bootstrap.session_id.clone(),
+            query: String::new(),
+            commands: bootstrap.commands.clone(),
+        });
+    bootstrap
 }
 
 #[tauri::command]
 fn search_commands(query: String, state: State<'_, AppState>) -> PaletteSnapshotDto {
-    state.backend.search_commands(&query)
+    let snapshot = state.backend.search_commands(&query);
+    state.debug_diagnostics.record_palette_snapshot(&snapshot);
+    snapshot
 }
 
 #[tauri::command]
@@ -1265,6 +1342,58 @@ fn reload_runtime_state(state: State<'_, AppState>) -> RuntimeReloadResultDto {
 #[tauri::command]
 fn show_settings_window(state: State<'_, AppState>) -> SettingsWindowStatusDto {
     state.settings_window.show_settings_window()
+}
+
+#[tauri::command]
+fn show_debug_overlay(state: State<'_, AppState>) -> DebugOverlayStatusDto {
+    state.debug_overlay.show_debug_overlay()
+}
+
+#[tauri::command]
+fn close_debug_overlay(state: State<'_, AppState>) -> DebugOverlayStatusDto {
+    state.debug_overlay.close_debug_overlay()
+}
+
+#[tauri::command]
+fn get_debug_overlay_status(state: State<'_, AppState>) -> DebugOverlayStatusDto {
+    state.debug_overlay.status()
+}
+
+#[tauri::command]
+fn get_debug_snapshot(state: State<'_, AppState>) -> DebugSnapshotDto {
+    debug_snapshot_for_runtime(
+        &state.runtime_state,
+        &state.debug_diagnostics,
+        get_all_context(),
+    )
+}
+
+fn debug_snapshot_for_runtime(
+    runtime: &OmniRuntimeState,
+    diagnostics: &DebugDiagnosticsState,
+    context: ContextRoot,
+) -> DebugSnapshotDto {
+    let ignored_process_name = context
+        .get_active()
+        .and_then(|handle| handle.get_app_process_name())
+        .filter(|process_name| runtime.is_ignored_process_name(process_name));
+    let command_candidates = runtime
+        .registry()
+        .read()
+        .map(|registry| {
+            registry
+                .get_actions(&context)
+                .into_iter()
+                .map(|action| DebugCommandCandidateDto {
+                    focus_state: action.focus_state,
+                    priority: action.metadata.priority,
+                    favorite: action.metadata.favorite,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    diagnostics.snapshot_from_context(context, command_candidates, ignored_process_name)
 }
 
 #[tauri::command]
@@ -1368,6 +1497,8 @@ pub fn run() {
                 app.handle().clone(),
             ));
             let settings_window = Arc::new(SettingsWindow::for_tauri(app.handle().clone()));
+            let debug_overlay = Arc::new(DebugOverlay::for_tauri(app.handle().clone()));
+            let debug_diagnostics = Arc::new(DebugDiagnosticsState::default());
             let marketplace = Arc::new(MarketplaceState::new(Arc::new(
                 ExtensionInstallMarketplaceService,
             )));
@@ -1376,25 +1507,31 @@ pub fn run() {
                 Arc::clone(&window_lifecycle),
                 app.handle().clone(),
             ));
+            let hotkey_bridge = Arc::new(ManagedHotkeyBridge::new(
+                runtime_state.config().activation.to_string(),
+            ));
+            app.manage(AppState {
+                backend: Arc::clone(&backend),
+                runtime_state: runtime_state.clone(),
+                hotkey_bridge: Arc::clone(&hotkey_bridge),
+                window_lifecycle: Arc::clone(&window_lifecycle),
+                settings_window,
+                guide_lifecycle: Arc::clone(&guide_lifecycle),
+                marketplace,
+                debug_overlay,
+                debug_diagnostics,
+            });
+
             let activation_handler: Arc<dyn hotkey_bridge::PaletteActivationHandler> =
                 Arc::new(ActivationRouter {
                     window_lifecycle: Arc::clone(&window_lifecycle),
                     guide_lifecycle: Arc::clone(&guide_lifecycle),
                 });
-            let hotkey_bridge = Arc::new(HotkeyBridge::start(
+            hotkey_bridge.install(Arc::new(HotkeyBridge::start(
                 runtime_state.clone(),
                 app.handle().clone(),
                 activation_handler,
-            ));
-            app.manage(AppState {
-                backend: Arc::clone(&backend),
-                runtime_state: runtime_state.clone(),
-                hotkey_bridge,
-                window_lifecycle,
-                settings_window,
-                guide_lifecycle,
-                marketplace,
-            });
+            )));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1412,6 +1549,10 @@ pub fn run() {
             save_runtime_settings,
             reload_runtime_state,
             show_settings_window,
+            show_debug_overlay,
+            close_debug_overlay,
+            get_debug_overlay_status,
+            get_debug_snapshot,
             get_extensions_bootstrap,
             set_extension_enabled,
             uninstall_extension,
@@ -1440,27 +1581,151 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
+    use crate::debug_overlay::{
+        DebugCommandCandidateDto, DebugDiagnosticsState, DebugOverlay, DebugOverlayController,
+    };
     use crate::settings_window::SettingsWindowController;
 
     use omni_palette::{
+        backend_contract::{CommandDto, MatchRangeDto, PaletteSessionId},
         config::runtime::{CommandBehavior, RuntimePaths, ThemeMode},
         core::extensions::settings::load_extension_settings_values,
-        domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
+        domain::{
+            action::{CommandPriority, ContextRoot, FocusState, InteractionContext},
+            hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
+        },
         runtime_state::RuntimeStateLoadOptions,
     };
 
     use super::*;
 
     #[test]
-    fn health_check_reports_phase_six_extension_specific_settings_panels() {
+    fn health_check_reports_phase_seven_debug_overlay_and_diagnostics() {
         let payload = health_check();
 
         assert_eq!(payload.app_name, "Omni Palette");
-        assert_eq!(
-            payload.phase,
-            "Phase 6C.3 - Extension-Specific Settings Panels"
-        );
+        assert_eq!(payload.phase, "Phase 7 - Debug Overlay And Diagnostics");
         assert_eq!(payload.status, "ok");
+    }
+
+    #[test]
+    fn debug_overlay_status_starts_hidden() {
+        let controller = Arc::new(RecordingDebugOverlayController::default());
+        let overlay = DebugOverlay::new(controller);
+
+        let status = overlay.status();
+
+        assert_eq!(status.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert!(!status.visible);
+        assert_eq!(status.show_count, 0);
+        assert_eq!(status.hide_count, 0);
+        assert_eq!(status.focus_count, 0);
+        assert_eq!(status.last_error, None);
+    }
+
+    #[test]
+    fn show_debug_overlay_shows_and_focuses_debug_window() {
+        let controller = Arc::new(RecordingDebugOverlayController::default());
+        let overlay = DebugOverlay::new(controller.clone());
+
+        let status = overlay.show_debug_overlay();
+
+        assert_eq!(status.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert!(status.visible);
+        assert_eq!(status.show_count, 1);
+        assert_eq!(status.hide_count, 0);
+        assert_eq!(status.focus_count, 1);
+        assert_eq!(status.last_error, None);
+        assert_eq!(controller.log(), vec!["show", "focus"]);
+    }
+
+    #[test]
+    fn close_debug_overlay_hides_debug_window() {
+        let controller = Arc::new(RecordingDebugOverlayController::default());
+        let overlay = DebugOverlay::new(controller.clone());
+
+        overlay.show_debug_overlay();
+        let status = overlay.close_debug_overlay();
+
+        assert_eq!(status.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert!(!status.visible);
+        assert_eq!(status.show_count, 1);
+        assert_eq!(status.hide_count, 1);
+        assert_eq!(status.focus_count, 1);
+        assert_eq!(status.last_error, None);
+        assert_eq!(controller.log(), vec!["show", "focus", "hide"]);
+    }
+
+    #[test]
+    fn show_debug_overlay_failure_returns_controlled_error() {
+        let controller = Arc::new(RecordingDebugOverlayController::failing_show());
+        let overlay = DebugOverlay::new(controller);
+
+        let status = overlay.show_debug_overlay();
+
+        assert_eq!(status.status, RuntimeSettingsResultStatusDto::Failed);
+        assert!(!status.visible);
+        assert_eq!(status.show_count, 0);
+        assert_eq!(status.focus_count, 0);
+        assert_eq!(
+            status.last_error,
+            Some("Failed to show debug window: show failed".to_string())
+        );
+    }
+
+    #[test]
+    fn debug_diagnostics_snapshot_preserves_latest_palette_rows() {
+        let diagnostics = DebugDiagnosticsState::default();
+        diagnostics.record_palette_snapshot(&test_palette_snapshot("date", 10));
+
+        let snapshot = diagnostics.snapshot_from_context(
+            empty_debug_context(),
+            vec![
+                debug_candidate(FocusState::Focused, CommandPriority::High, true),
+                debug_candidate(FocusState::Background, CommandPriority::Low, false),
+                debug_candidate(FocusState::Global, CommandPriority::Suppressed, false),
+            ],
+            Some("code.exe".to_string()),
+        );
+
+        assert_eq!(snapshot.foreground_window, None);
+        assert_eq!(snapshot.background_total, 0);
+        assert_eq!(snapshot.active_tags, vec!["ui.text_input".to_string()]);
+        assert!(snapshot.text_input_active);
+        assert_eq!(snapshot.ignored_process_name, Some("code.exe".to_string()));
+        assert_eq!(snapshot.command_summary.total, 3);
+        assert_eq!(snapshot.command_summary.focused, 1);
+        assert_eq!(snapshot.command_summary.background, 1);
+        assert_eq!(snapshot.command_summary.global, 1);
+        assert_eq!(snapshot.command_summary.favorites, 1);
+        assert_eq!(snapshot.command_summary.suppressed_priority, 1);
+        assert_eq!(snapshot.palette_state.query, "date");
+        assert_eq!(snapshot.palette_state.filtered_count, 10);
+        assert_eq!(snapshot.palette_state.top_rows.len(), 8);
+        assert_eq!(snapshot.palette_state.top_rows[0].label, "Command 0");
+    }
+
+    #[test]
+    fn managed_hotkey_bridge_reports_starting_status_before_listener_is_installed() {
+        let bridge = ManagedHotkeyBridge::new("Ctrl+Shift+P".to_string());
+
+        assert_eq!(
+            bridge.status(),
+            HotkeyStatusDto {
+                running: false,
+                activation_hint: "Ctrl+Shift+P".to_string(),
+                activation_count: 0,
+                ignored_passthrough_count: 0,
+                last_event: None,
+                last_error: None,
+            }
+        );
+        assert_eq!(bridge.clear_guide_hotkeys(), Ok(()));
+        assert_eq!(bridge.enable_guide_hotkeys(None), Ok(()));
+        assert_eq!(
+            bridge.update_activation_shortcut(ctrl_alt_space_shortcut()),
+            Err("Global hotkey listener is not ready".to_string())
+        );
     }
 
     #[test]
@@ -2497,6 +2762,45 @@ source = "wasm"
     }
 
     #[derive(Default)]
+    struct RecordingDebugOverlayController {
+        log: Mutex<Vec<&'static str>>,
+        fail_on_show: bool,
+    }
+
+    impl RecordingDebugOverlayController {
+        fn failing_show() -> Self {
+            Self {
+                log: Mutex::new(Vec::new()),
+                fail_on_show: true,
+            }
+        }
+
+        fn log(&self) -> Vec<&'static str> {
+            self.log.lock().expect("log should lock").clone()
+        }
+    }
+
+    impl DebugOverlayController for RecordingDebugOverlayController {
+        fn show(&self) -> Result<(), String> {
+            self.log.lock().expect("log should lock").push("show");
+            if self.fail_on_show {
+                return Err("show failed".to_string());
+            }
+            Ok(())
+        }
+
+        fn hide(&self) -> Result<(), String> {
+            self.log.lock().expect("log should lock").push("hide");
+            Ok(())
+        }
+
+        fn focus(&self) -> Result<(), String> {
+            self.log.lock().expect("log should lock").push("focus");
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
     struct RecordingActivationShortcutUpdater {
         updates: Mutex<Vec<KeyboardShortcut>>,
         fail: bool,
@@ -2571,6 +2875,48 @@ source = "wasm"
                 ..Default::default()
             },
             key: Key::Space,
+        }
+    }
+
+    fn empty_debug_context() -> ContextRoot {
+        ContextRoot {
+            fg_context: Vec::new(),
+            bg_context: Vec::new(),
+            active_interaction: InteractionContext::from_tags(["ui.text_input".to_string()]),
+        }
+    }
+
+    fn debug_candidate(
+        focus_state: FocusState,
+        priority: CommandPriority,
+        favorite: bool,
+    ) -> DebugCommandCandidateDto {
+        DebugCommandCandidateDto {
+            focus_state,
+            priority,
+            favorite,
+        }
+    }
+
+    fn test_palette_snapshot(query: &str, command_count: usize) -> PaletteSnapshotDto {
+        PaletteSnapshotDto {
+            session_id: PaletteSessionId::new("debug-test-session"),
+            query: query.to_string(),
+            commands: (0..command_count)
+                .map(|index| CommandDto {
+                    id: CommandId::new(format!("cmd-{index}")),
+                    label: format!("Command {index}"),
+                    shortcut_text: String::new(),
+                    guide_hint: None,
+                    focus_state: FocusState::Global,
+                    priority: CommandPriority::Medium,
+                    favorite: false,
+                    tags: vec!["debug".to_string()],
+                    original_order: index,
+                    score: index as i32,
+                    label_matches: Vec::<MatchRangeDto>::new(),
+                })
+                .collect(),
         }
     }
 

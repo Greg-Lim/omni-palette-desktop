@@ -268,6 +268,59 @@ export type SettingsWindowStatus = {
   last_error: string | null;
 };
 
+export type DebugOverlayStatus = {
+  status: RuntimeSettingsResultStatus;
+  message: string;
+  visible: boolean;
+  show_count: number;
+  hide_count: number;
+  focus_count: number;
+  last_error: string | null;
+};
+
+export type DebugWindowSummary = {
+  process_name: string | null;
+  hwnd: number | null;
+};
+
+export type DebugCommandSummary = {
+  total: number;
+  focused: number;
+  background: number;
+  global: number;
+  favorites: number;
+  suppressed_priority: number;
+  low_priority: number;
+  medium_priority: number;
+  high_priority: number;
+};
+
+export type DebugCommandRow = {
+  label: string;
+  focus_state: CommandFocusState;
+  priority: CommandPriority;
+  favorite: boolean;
+  score: number;
+  tags: string[];
+};
+
+export type DebugPaletteState = {
+  query: string;
+  filtered_count: number;
+  top_rows: DebugCommandRow[];
+};
+
+export type DebugSnapshot = {
+  foreground_window: DebugWindowSummary | null;
+  background_windows: DebugWindowSummary[];
+  background_total: number;
+  active_tags: string[];
+  text_input_active: boolean;
+  ignored_process_name: string | null;
+  command_summary: DebugCommandSummary;
+  palette_state: DebugPaletteState;
+};
+
 export type OpenSettingsFromPaletteResult = {
   window_status: WindowLifecycleStatus;
   settings_status: SettingsWindowStatus;
@@ -408,6 +461,11 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
     saveExtensionSettings: (request: ExtensionSettingsSaveRequest) =>
       invokeCommand<ExtensionSettingsSaveResult>("save_extension_settings", { request }),
     showSettingsWindow: () => invokeCommand<SettingsWindowStatus>("show_settings_window"),
+    showDebugOverlay: () => invokeCommand<DebugOverlayStatus>("show_debug_overlay"),
+    closeDebugOverlay: () => invokeCommand<DebugOverlayStatus>("close_debug_overlay"),
+    getDebugOverlayStatus: () =>
+      invokeCommand<DebugOverlayStatus>("get_debug_overlay_status"),
+    getDebugSnapshot: () => invokeCommand<DebugSnapshot>("get_debug_snapshot"),
   };
 }
 
@@ -1113,6 +1171,18 @@ export function formatGuideStatus(status: GuideStatus): string {
     status.last_action ?? "idle",
     `${status.start_count} started`,
     `${status.complete_count} completed`,
+  ].join(" - ");
+}
+
+export function formatDebugOverlayStatus(status: DebugOverlayStatus): string {
+  if (status.last_error) {
+    return `debug error - ${status.last_error}`;
+  }
+
+  return [
+    status.visible ? "debug visible" : "debug hidden",
+    `${status.show_count} shown`,
+    `${status.hide_count} hidden`,
   ].join(" - ");
 }
 

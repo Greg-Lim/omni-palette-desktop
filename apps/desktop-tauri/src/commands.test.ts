@@ -6,6 +6,8 @@ import {
   CatalogRefreshResult,
   CommandRow,
   CommandExecutionResult,
+  DebugOverlayStatus,
+  DebugSnapshot,
   ExtensionSettingItem,
   ExtensionSettingsBootstrap,
   ExtensionSettingsSaveResult,
@@ -35,6 +37,7 @@ import {
   formatGuideStatus,
   formatRuntimeStatus,
   formatWindowLifecycleStatus,
+  formatDebugOverlayStatus,
   guideShortcutParts,
   highlightedLabelSegments,
   filterCatalogEntries,
@@ -136,6 +139,58 @@ const runtimeStatus: RuntimeStatus = {
   ignored_process_count: 0,
   plugin_count: 3,
   plugin_application_count: 3,
+};
+
+const debugOverlayStatus: DebugOverlayStatus = {
+  status: "succeeded",
+  message: "Debug window shown",
+  visible: true,
+  show_count: 1,
+  hide_count: 0,
+  focus_count: 1,
+  last_error: null,
+};
+
+const debugSnapshot: DebugSnapshot = {
+  foreground_window: {
+    process_name: "notepad.exe",
+    hwnd: 42,
+  },
+  background_windows: [
+    {
+      process_name: "explorer.exe",
+      hwnd: 100,
+    },
+  ],
+  background_total: 1,
+  active_tags: ["ui.text_input"],
+  text_input_active: true,
+  ignored_process_name: null,
+  command_summary: {
+    total: 2,
+    focused: 1,
+    background: 0,
+    global: 1,
+    favorites: 1,
+    suppressed_priority: 0,
+    low_priority: 0,
+    medium_priority: 1,
+    high_priority: 1,
+  },
+  palette_state: {
+    query: "date",
+    filtered_count: 2,
+    top_rows: [
+      {
+        label: "DateTime Typer: Print date short",
+        focus_state: "global",
+        priority: "medium",
+        favorite: false,
+        score: 14,
+        tags: ["datetime"],
+      },
+    ],
+  },
 };
 
 const extensionsBootstrap: ExtensionsBootstrap = {
@@ -512,6 +567,28 @@ describe("palette api", () => {
 
     expect(calls).toEqual([{ command: "show_settings_window", args: undefined }]);
     expect(status).toEqual(settingsWindowStatus);
+  });
+
+  it("calls the backend debug overlay commands and preserves payloads", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (command === "get_debug_snapshot") {
+        return debugSnapshot as T;
+      }
+      return debugOverlayStatus as T;
+    });
+
+    expect(await api.showDebugOverlay()).toEqual(debugOverlayStatus);
+    expect(await api.closeDebugOverlay()).toEqual(debugOverlayStatus);
+    expect(await api.getDebugOverlayStatus()).toEqual(debugOverlayStatus);
+    expect(await api.getDebugSnapshot()).toEqual(debugSnapshot);
+    expect(calls).toEqual([
+      { command: "show_debug_overlay", args: undefined },
+      { command: "close_debug_overlay", args: undefined },
+      { command: "get_debug_overlay_status", args: undefined },
+      { command: "get_debug_snapshot", args: undefined },
+    ]);
   });
 
   it("calls the backend extension management commands and preserves payloads", async () => {
@@ -1089,6 +1166,21 @@ describe("commandExecutionShouldHidePalette", () => {
     expect(commandExecutionShouldHidePalette(succeeded)).toBe(true);
     expect(commandExecutionShouldHidePalette(failed)).toBe(false);
     expect(commandExecutionShouldHidePalette(deferred)).toBe(false);
+  });
+});
+
+describe("debug overlay helpers", () => {
+  it("formats debug overlay status with counts or the last error", () => {
+    expect(formatDebugOverlayStatus(debugOverlayStatus)).toBe(
+      "debug visible - 1 shown - 0 hidden",
+    );
+    expect(
+      formatDebugOverlayStatus({
+        ...debugOverlayStatus,
+        status: "failed",
+        last_error: "show failed",
+      }),
+    ).toBe("debug error - show failed");
   });
 });
 
