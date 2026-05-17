@@ -4,6 +4,7 @@ mod settings_window;
 mod window_lifecycle;
 
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
@@ -22,7 +23,15 @@ use omni_palette::{
             install::{
                 ExtensionInstallService, InstalledExtension, BUNDLED_SOURCE_ID, GITHUB_SOURCE_ID,
             },
+            settings::{
+                load_extension_settings_values, load_static_extension_settings_schema,
+                resolved_extension_settings_values, save_extension_settings_values,
+                ExtensionSettingItem, ExtensionSettingKind, ExtensionSettingListEntry,
+                ExtensionSettingsCategory, ExtensionSettingsSchema, ExtensionSettingsTarget,
+                ExtensionSettingsValues,
+            },
         },
+        plugins::load_plugin_settings_schema_from_manifest,
     },
     domain::{
         action::Os,
@@ -63,7 +72,7 @@ pub struct HealthCheckPayload {
 fn health_check() -> HealthCheckPayload {
     HealthCheckPayload {
         app_name: "Omni Palette",
-        phase: "Phase 6C.2 - Marketplace Catalog Refresh And Install",
+        phase: "Phase 6C.3 - Extension-Specific Settings Panels",
         status: "ok",
     }
 }
@@ -260,6 +269,88 @@ pub struct ExtensionMutationResultDto {
     pub status: RuntimeSettingsResultStatusDto,
     pub message: String,
     pub extensions: ExtensionsBootstrapDto,
+    pub runtime_status: RuntimeStatusDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingsTargetDto {
+    pub extension_id: String,
+    pub source_id: String,
+    pub display_name: String,
+    pub kind: ExtensionKindDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingsCategoryDto {
+    pub key: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub toggle_key: Option<String>,
+    pub default_collapsed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionSettingKindDto {
+    Toggle,
+    EntryList,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingListEntryDto {
+    pub id: String,
+    pub name: String,
+    pub format: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingItemDto {
+    pub key: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub kind: ExtensionSettingKindDto,
+    pub default: bool,
+    pub default_entries: Vec<ExtensionSettingListEntryDto>,
+    pub entry_list_format_hint: Option<String>,
+    pub entry_list_default_format: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingsSchemaDto {
+    pub categories: Vec<ExtensionSettingsCategoryDto>,
+    pub items: Vec<ExtensionSettingItemDto>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingsValuesDto {
+    pub toggles: BTreeMap<String, bool>,
+    pub lists: BTreeMap<String, Vec<ExtensionSettingListEntryDto>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingsBootstrapDto {
+    pub status: RuntimeSettingsResultStatusDto,
+    pub message: String,
+    pub target: Option<ExtensionSettingsTargetDto>,
+    pub schema: Option<ExtensionSettingsSchemaDto>,
+    pub values: ExtensionSettingsValuesDto,
+    pub runtime_status: RuntimeStatusDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingsSaveRequestDto {
+    pub target: ExtensionTargetRequestDto,
+    pub values: ExtensionSettingsValuesDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionSettingsSaveResultDto {
+    pub status: RuntimeSettingsResultStatusDto,
+    pub message: String,
+    pub target: Option<ExtensionSettingsTargetDto>,
+    pub values: ExtensionSettingsValuesDto,
     pub runtime_status: RuntimeStatusDto,
 }
 
@@ -624,6 +715,350 @@ fn extension_mutation_failure(
     }
 }
 
+fn extension_settings_target_to_dto(
+    target: &ExtensionSettingsTarget,
+) -> ExtensionSettingsTargetDto {
+    ExtensionSettingsTargetDto {
+        extension_id: target.extension_id.clone(),
+        source_id: target.source_id.clone(),
+        display_name: target.display_name.clone(),
+        kind: ExtensionKindDto::from(target.kind),
+    }
+}
+
+fn extension_settings_category_to_dto(
+    category: &ExtensionSettingsCategory,
+) -> ExtensionSettingsCategoryDto {
+    ExtensionSettingsCategoryDto {
+        key: category.key.clone(),
+        label: category.label.clone(),
+        description: category.description.clone(),
+        toggle_key: category.toggle_key.clone(),
+        default_collapsed: category.default_collapsed,
+    }
+}
+
+fn extension_setting_kind_to_dto(kind: ExtensionSettingKind) -> ExtensionSettingKindDto {
+    match kind {
+        ExtensionSettingKind::Toggle => ExtensionSettingKindDto::Toggle,
+        ExtensionSettingKind::EntryList => ExtensionSettingKindDto::EntryList,
+    }
+}
+
+fn extension_setting_list_entry_to_dto(
+    entry: &ExtensionSettingListEntry,
+) -> ExtensionSettingListEntryDto {
+    ExtensionSettingListEntryDto {
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        format: entry.format.clone(),
+        enabled: entry.enabled,
+    }
+}
+
+fn extension_setting_item_to_dto(item: &ExtensionSettingItem) -> ExtensionSettingItemDto {
+    ExtensionSettingItemDto {
+        key: item.key.clone(),
+        label: item.label.clone(),
+        description: item.description.clone(),
+        category: item.category.clone(),
+        kind: extension_setting_kind_to_dto(item.kind),
+        default: item.default,
+        default_entries: item
+            .default_entries
+            .iter()
+            .map(extension_setting_list_entry_to_dto)
+            .collect(),
+        entry_list_format_hint: item.entry_list_format_hint.clone(),
+        entry_list_default_format: item.entry_list_default_format.clone(),
+    }
+}
+
+fn extension_settings_schema_to_dto(
+    schema: &ExtensionSettingsSchema,
+) -> ExtensionSettingsSchemaDto {
+    ExtensionSettingsSchemaDto {
+        categories: schema
+            .categories
+            .iter()
+            .map(extension_settings_category_to_dto)
+            .collect(),
+        items: schema
+            .items
+            .iter()
+            .map(extension_setting_item_to_dto)
+            .collect(),
+    }
+}
+
+fn extension_setting_list_entry_from_dto(
+    entry: ExtensionSettingListEntryDto,
+) -> ExtensionSettingListEntry {
+    ExtensionSettingListEntry {
+        id: entry.id,
+        name: entry.name,
+        format: entry.format,
+        enabled: entry.enabled,
+    }
+}
+
+fn extension_settings_values_to_dto(
+    values: &ExtensionSettingsValues,
+) -> ExtensionSettingsValuesDto {
+    ExtensionSettingsValuesDto {
+        toggles: values.toggles.clone(),
+        lists: values
+            .lists
+            .iter()
+            .map(|(key, entries)| {
+                (
+                    key.clone(),
+                    entries
+                        .iter()
+                        .map(extension_setting_list_entry_to_dto)
+                        .collect(),
+                )
+            })
+            .collect(),
+    }
+}
+
+fn extension_settings_values_from_dto(
+    values: ExtensionSettingsValuesDto,
+) -> ExtensionSettingsValues {
+    ExtensionSettingsValues {
+        toggles: values.toggles,
+        lists: values
+            .lists
+            .into_iter()
+            .map(|(key, entries)| {
+                (
+                    key,
+                    entries
+                        .into_iter()
+                        .map(extension_setting_list_entry_from_dto)
+                        .collect(),
+                )
+            })
+            .collect(),
+    }
+}
+
+fn extension_settings_failure(
+    runtime: &OmniRuntimeState,
+    message: String,
+) -> ExtensionSettingsBootstrapDto {
+    ExtensionSettingsBootstrapDto {
+        status: RuntimeSettingsResultStatusDto::Failed,
+        message,
+        target: None,
+        schema: None,
+        values: ExtensionSettingsValuesDto::default(),
+        runtime_status: runtime.status(),
+    }
+}
+
+fn extension_settings_save_failure(
+    runtime: &OmniRuntimeState,
+    target: Option<&ExtensionSettingsTarget>,
+    schema: Option<&ExtensionSettingsSchema>,
+    stored_values: Option<&ExtensionSettingsValues>,
+    message: String,
+) -> ExtensionSettingsSaveResultDto {
+    let values = match (schema, stored_values) {
+        (Some(schema), Some(stored_values)) => extension_settings_values_to_dto(
+            &resolved_extension_settings_values(schema, stored_values),
+        ),
+        _ => ExtensionSettingsValuesDto::default(),
+    };
+
+    ExtensionSettingsSaveResultDto {
+        status: RuntimeSettingsResultStatusDto::Failed,
+        message,
+        target: target.map(extension_settings_target_to_dto),
+        values,
+        runtime_status: runtime.status(),
+    }
+}
+
+fn resolve_extension_settings_target(
+    runtime: &OmniRuntimeState,
+    request: &ExtensionTargetRequestDto,
+) -> Result<ExtensionSettingsTarget, String> {
+    let snapshot = extension_management_snapshot(runtime);
+    if request.source_id == BUNDLED_SOURCE_ID {
+        let extension = snapshot
+            .bundled_extensions
+            .iter()
+            .find(|extension| extension.id == request.extension_id)
+            .ok_or_else(|| format!("Bundled extension not found: {}", request.extension_id))?;
+        return Ok(ExtensionSettingsTarget {
+            extension_id: extension.id.clone(),
+            source_id: BUNDLED_SOURCE_ID.to_string(),
+            display_name: extension.name.clone(),
+            kind: extension.kind,
+            installed_path: extension.installed_path.clone(),
+        });
+    }
+
+    let install_root = snapshot.install_root.ok_or_else(|| {
+        snapshot.install_root_error.unwrap_or_else(|| {
+            "APPDATA is not set, so Omni Palette cannot load extension settings.".to_string()
+        })
+    })?;
+    let extension = snapshot
+        .installed_state
+        .extensions
+        .iter()
+        .find(|extension| {
+            extension.id == request.extension_id && extension.source_id == request.source_id
+        })
+        .ok_or_else(|| {
+            format!(
+                "Installed extension not found: {}/{}",
+                request.source_id, request.extension_id
+            )
+        })?;
+    let installed_path = if extension.installed_path.is_absolute() {
+        extension.installed_path.clone()
+    } else {
+        install_root.join(&extension.installed_path)
+    };
+
+    Ok(ExtensionSettingsTarget {
+        extension_id: extension.id.clone(),
+        source_id: extension.source_id.clone(),
+        display_name: extension.id.clone(),
+        kind: extension.kind,
+        installed_path,
+    })
+}
+
+fn load_extension_settings_schema_for_target(
+    runtime: &OmniRuntimeState,
+    target: &ExtensionSettingsTarget,
+) -> Result<ExtensionSettingsSchema, String> {
+    match target.kind {
+        ExtensionKind::Static => load_static_extension_settings_schema(&target.installed_path)?
+            .ok_or_else(|| {
+                format!(
+                    "{} does not currently expose custom settings",
+                    target.display_name
+                )
+            }),
+        ExtensionKind::WasmPlugin => {
+            load_plugin_settings_schema_from_manifest(&target.installed_path, runtime.current_os())?
+                .ok_or_else(|| {
+                    format!(
+                        "{} does not currently expose custom settings",
+                        target.display_name
+                    )
+                })
+        }
+    }
+}
+
+fn get_extension_settings_for_runtime(
+    runtime: &OmniRuntimeState,
+    request: ExtensionTargetRequestDto,
+) -> ExtensionSettingsBootstrapDto {
+    let target = match resolve_extension_settings_target(runtime, &request) {
+        Ok(target) => target,
+        Err(message) => return extension_settings_failure(runtime, message),
+    };
+    let schema = match load_extension_settings_schema_for_target(runtime, &target) {
+        Ok(schema) => schema,
+        Err(message) => return extension_settings_failure(runtime, message),
+    };
+    let install_root = match runtime.user_extensions_root() {
+        Some(root) => root,
+        None => {
+            return extension_settings_failure(
+                runtime,
+                "APPDATA is not set, so Omni Palette cannot load extension settings.".to_string(),
+            );
+        }
+    };
+    let stored_values = match load_extension_settings_values(&install_root, &target.extension_id) {
+        Ok(values) => values,
+        Err(message) => return extension_settings_failure(runtime, message),
+    };
+    let resolved_values = resolved_extension_settings_values(&schema, &stored_values);
+
+    ExtensionSettingsBootstrapDto {
+        status: RuntimeSettingsResultStatusDto::Succeeded,
+        message: format!("Loaded settings for {}", target.display_name),
+        target: Some(extension_settings_target_to_dto(&target)),
+        schema: Some(extension_settings_schema_to_dto(&schema)),
+        values: extension_settings_values_to_dto(&resolved_values),
+        runtime_status: runtime.status(),
+    }
+}
+
+fn save_extension_settings_for_runtime(
+    runtime: &OmniRuntimeState,
+    request: ExtensionSettingsSaveRequestDto,
+) -> ExtensionSettingsSaveResultDto {
+    let target = match resolve_extension_settings_target(runtime, &request.target) {
+        Ok(target) => target,
+        Err(message) => {
+            return extension_settings_save_failure(runtime, None, None, None, message);
+        }
+    };
+    let schema = match load_extension_settings_schema_for_target(runtime, &target) {
+        Ok(schema) => schema,
+        Err(message) => {
+            return extension_settings_save_failure(runtime, Some(&target), None, None, message);
+        }
+    };
+    let install_root = match runtime.user_extensions_root() {
+        Some(root) => root,
+        None => {
+            let resolved_defaults =
+                resolved_extension_settings_values(&schema, &ExtensionSettingsValues::default());
+            return extension_settings_save_failure(
+                runtime,
+                Some(&target),
+                Some(&schema),
+                Some(&resolved_defaults),
+                "APPDATA is not set, so Omni Palette cannot save extension settings.".to_string(),
+            );
+        }
+    };
+    let previous_values =
+        load_extension_settings_values(&install_root, &target.extension_id).unwrap_or_default();
+    let next_values = resolved_extension_settings_values(
+        &schema,
+        &extension_settings_values_from_dto(request.values),
+    );
+
+    match save_extension_settings_values(&install_root, &target.extension_id, &next_values) {
+        Ok(()) => match runtime.reload_extensions() {
+            Ok(_) => ExtensionSettingsSaveResultDto {
+                status: RuntimeSettingsResultStatusDto::Succeeded,
+                message: format!("Saved settings for {}", target.display_name),
+                target: Some(extension_settings_target_to_dto(&target)),
+                values: extension_settings_values_to_dto(&next_values),
+                runtime_status: runtime.status(),
+            },
+            Err(message) => extension_settings_save_failure(
+                runtime,
+                Some(&target),
+                Some(&schema),
+                Some(&previous_values),
+                message,
+            ),
+        },
+        Err(message) => extension_settings_save_failure(
+            runtime,
+            Some(&target),
+            Some(&schema),
+            Some(&previous_values),
+            message,
+        ),
+    }
+}
+
 fn uninstall_extension_for_runtime(
     runtime: &OmniRuntimeState,
     request: ExtensionTargetRequestDto,
@@ -869,6 +1304,22 @@ fn install_catalog_extension(
     install_catalog_extension_for_runtime(&state.runtime_state, &state.marketplace, &extension_id)
 }
 
+#[tauri::command]
+fn get_extension_settings(
+    request: ExtensionTargetRequestDto,
+    state: State<'_, AppState>,
+) -> ExtensionSettingsBootstrapDto {
+    get_extension_settings_for_runtime(&state.runtime_state, request)
+}
+
+#[tauri::command]
+fn save_extension_settings(
+    request: ExtensionSettingsSaveRequestDto,
+    state: State<'_, AppState>,
+) -> ExtensionSettingsSaveResultDto {
+    save_extension_settings_for_runtime(&state.runtime_state, request)
+}
+
 struct ActivationRouter {
     window_lifecycle: Arc<WindowLifecycle>,
     guide_lifecycle: Arc<GuideLifecycle>,
@@ -965,7 +1416,9 @@ pub fn run() {
             set_extension_enabled,
             uninstall_extension,
             refresh_extension_catalog,
-            install_catalog_extension
+            install_catalog_extension,
+            get_extension_settings,
+            save_extension_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
@@ -982,12 +1435,16 @@ fn bundled_extensions_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex},
+    };
 
     use crate::settings_window::SettingsWindowController;
 
     use omni_palette::{
         config::runtime::{CommandBehavior, RuntimePaths, ThemeMode},
+        core::extensions::settings::load_extension_settings_values,
         domain::hotkey::{HotkeyModifiers, Key, KeyboardShortcut},
         runtime_state::RuntimeStateLoadOptions,
     };
@@ -995,13 +1452,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_check_reports_phase_six_marketplace_catalog_refresh_and_install() {
+    fn health_check_reports_phase_six_extension_specific_settings_panels() {
         let payload = health_check();
 
         assert_eq!(payload.app_name, "Omni Palette");
         assert_eq!(
             payload.phase,
-            "Phase 6C.2 - Marketplace Catalog Refresh And Install"
+            "Phase 6C.3 - Extension-Specific Settings Panels"
         );
         assert_eq!(payload.status, "ok");
     }
@@ -1487,6 +1944,182 @@ mod tests {
     }
 
     #[test]
+    fn static_extension_settings_load_returns_schema_and_resolved_defaults() {
+        let runtime = runtime_state_for_extension_settings("static-settings-load", true);
+        let request = ExtensionTargetRequestDto {
+            extension_id: "auto_typer".to_string(),
+            source_id: "bundled".to_string(),
+        };
+
+        let result = get_extension_settings_for_runtime(&runtime, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert_eq!(
+            result
+                .target
+                .as_ref()
+                .map(|target| target.display_name.as_str()),
+            Some("Auto Typer")
+        );
+        let schema = result.schema.expect("schema should be returned");
+        assert_eq!(schema.categories[0].key, "general");
+        assert_eq!(schema.items.len(), 1);
+        assert_eq!(schema.items[0].key, "auto_typer.enabled");
+        assert_eq!(result.values.toggles.get("auto_typer.enabled"), Some(&true));
+    }
+
+    #[test]
+    fn wasm_plugin_extension_settings_load_when_schema_is_exposed() {
+        let runtime = runtime_state_for_extension_settings("wasm-settings-load", true);
+        let request = ExtensionTargetRequestDto {
+            extension_id: "plugin_settings".to_string(),
+            source_id: "bundled".to_string(),
+        };
+
+        let result = get_extension_settings_for_runtime(&runtime, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert_eq!(
+            result.target.as_ref().map(|target| target.kind),
+            Some(ExtensionKindDto::WasmPlugin)
+        );
+        assert_eq!(result.values.toggles.get("plugin.enabled"), Some(&false));
+        assert_eq!(
+            result
+                .values
+                .lists
+                .get("plugin.entries")
+                .expect("entry list defaults should resolve")[0]
+                .format,
+            "Hello"
+        );
+    }
+
+    #[test]
+    fn downloaded_static_extension_settings_loads_from_installed_state() {
+        let runtime = runtime_state_for_extension_settings("downloaded-static-settings", true);
+        let request = ExtensionTargetRequestDto {
+            extension_id: "chrome".to_string(),
+            source_id: "github".to_string(),
+        };
+
+        let result = get_extension_settings_for_runtime(&runtime, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert_eq!(
+            result
+                .target
+                .as_ref()
+                .map(|target| target.display_name.as_str()),
+            Some("chrome")
+        );
+        assert_eq!(result.values.toggles.get("chrome.enabled"), Some(&true));
+    }
+
+    #[test]
+    fn missing_extension_settings_target_returns_controlled_failure() {
+        let runtime = runtime_state_for_extension_settings("missing-settings-target", true);
+        let request = ExtensionTargetRequestDto {
+            extension_id: "missing".to_string(),
+            source_id: "github".to_string(),
+        };
+
+        let result = get_extension_settings_for_runtime(&runtime, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Failed);
+        assert_eq!(result.target, None);
+        assert!(result
+            .message
+            .contains("Installed extension not found: github/missing"));
+    }
+
+    #[test]
+    fn extension_without_settings_returns_controlled_failure() {
+        let runtime = runtime_state_for_extension_settings("extension-without-settings", true);
+        let request = ExtensionTargetRequestDto {
+            extension_id: "windows".to_string(),
+            source_id: "bundled".to_string(),
+        };
+
+        let result = get_extension_settings_for_runtime(&runtime, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Failed);
+        assert!(result
+            .message
+            .contains("Windows does not currently expose custom settings"));
+    }
+
+    #[test]
+    fn save_extension_settings_writes_values_and_reloads_runtime() {
+        let runtime = runtime_state_for_extension_settings("save-extension-settings", true);
+        let values = ExtensionSettingsValuesDto {
+            toggles: BTreeMap::from([("plugin.enabled".to_string(), true)]),
+            lists: BTreeMap::from([(
+                "plugin.entries".to_string(),
+                vec![ExtensionSettingListEntryDto {
+                    id: "custom_1".to_string(),
+                    name: "Custom text".to_string(),
+                    format: "Hello from settings".to_string(),
+                    enabled: true,
+                }],
+            )]),
+        };
+        let request = ExtensionSettingsSaveRequestDto {
+            target: ExtensionTargetRequestDto {
+                extension_id: "plugin_settings".to_string(),
+                source_id: "bundled".to_string(),
+            },
+            values: values.clone(),
+        };
+
+        let result = save_extension_settings_for_runtime(&runtime, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert_eq!(result.message, "Saved settings for Plugin Settings");
+        assert_eq!(result.values, values);
+        assert_eq!(result.runtime_status.application_count, 3);
+        let install_root = runtime
+            .user_extensions_root()
+            .expect("settings root should exist");
+        let stored = load_extension_settings_values(&install_root, "plugin_settings")
+            .expect("saved settings should reload");
+        assert_eq!(stored.toggles.get("plugin.enabled"), Some(&true));
+        assert_eq!(
+            stored
+                .lists
+                .get("plugin.entries")
+                .expect("list should save")[0]
+                .format,
+            "Hello from settings"
+        );
+    }
+
+    #[test]
+    fn failed_extension_settings_save_preserves_previous_values() {
+        let runtime =
+            runtime_state_for_extension_settings("save-extension-settings-missing-root", false);
+        let request = ExtensionSettingsSaveRequestDto {
+            target: ExtensionTargetRequestDto {
+                extension_id: "auto_typer".to_string(),
+                source_id: "bundled".to_string(),
+            },
+            values: ExtensionSettingsValuesDto {
+                toggles: BTreeMap::from([("auto_typer.enabled".to_string(), false)]),
+                lists: BTreeMap::new(),
+            },
+        };
+
+        let result = save_extension_settings_for_runtime(&runtime, request);
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Failed);
+        assert_eq!(
+            result.message,
+            "APPDATA is not set, so Omni Palette cannot save extension settings."
+        );
+        assert_eq!(result.values.toggles.get("auto_typer.enabled"), Some(&true));
+    }
+
+    #[test]
     fn bundled_extensions_root_points_to_repo_extensions() {
         let root = bundled_extensions_root();
 
@@ -1580,6 +2213,72 @@ mod tests {
         })
     }
 
+    fn runtime_state_for_extension_settings(name: &str, with_user_root: bool) -> OmniRuntimeState {
+        let root = PathBuf::from("target")
+            .join("tauri-extension-settings-tests")
+            .join(name);
+        if root.exists() {
+            std::fs::remove_dir_all(&root).expect("extension settings test root should reset");
+        }
+        let bundled_root = root.join("bundled");
+        let user_root = root.join("user-extensions");
+        std::fs::create_dir_all(bundled_root.join("static"))
+            .expect("bundled static dir should be created");
+        std::fs::create_dir_all(bundled_root.join("plugins").join("plugin_settings"))
+            .expect("bundled plugin dir should be created");
+        std::fs::create_dir_all(user_root.join("static"))
+            .expect("user static dir should be created");
+
+        write_static_extension(
+            &bundled_root.join("static").join("windows.toml"),
+            "windows",
+            "Windows",
+        );
+        write_static_extension_with_settings(
+            &bundled_root.join("static").join("auto_typer.toml"),
+            "auto_typer",
+            "Auto Typer",
+            "auto_typer.enabled",
+        );
+        write_plugin_extension_with_schema(
+            &bundled_root.join("plugins").join("plugin_settings"),
+            "plugin_settings",
+            "Plugin Settings",
+        );
+        write_static_extension_with_settings(
+            &user_root.join("static").join("chrome.toml"),
+            "chrome",
+            "Chrome",
+            "chrome.enabled",
+        );
+        let mut state = omni_palette::core::extensions::install::InstalledState::default();
+        state.upsert(
+            omni_palette::core::extensions::install::InstalledExtension {
+                id: "chrome".to_string(),
+                version: "0.1.0".to_string(),
+                platform: Os::Windows,
+                kind: omni_palette::core::extensions::catalog::ExtensionKind::Static,
+                source_id: "github".to_string(),
+                package_sha256: "0".repeat(64),
+                enabled: true,
+                installed_path: PathBuf::from("static").join("chrome.toml"),
+            },
+        );
+        omni_palette::core::extensions::install::save_installed_state(&user_root, &state)
+            .expect("installed state should be saved");
+
+        OmniRuntimeState::load(RuntimeStateLoadOptions {
+            bundled_extensions_root: bundled_root,
+            user_extensions_root: with_user_root.then_some(user_root),
+            dev_config_path: root.join("missing-dev-config.toml"),
+            runtime_paths: RuntimePaths {
+                config_path: Some(root.join("config.toml")),
+                local_cache_root: None,
+            },
+            current_os: Os::Windows,
+        })
+    }
+
     fn write_static_extension(path: &std::path::Path, id: &str, name: &str) {
         std::fs::write(
             path,
@@ -1600,6 +2299,47 @@ cmd = {{ mods = ["ctrl"], key = "KeyC" }}
             ),
         )
         .expect("static extension should be written");
+    }
+
+    fn write_static_extension_with_settings(
+        path: &std::path::Path,
+        id: &str,
+        name: &str,
+        toggle_key: &str,
+    ) {
+        std::fs::write(
+            path,
+            format!(
+                r#"
+version = 2
+platform = "windows"
+
+[app]
+id = "{id}"
+name = "{name}"
+process_name = "{id}.exe"
+
+[[setting_categories]]
+key = "general"
+label = "General"
+description = "General settings for {name}"
+toggle_key = "{toggle_key}"
+
+[[settings]]
+key = "{toggle_key}"
+label = "Enabled"
+description = "Enable {name}"
+category = "general"
+type = "toggle"
+default = true
+
+[actions.copy]
+name = "Copy"
+cmd = {{ mods = ["ctrl"], key = "KeyC" }}
+"#
+            ),
+        )
+        .expect("static extension with settings should be written");
     }
 
     fn write_plugin_extension(path: &std::path::Path, id: &str, name: &str, has_settings: bool) {
@@ -1626,6 +2366,100 @@ permissions = []
             ),
         )
         .expect("plugin extension should be written");
+    }
+
+    fn write_plugin_extension_with_schema(path: &std::path::Path, id: &str, name: &str) {
+        let manifest_path = path.join("plugin.toml");
+        let wasm_path = path.join("plugin.wasm");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                r#"
+id = "{id}"
+name = "{name}"
+platform = "windows"
+version = "0.1.0"
+wasm = "plugin.wasm"
+permissions = []
+
+[settings]
+source = "wasm"
+"#
+            ),
+        )
+        .expect("plugin manifest should be written");
+        let schema_json = r#"{"categories":[{"key":"general","label":"General","toggle_key":"plugin.enabled"}],"items":[{"key":"plugin.enabled","label":"Plugin enabled","category":"general","type":"toggle","default":false},{"key":"plugin.entries","label":"Entries","type":"entry_list","default_entries":[{"id":"hello","name":"Hello","format":"Hello","enabled":true}],"entry_list_format_hint":"Text","entry_list_default_format":"Text"}]}"#;
+        std::fs::write(&wasm_path, settings_schema_wasm(schema_json))
+            .expect("plugin wasm should be written");
+    }
+
+    fn settings_schema_wasm(schema_json: &str) -> Vec<u8> {
+        fn push_leb_u32(bytes: &mut Vec<u8>, mut value: u32) {
+            loop {
+                let mut byte = (value & 0x7f) as u8;
+                value >>= 7;
+                if value != 0 {
+                    byte |= 0x80;
+                }
+                bytes.push(byte);
+                if value == 0 {
+                    break;
+                }
+            }
+        }
+
+        fn push_name(bytes: &mut Vec<u8>, name: &str) {
+            push_leb_u32(bytes, name.len() as u32);
+            bytes.extend_from_slice(name.as_bytes());
+        }
+
+        fn push_section(module: &mut Vec<u8>, id: u8, payload: Vec<u8>) {
+            module.push(id);
+            push_leb_u32(module, payload.len() as u32);
+            module.extend_from_slice(&payload);
+        }
+
+        const DATA_OFFSET: u32 = 8;
+        let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+
+        push_section(&mut module, 1, vec![0x01, 0x60, 0x00, 0x01, 0x7f]);
+        push_section(&mut module, 3, vec![0x01, 0x00]);
+        push_section(&mut module, 5, vec![0x01, 0x00, 0x01]);
+
+        let mut exports = Vec::new();
+        exports.push(0x02);
+        push_name(&mut exports, "memory");
+        exports.push(0x02);
+        exports.push(0x00);
+        push_name(&mut exports, "settings_schema_json");
+        exports.push(0x00);
+        exports.push(0x00);
+        push_section(&mut module, 7, exports);
+
+        let mut body = Vec::new();
+        body.push(0x00);
+        body.push(0x41);
+        push_leb_u32(&mut body, DATA_OFFSET);
+        body.push(0x0b);
+        let mut code = Vec::new();
+        code.push(0x01);
+        push_leb_u32(&mut code, body.len() as u32);
+        code.extend_from_slice(&body);
+        push_section(&mut module, 10, code);
+
+        let mut data_bytes = schema_json.as_bytes().to_vec();
+        data_bytes.push(0);
+        let mut data = Vec::new();
+        data.push(0x01);
+        data.push(0x00);
+        data.push(0x41);
+        push_leb_u32(&mut data, DATA_OFFSET);
+        data.push(0x0b);
+        push_leb_u32(&mut data, data_bytes.len() as u32);
+        data.extend_from_slice(&data_bytes);
+        push_section(&mut module, 11, data);
+
+        module
     }
 
     #[derive(Default)]

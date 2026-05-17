@@ -9,13 +9,12 @@
 
 ## Migration Status
 
-- Current migration position: Phase 6C.2 - Marketplace Catalog Refresh And
-  Install is
-  complete.
-- Next phase: Phase 6C.3 - Extension-Specific Settings Panels.
+- Current migration position: Phase 6C.3 - Extension-Specific Settings Panels
+  is complete.
+- Next phase: Phase 7 - Debug Overlay And Diagnostics.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
   Phase 4D, Phase 5A, Phase 5B, Phase 6A, Phase 6A.1, Phase 6A.2, and
-  Phase 6B, Phase 6C.1, and Phase 6C.2.
+  Phase 6B, Phase 6C.1, Phase 6C.2, and Phase 6C.3.
 - Last updated: 2026-05-17.
 - Update this section whenever the migration moves to a new phase.
 
@@ -51,6 +50,8 @@ egui app stays runnable until the Tauri version reaches functional parity.
   - `uninstall_extension`
   - `refresh_extension_catalog`
   - `install_catalog_extension`
+  - `get_extension_settings`
+  - `save_extension_settings`
 - The temporary Phase 6A tabbed shell has been split: the Tauri `main` window is
   palette-only, and Settings renders in a distinct hidden-by-default `settings`
   window.
@@ -65,6 +66,10 @@ egui app stays runnable until the Tauri version reaches functional parity.
   catalog search, static extension install/update/reinstall actions, and
   controlled failure states that preserve the last visible catalog or extension
   rows.
+- Extension Settings buttons now open per-extension settings panels for bundled
+  static extensions, downloaded static extensions, and bundled WASM plugins that
+  expose settings. These panels save to the existing AppData extension settings
+  TOML path and reload runtime state after successful saves.
 - The existing egui app remains the production UI until final Tauri cutover.
 
 ## Direction
@@ -422,29 +427,29 @@ Completed:
 - Kept extension-specific settings panels, debug overlay UI, tray work, styling
   polish, packaging cutover, and egui removal out of scope.
 
-## Remaining Phases
-
 ### Phase 6C.3: Extension-Specific Settings Panels
 
-Purpose:
+Status: complete.
 
-- Restore per-extension settings surfaces after the core extension install and
-  enablement flows are stable.
+Completed:
 
-Scope:
+- Added Tauri extension settings DTOs and `get_extension_settings` /
+  `save_extension_settings` invokes.
+- Reused the existing egui extension settings schema, default resolution, TOML
+  load/save, and AppData settings paths.
+- Loaded bundled static, downloaded static, and bundled WASM plugin settings
+  schemas through the existing runtime paths.
+- Enabled Settings buttons for extensions that expose settings and opened an
+  in-window Svelte settings panel.
+- Added toggle settings, entry-list settings, category grouping, category
+  toggles, reset defaults, dirty state, save, close, loading, success, and
+  failure states.
+- Reloaded runtime state after successful extension setting saves.
+- Kept debug overlay UI, tray work, styling polish, packaging cutover, and egui
+  removal out of scope.
 
-- Open extension Settings buttons for extensions that expose settings.
-- Load static extension settings schemas and WASM-provided settings schemas.
-- Save extension-specific settings to the existing AppData settings path.
-- Reload runtime state after extension settings changes where egui does so
-  today.
-- Keep Debug popup/overlay in Phase 7.
+## Remaining Phases
 
-Acceptance criteria:
-
-- Extension settings save to the same AppData location as egui.
-- Extensions without settings do not show an actionable Settings button.
-- Extension settings failures are controlled and do not corrupt saved settings.
 
 ### Phase 7: Debug Overlay And Diagnostics
 

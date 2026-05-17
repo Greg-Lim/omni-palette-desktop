@@ -4,24 +4,48 @@
   import type {
     ActivationShortcut,
     CatalogEntry,
+    ExtensionSettingItem,
     ExtensionRow,
+    ExtensionSettingsSection,
+    ExtensionSettingsSchema,
+    ExtensionSettingsTarget,
+    ExtensionSettingsValues,
     ExtensionsBootstrap,
     RuntimeSettings,
   } from "./commands";
   import {
+    addExtensionSettingListEntry,
     activationShortcutFromKeyboardEvent,
     applyCatalogRefreshResult,
     applyExtensionMutationResult,
+    applyExtensionSettingsSaveResult,
     applyRuntimeSettingsSaveResult,
+    copyExtensionSettingsValues,
+    defaultExtensionSettingsValues,
     discardRuntimeSettingsDraft,
+    extensionSettingsAreDirty,
+    extensionSettingsSaveRequestFromDraft,
+    extensionSettingsSections,
     filterCatalogEntries,
     formatActivationShortcut,
     paletteApi,
+    removeExtensionSettingListEntry,
     runtimeSettingsAreDirty,
     runtimeSettingsSaveRequestFromDraft,
+    updateExtensionSettingListEntry,
+    updateExtensionSettingToggle,
   } from "./commands";
 
   type SettingsPage = "general" | "extensions" | "marketplace";
+  type ExtensionSettingsPanel = {
+    target: ExtensionSettingsTarget;
+    schema: ExtensionSettingsSchema;
+    saved: ExtensionSettingsValues;
+    draft: ExtensionSettingsValues;
+    saving: boolean;
+    message: string | null;
+    failed: boolean;
+  };
 
   let activeSettingsPage: SettingsPage = "general";
   let settingsSaved: RuntimeSettings | null = null;
@@ -40,11 +64,19 @@
   let catalogQuery = "";
   let recordingActivationShortcut = false;
   let extensionMutationKey: string | null = null;
+  let extensionSettingsLoadingKey: string | null = null;
+  let extensionSettingsPanel: ExtensionSettingsPanel | null = null;
   let settingsMessage: string | null = null;
   let settingsFailed = false;
 
   $: settingsDirty = runtimeSettingsAreDirty(settingsSaved, settingsDraft);
   $: visibleCatalogEntries = filterCatalogEntries(catalogEntries, catalogQuery);
+  $: extensionSettingsDirty = extensionSettingsPanel
+    ? extensionSettingsAreDirty(extensionSettingsPanel.saved, extensionSettingsPanel.draft)
+    : false;
+  $: extensionSettingsPanelSections = extensionSettingsPanel
+    ? extensionSettingsSections(extensionSettingsPanel.schema)
+    : [];
 
   onMount(() => {
     loadSettingsBootstrap();
@@ -371,6 +403,180 @@
       });
   }
 
+  function openExtensionSettings(extension: ExtensionRow) {
+    if (!extension.has_settings || extensionSettingsLoadingKey) {
+      return;
+    }
+
+    const mutationKey = extensionKey(extension);
+    extensionSettingsLoadingKey = mutationKey;
+    paletteApi
+      .getExtensionSettings({
+        extension_id: extension.id,
+        source_id: extension.source_id,
+      })
+      .then((result) => {
+        if (result.status === "failed" || !result.target || !result.schema) {
+          settingsMessage = result.message;
+          settingsFailed = true;
+          return;
+        }
+
+        extensionSettingsPanel = {
+          target: result.target,
+          schema: result.schema,
+          saved: copyExtensionSettingsValues(result.values),
+          draft: copyExtensionSettingsValues(result.values),
+          saving: false,
+          message: result.message,
+          failed: false,
+        };
+        settingsMessage = result.message;
+        settingsFailed = false;
+      })
+      .catch((error: unknown) => {
+        settingsMessage = errorMessage(error);
+        settingsFailed = true;
+      })
+      .finally(() => {
+        extensionSettingsLoadingKey = null;
+      });
+  }
+
+  function closeExtensionSettingsPanel() {
+    extensionSettingsPanel = null;
+  }
+
+  function resetExtensionSettingsDefaults() {
+    if (!extensionSettingsPanel) {
+      return;
+    }
+
+    extensionSettingsPanel = {
+      ...extensionSettingsPanel,
+      draft: defaultExtensionSettingsValues(extensionSettingsPanel.schema),
+      message: "Defaults restored",
+      failed: false,
+    };
+  }
+
+  function updateExtensionSettingsDraft(
+    update: (draft: ExtensionSettingsValues) => ExtensionSettingsValues,
+  ) {
+    if (!extensionSettingsPanel) {
+      return;
+    }
+
+    extensionSettingsPanel = {
+      ...extensionSettingsPanel,
+      draft: update(extensionSettingsPanel.draft),
+      message: null,
+      failed: false,
+    };
+  }
+
+  function setExtensionSettingToggle(key: string, enabled: boolean) {
+    updateExtensionSettingsDraft((draft) => updateExtensionSettingToggle(draft, key, enabled));
+  }
+
+  function addExtensionSettingEntry(item: ExtensionSettingItem) {
+    updateExtensionSettingsDraft((draft) => addExtensionSettingListEntry(draft, item));
+  }
+
+  function updateExtensionSettingEntry(
+    key: string,
+    index: number,
+    patch: { name?: string; format?: string; enabled?: boolean },
+  ) {
+    updateExtensionSettingsDraft((draft) =>
+      updateExtensionSettingListEntry(draft, key, index, patch),
+    );
+  }
+
+  function removeExtensionSettingEntry(key: string, index: number) {
+    updateExtensionSettingsDraft((draft) => removeExtensionSettingListEntry(draft, key, index));
+  }
+
+  function saveExtensionSettingsPanel() {
+    if (!extensionSettingsPanel || extensionSettingsPanel.saving || !extensionSettingsDirty) {
+      return;
+    }
+
+    const panel = extensionSettingsPanel;
+    extensionSettingsPanel = {
+      ...panel,
+      saving: true,
+      message: null,
+      failed: false,
+    };
+    paletteApi
+      .saveExtensionSettings(extensionSettingsSaveRequestFromDraft(panel.target, panel.draft))
+      .then((result) => {
+        if (!extensionSettingsPanel) {
+          return;
+        }
+
+        const applied = applyExtensionSettingsSaveResult(
+          extensionSettingsPanel.saved,
+          extensionSettingsPanel.draft,
+          result,
+        );
+        extensionSettingsPanel = {
+          ...extensionSettingsPanel,
+          saved: applied.saved,
+          draft: applied.draft,
+          saving: false,
+          message: applied.message,
+          failed: applied.failed,
+        };
+        settingsMessage = applied.message;
+        settingsFailed = applied.failed;
+      })
+      .catch((error: unknown) => {
+        if (extensionSettingsPanel) {
+          extensionSettingsPanel = {
+            ...extensionSettingsPanel,
+            saving: false,
+            message: errorMessage(error),
+            failed: true,
+          };
+        }
+        settingsMessage = errorMessage(error);
+        settingsFailed = true;
+      });
+  }
+
+  function categoryToggleItem(section: ExtensionSettingsSection): ExtensionSettingItem | null {
+    if (!section.category.toggle_key) {
+      return null;
+    }
+
+    return section.items.find((item) => item.key === section.category.toggle_key) ?? null;
+  }
+
+  function categoryToggleItems(section: ExtensionSettingsSection): ExtensionSettingItem[] {
+    const item = categoryToggleItem(section);
+    return item ? [item] : [];
+  }
+
+  function visibleSectionItems(section: ExtensionSettingsSection): ExtensionSettingItem[] {
+    return section.items.filter((item) => item.key !== section.category.toggle_key);
+  }
+
+  function extensionSettingToggleValue(
+    values: ExtensionSettingsValues,
+    item: ExtensionSettingItem,
+  ): boolean {
+    return values.toggles[item.key] ?? item.default;
+  }
+
+  function extensionSettingListValue(
+    values: ExtensionSettingsValues,
+    item: ExtensionSettingItem,
+  ) {
+    return values.lists[item.key] ?? item.default_entries;
+  }
+
   function extensionKey(extension: ExtensionRow): string {
     return `${extension.source_id}/${extension.id}`;
   }
@@ -670,12 +876,14 @@
                           </label>
                           {#if extension.has_settings}
                             <button
-                              class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-500"
-                              disabled
-                              title="Extension settings panels arrive in Phase 6C.3."
+                              class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+                              disabled={extensionSettingsLoadingKey === extensionKey(extension)}
+                              onclick={() => openExtensionSettings(extension)}
                               type="button"
                             >
-                              Settings
+                              {extensionSettingsLoadingKey === extensionKey(extension)
+                                ? "Loading..."
+                                : "Settings"}
                             </button>
                           {/if}
                         </div>
@@ -721,12 +929,14 @@
                             </label>
                             {#if extension.has_settings}
                               <button
-                                class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-500"
-                                disabled
-                                title="Extension settings panels arrive in Phase 6C.3."
+                                class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+                                disabled={extensionSettingsLoadingKey === extensionKey(extension)}
+                                onclick={() => openExtensionSettings(extension)}
                                 type="button"
                               >
-                                Settings
+                                {extensionSettingsLoadingKey === extensionKey(extension)
+                                  ? "Loading..."
+                                  : "Settings"}
                               </button>
                             {/if}
                             <button
@@ -913,4 +1123,180 @@
       {/if}
     </div>
   </section>
+
+  {#if extensionSettingsPanel}
+    <section class="fixed inset-0 z-10 flex items-center justify-center bg-black/40 p-6">
+      <div class="max-h-full w-full max-w-3xl overflow-auto rounded border border-zinc-800 bg-zinc-950 p-5 shadow-xl">
+        <header class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="text-xl font-semibold">
+              {extensionSettingsPanel.target.display_name} Settings
+            </h2>
+            <p class="mt-1 text-sm text-zinc-400">
+              These settings affect only this extension and are saved in your user extension folder.
+            </p>
+          </div>
+          <button
+            class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+            disabled={extensionSettingsPanel.saving}
+            onclick={closeExtensionSettingsPanel}
+            type="button"
+          >
+            Close
+          </button>
+        </header>
+
+        {#if extensionSettingsPanel.message}
+          <p
+            class={[
+              "mt-4 rounded border px-3 py-2 text-sm",
+              extensionSettingsPanel.failed
+                ? "border-red-800 bg-red-950 text-red-200"
+                : "border-emerald-800 bg-emerald-950 text-emerald-200",
+            ].join(" ")}
+          >
+            {extensionSettingsPanel.message}
+          </p>
+        {/if}
+
+        {#if extensionSettingsPanel.schema.items.length === 0}
+          <p class="mt-4 rounded border border-zinc-800 bg-zinc-900 px-3 py-4 text-sm text-zinc-400">
+            No custom settings are currently available for this extension.
+          </p>
+        {:else}
+          <div class="mt-4 grid gap-4">
+            {#each extensionSettingsPanelSections as section}
+              <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 class="font-medium">{section.category.label}</h3>
+                    {#if section.category.description}
+                      <p class="mt-1 text-sm text-zinc-400">{section.category.description}</p>
+                    {/if}
+                  </div>
+                  {#each categoryToggleItems(section) as toggleItem}
+                    <label class="flex items-center gap-2 text-sm text-zinc-300">
+                      <input
+                        checked={extensionSettingToggleValue(extensionSettingsPanel.draft, toggleItem)}
+                        onchange={(event) =>
+                          setExtensionSettingToggle(toggleItem.key, checkedValue(event))}
+                        type="checkbox"
+                      />
+                      {toggleItem.label}
+                    </label>
+                  {/each}
+                </div>
+
+                <div class="mt-4 grid gap-3">
+                  {#each visibleSectionItems(section) as item}
+                    {#if item.kind === "toggle"}
+                      <label class="flex items-start justify-between gap-3 rounded border border-zinc-800 bg-zinc-950 p-3 text-sm">
+                        <span>
+                          <span class="block text-zinc-100">{item.label}</span>
+                          {#if item.description}
+                            <span class="mt-1 block text-zinc-400">{item.description}</span>
+                          {/if}
+                        </span>
+                        <input
+                          checked={extensionSettingToggleValue(extensionSettingsPanel.draft, item)}
+                          onchange={(event) =>
+                            setExtensionSettingToggle(item.key, checkedValue(event))}
+                          type="checkbox"
+                        />
+                      </label>
+                    {:else}
+                      <div class="rounded border border-zinc-800 bg-zinc-950 p-3">
+                        <div class="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h4 class="text-sm font-medium">{item.label}</h4>
+                            {#if item.description}
+                              <p class="mt-1 text-sm text-zinc-400">{item.description}</p>
+                            {/if}
+                          </div>
+                          <button
+                            class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100"
+                            onclick={() => addExtensionSettingEntry(item)}
+                            type="button"
+                          >
+                            Add Entry
+                          </button>
+                        </div>
+
+                        <div class="mt-3 grid gap-2">
+                          {#each extensionSettingListValue(extensionSettingsPanel.draft, item) as entry, index (entry.id)}
+                            <div class="grid gap-2 rounded border border-zinc-800 bg-zinc-900 p-3 md:grid-cols-[auto_1fr_1fr_auto]">
+                              <label class="flex items-center gap-2 text-sm text-zinc-300">
+                                <input
+                                  checked={entry.enabled}
+                                  onchange={(event) =>
+                                    updateExtensionSettingEntry(item.key, index, {
+                                      enabled: checkedValue(event),
+                                    })}
+                                  type="checkbox"
+                                />
+                                Enabled
+                              </label>
+                              <input
+                                class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+                                placeholder="Name"
+                                value={entry.name}
+                                oninput={(event) =>
+                                  updateExtensionSettingEntry(item.key, index, {
+                                    name: inputValue(event),
+                                  })}
+                              />
+                              <input
+                                class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+                                placeholder={item.entry_list_format_hint ?? "Format"}
+                                value={entry.format}
+                                oninput={(event) =>
+                                  updateExtensionSettingEntry(item.key, index, {
+                                    format: inputValue(event),
+                                  })}
+                              />
+                              <button
+                                class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100"
+                                onclick={() => removeExtensionSettingEntry(item.key, index)}
+                                type="button"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          {/each}
+                        </div>
+                      </div>
+                    {/if}
+                  {/each}
+                </div>
+              </section>
+            {/each}
+          </div>
+        {/if}
+
+        <footer class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 pt-4">
+          <span class="text-sm text-zinc-400">
+            {extensionSettingsDirty ? "Unsaved extension settings" : "Extension settings are current"}
+          </span>
+          <div class="flex flex-wrap gap-2">
+            <button
+              class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+              disabled={extensionSettingsPanel.saving}
+              onclick={resetExtensionSettingsDefaults}
+              type="button"
+            >
+              Reset Defaults
+            </button>
+            <button
+              class="rounded bg-amber-600 px-3 py-2 text-sm font-medium text-white disabled:bg-zinc-700 disabled:text-zinc-400"
+              disabled={!extensionSettingsDirty || extensionSettingsPanel.saving}
+              onclick={saveExtensionSettingsPanel}
+              type="button"
+            >
+              {extensionSettingsPanel.saving ? "Saving..." : "Save Settings"}
+            </button>
+          </div>
+        </footer>
+      </div>
+    </section>
+  {/if}
 </main>

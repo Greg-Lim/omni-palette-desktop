@@ -179,6 +179,86 @@ export type ExtensionMutationApplyResult = {
   failed: boolean;
 };
 
+export type ExtensionSettingsTarget = {
+  extension_id: string;
+  source_id: string;
+  display_name: string;
+  kind: ExtensionKind;
+};
+
+export type ExtensionSettingsCategory = {
+  key: string;
+  label: string;
+  description: string | null;
+  toggle_key: string | null;
+  default_collapsed: boolean;
+};
+
+export type ExtensionSettingKind = "toggle" | "entry_list";
+
+export type ExtensionSettingListEntry = {
+  id: string;
+  name: string;
+  format: string;
+  enabled: boolean;
+};
+
+export type ExtensionSettingItem = {
+  key: string;
+  label: string;
+  description: string | null;
+  category: string | null;
+  kind: ExtensionSettingKind;
+  default: boolean;
+  default_entries: ExtensionSettingListEntry[];
+  entry_list_format_hint: string | null;
+  entry_list_default_format: string | null;
+};
+
+export type ExtensionSettingsSchema = {
+  categories: ExtensionSettingsCategory[];
+  items: ExtensionSettingItem[];
+};
+
+export type ExtensionSettingsValues = {
+  toggles: Record<string, boolean>;
+  lists: Record<string, ExtensionSettingListEntry[]>;
+};
+
+export type ExtensionSettingsBootstrap = {
+  status: RuntimeSettingsResultStatus;
+  message: string;
+  target: ExtensionSettingsTarget | null;
+  schema: ExtensionSettingsSchema | null;
+  values: ExtensionSettingsValues;
+  runtime_status: RuntimeStatus;
+};
+
+export type ExtensionSettingsSaveRequest = {
+  target: ExtensionTargetRequest;
+  values: ExtensionSettingsValues;
+};
+
+export type ExtensionSettingsSaveResult = {
+  status: RuntimeSettingsResultStatus;
+  message: string;
+  target: ExtensionSettingsTarget | null;
+  values: ExtensionSettingsValues;
+  runtime_status: RuntimeStatus;
+};
+
+export type ExtensionSettingsApplyResult = {
+  saved: ExtensionSettingsValues;
+  draft: ExtensionSettingsValues;
+  message: string;
+  failed: boolean;
+};
+
+export type ExtensionSettingsSection = {
+  category: ExtensionSettingsCategory;
+  items: ExtensionSettingItem[];
+};
+
 export type SettingsWindowStatus = {
   status: RuntimeSettingsResultStatus;
   message: string;
@@ -323,6 +403,10 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
       invokeCommand<CatalogRefreshResult>("refresh_extension_catalog", { source }),
     installCatalogExtension: (extensionId: string) =>
       invokeCommand<ExtensionMutationResult>("install_catalog_extension", { extensionId }),
+    getExtensionSettings: (request: ExtensionTargetRequest) =>
+      invokeCommand<ExtensionSettingsBootstrap>("get_extension_settings", { request }),
+    saveExtensionSettings: (request: ExtensionSettingsSaveRequest) =>
+      invokeCommand<ExtensionSettingsSaveResult>("save_extension_settings", { request }),
     showSettingsWindow: () => invokeCommand<SettingsWindowStatus>("show_settings_window"),
   };
 }
@@ -543,6 +627,188 @@ export function applyCatalogRefreshResult(
     message: result.message,
     failed: true,
   };
+}
+
+export function defaultExtensionSettingsValues(
+  schema: ExtensionSettingsSchema,
+): ExtensionSettingsValues {
+  const values: ExtensionSettingsValues = {
+    toggles: {},
+    lists: {},
+  };
+
+  for (const item of schema.items) {
+    if (item.kind === "toggle") {
+      values.toggles[item.key] = item.default;
+    } else {
+      values.lists[item.key] = item.default_entries.map(copyExtensionSettingListEntry);
+    }
+  }
+
+  return values;
+}
+
+export function copyExtensionSettingsValues(
+  values: ExtensionSettingsValues,
+): ExtensionSettingsValues {
+  return {
+    toggles: { ...values.toggles },
+    lists: Object.fromEntries(
+      Object.entries(values.lists).map(([key, entries]) => [
+        key,
+        entries.map(copyExtensionSettingListEntry),
+      ]),
+    ),
+  };
+}
+
+export function extensionSettingsAreDirty(
+  saved: ExtensionSettingsValues | null,
+  draft: ExtensionSettingsValues | null,
+): boolean {
+  if (!saved || !draft) {
+    return false;
+  }
+
+  return JSON.stringify(saved) !== JSON.stringify(draft);
+}
+
+export function extensionSettingsSaveRequestFromDraft(
+  target: ExtensionSettingsTarget,
+  draft: ExtensionSettingsValues,
+): ExtensionSettingsSaveRequest {
+  return {
+    target: {
+      extension_id: target.extension_id,
+      source_id: target.source_id,
+    },
+    values: copyExtensionSettingsValues(draft),
+  };
+}
+
+export function applyExtensionSettingsSaveResult(
+  saved: ExtensionSettingsValues,
+  draft: ExtensionSettingsValues,
+  result: ExtensionSettingsSaveResult,
+): ExtensionSettingsApplyResult {
+  if (result.status === "succeeded") {
+    const next = copyExtensionSettingsValues(result.values);
+    return {
+      saved: next,
+      draft: copyExtensionSettingsValues(next),
+      message: result.message,
+      failed: false,
+    };
+  }
+
+  return {
+    saved,
+    draft,
+    message: result.message,
+    failed: true,
+  };
+}
+
+export function extensionSettingsSections(
+  schema: ExtensionSettingsSchema,
+): ExtensionSettingsSection[] {
+  const itemsByCategory = new Map<string, ExtensionSettingItem[]>();
+  const generalItems: ExtensionSettingItem[] = [];
+
+  for (const item of schema.items) {
+    if (item.category) {
+      const items = itemsByCategory.get(item.category) ?? [];
+      items.push(item);
+      itemsByCategory.set(item.category, items);
+    } else {
+      generalItems.push(item);
+    }
+  }
+
+  const sections: ExtensionSettingsSection[] = [];
+  if (generalItems.length > 0) {
+    sections.push({
+      category: {
+        key: "__general__",
+        label: "General",
+        description: null,
+        toggle_key: null,
+        default_collapsed: false,
+      },
+      items: generalItems,
+    });
+  }
+
+  for (const category of schema.categories) {
+    sections.push({
+      category,
+      items: itemsByCategory.get(category.key) ?? [],
+    });
+  }
+
+  return sections;
+}
+
+export function updateExtensionSettingToggle(
+  values: ExtensionSettingsValues,
+  key: string,
+  enabled: boolean,
+): ExtensionSettingsValues {
+  const next = copyExtensionSettingsValues(values);
+  next.toggles[key] = enabled;
+  return next;
+}
+
+export function addExtensionSettingListEntry(
+  values: ExtensionSettingsValues,
+  item: ExtensionSettingItem,
+): ExtensionSettingsValues {
+  const next = copyExtensionSettingsValues(values);
+  const entries = next.lists[item.key] ?? [];
+  const nextIndex = entries.length + 1;
+  entries.push({
+    id: `custom_${nextIndex}`,
+    name: `Entry ${nextIndex}`,
+    format: item.entry_list_default_format ?? "",
+    enabled: true,
+  });
+  next.lists[item.key] = entries;
+  return next;
+}
+
+export function updateExtensionSettingListEntry(
+  values: ExtensionSettingsValues,
+  key: string,
+  index: number,
+  patch: Partial<ExtensionSettingListEntry>,
+): ExtensionSettingsValues {
+  const next = copyExtensionSettingsValues(values);
+  const entries = next.lists[key] ?? [];
+  if (entries[index]) {
+    entries[index] = {
+      ...entries[index],
+      ...patch,
+    };
+  }
+  next.lists[key] = entries;
+  return next;
+}
+
+export function removeExtensionSettingListEntry(
+  values: ExtensionSettingsValues,
+  key: string,
+  index: number,
+): ExtensionSettingsValues {
+  const next = copyExtensionSettingsValues(values);
+  const entries = next.lists[key] ?? [];
+  next.lists[key] = entries.filter((_, entryIndex) => entryIndex !== index);
+  return next;
+}
+
+function copyExtensionSettingListEntry(
+  entry: ExtensionSettingListEntry,
+): ExtensionSettingListEntry {
+  return { ...entry };
 }
 
 export function filterCatalogEntries(

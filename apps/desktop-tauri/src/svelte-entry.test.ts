@@ -72,6 +72,12 @@ describe("Svelte frontend entrypoint", () => {
     expect(settingsSource).toContain("Search catalog");
     expect(settingsSource).toContain("Install");
     expect(settingsSource).toContain("Save settings");
+    expect(settingsSource).toContain("getExtensionSettings");
+    expect(settingsSource).toContain("saveExtensionSettings");
+    expect(settingsSource).toContain("extensionSettingsPanel");
+    expect(settingsSource).toContain("Reset Defaults");
+    expect(settingsSource).toContain("Add Entry");
+    expect(settingsSource).not.toContain("Extension settings panels arrive in Phase 6C.3.");
   });
 
   it("declares separate palette, settings, and guide Tauri windows", () => {

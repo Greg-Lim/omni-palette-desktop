@@ -6,6 +6,9 @@ import {
   CatalogRefreshResult,
   CommandRow,
   CommandExecutionResult,
+  ExtensionSettingItem,
+  ExtensionSettingsBootstrap,
+  ExtensionSettingsSaveResult,
   ExtensionMutationResult,
   ExtensionsBootstrap,
   HotkeyStatus,
@@ -20,8 +23,13 @@ import {
   activationShortcutFromKeyboardEvent,
   applyExtensionMutationResult,
   applyCatalogRefreshResult,
+  addExtensionSettingListEntry,
   createPaletteApi,
   commandExecutionShouldHidePalette,
+  defaultExtensionSettingsValues,
+  extensionSettingsAreDirty,
+  extensionSettingsSaveRequestFromDraft,
+  extensionSettingsSections,
   formatHotkeyStatus,
   formatActivationShortcut,
   formatGuideStatus,
@@ -46,9 +54,13 @@ import {
   paletteRowsWithFixedActions,
   refreshExtensionsCommandRow,
   refreshExtensionsFromPalette,
+  removeExtensionSettingListEntry,
+  applyExtensionSettingsSaveResult,
   shouldStartGuideForCommand,
   shouldHidePaletteForWindowBlur,
   shouldRefreshCommandsForWindowLifecycleEvent,
+  updateExtensionSettingListEntry,
+  updateExtensionSettingToggle,
 } from "./commands";
 
 const rows: CommandRow[] = [
@@ -175,6 +187,75 @@ const catalogEntries: CatalogEntry[] = [
     keywords: ["files"],
   },
 ];
+
+const extensionSettingsBootstrap: ExtensionSettingsBootstrap = {
+  status: "succeeded",
+  message: "Loaded settings for AHK",
+  target: {
+    extension_id: "ahk_agent",
+    source_id: "bundled",
+    display_name: "AHK",
+    kind: "wasm_plugin",
+  },
+  schema: {
+    categories: [
+      {
+        key: "scripts",
+        label: "Scripts",
+        description: "Discovered AutoHotkey scripts",
+        toggle_key: "scripts.enabled",
+        default_collapsed: false,
+      },
+    ],
+    items: [
+      {
+        key: "scripts.enabled",
+        label: "Enable scripts",
+        description: "Expose commands from scripts",
+        category: "scripts",
+        kind: "toggle",
+        default: true,
+        default_entries: [],
+        entry_list_format_hint: null,
+        entry_list_default_format: null,
+      },
+      {
+        key: "scripts.entries",
+        label: "Scripts",
+        description: null,
+        category: "scripts",
+        kind: "entry_list",
+        default: false,
+        default_entries: [
+          {
+            id: "script_1",
+            name: "Main",
+            format: "main.ahk",
+            enabled: true,
+          },
+        ],
+        entry_list_format_hint: "Path",
+        entry_list_default_format: "script.ahk",
+      },
+    ],
+  },
+  values: {
+    toggles: {
+      "scripts.enabled": true,
+    },
+    lists: {
+      "scripts.entries": [
+        {
+          id: "script_1",
+          name: "Main",
+          format: "main.ahk",
+          enabled: true,
+        },
+      ],
+    },
+  },
+  runtime_status: runtimeStatus,
+};
 
 describe("palette api", () => {
   it("calls the backend bootstrap command and preserves runtime status", async () => {
@@ -516,6 +597,153 @@ describe("palette api", () => {
       },
       { command: "install_catalog_extension", args: { extensionId: "chrome" } },
     ]);
+  });
+
+  it("calls the backend extension settings commands and preserves payloads", async () => {
+    const saveResult: ExtensionSettingsSaveResult = {
+      status: "succeeded",
+      message: "Saved settings for AHK",
+      target: extensionSettingsBootstrap.target,
+      values: extensionSettingsBootstrap.values,
+      runtime_status: runtimeStatus,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return (command === "get_extension_settings"
+        ? extensionSettingsBootstrap
+        : saveResult) as T;
+    });
+    const target = {
+      extension_id: "ahk_agent",
+      source_id: "bundled",
+    };
+    const saveRequest = {
+      target,
+      values: extensionSettingsBootstrap.values,
+    };
+
+    expect(await api.getExtensionSettings(target)).toEqual(extensionSettingsBootstrap);
+    expect(await api.saveExtensionSettings(saveRequest)).toEqual(saveResult);
+    expect(calls).toEqual([
+      { command: "get_extension_settings", args: { request: target } },
+      { command: "save_extension_settings", args: { request: saveRequest } },
+    ]);
+  });
+});
+
+describe("extension settings helpers", () => {
+  it("builds default values from toggle and entry-list schema items", () => {
+    const defaults = defaultExtensionSettingsValues(extensionSettingsBootstrap.schema!);
+
+    expect(defaults).toEqual(extensionSettingsBootstrap.values);
+  });
+
+  it("detects dirty extension settings by comparing resolved values", () => {
+    const draft = updateExtensionSettingToggle(
+      extensionSettingsBootstrap.values,
+      "scripts.enabled",
+      false,
+    );
+
+    expect(extensionSettingsAreDirty(extensionSettingsBootstrap.values, extensionSettingsBootstrap.values)).toBe(false);
+    expect(extensionSettingsAreDirty(extensionSettingsBootstrap.values, draft)).toBe(true);
+  });
+
+  it("groups extension setting items by general and declared categories", () => {
+    const schema = {
+      ...extensionSettingsBootstrap.schema!,
+      items: [
+        {
+          ...(extensionSettingsBootstrap.schema!.items[0] as ExtensionSettingItem),
+          key: "loose.enabled",
+          category: null,
+        },
+        ...extensionSettingsBootstrap.schema!.items,
+      ],
+    };
+
+    const sections = extensionSettingsSections(schema);
+
+    expect(sections.map((section) => section.category.label)).toEqual(["General", "Scripts"]);
+    expect(sections[0].items[0].key).toBe("loose.enabled");
+    expect(sections[1].items.map((item) => item.key)).toEqual([
+      "scripts.enabled",
+      "scripts.entries",
+    ]);
+  });
+
+  it("updates entry-list settings without mutating the prior draft", () => {
+    const item = extensionSettingsBootstrap.schema!.items.find(
+      (candidate) => candidate.key === "scripts.entries",
+    )!;
+
+    const withAdded = addExtensionSettingListEntry(extensionSettingsBootstrap.values, item);
+    const withUpdated = updateExtensionSettingListEntry(withAdded, item.key, 1, {
+      name: "Second",
+      format: "second.ahk",
+      enabled: false,
+    });
+    const withRemoved = removeExtensionSettingListEntry(withUpdated, item.key, 0);
+
+    expect(extensionSettingsBootstrap.values.lists[item.key]).toHaveLength(1);
+    expect(withAdded.lists[item.key][1]).toMatchObject({
+      id: "custom_2",
+      name: "Entry 2",
+      format: "script.ahk",
+      enabled: true,
+    });
+    expect(withUpdated.lists[item.key][1]).toMatchObject({
+      name: "Second",
+      format: "second.ahk",
+      enabled: false,
+    });
+    expect(withRemoved.lists[item.key]).toHaveLength(1);
+    expect(withRemoved.lists[item.key][0].id).toBe("custom_2");
+  });
+
+  it("creates save requests and applies save success or failure", () => {
+    const target = extensionSettingsBootstrap.target!;
+    const draft = updateExtensionSettingToggle(
+      extensionSettingsBootstrap.values,
+      "scripts.enabled",
+      false,
+    );
+    const saveRequest = extensionSettingsSaveRequestFromDraft(target, draft);
+    const success = applyExtensionSettingsSaveResult(extensionSettingsBootstrap.values, draft, {
+      status: "succeeded",
+      message: "Saved settings for AHK",
+      target,
+      values: draft,
+      runtime_status: runtimeStatus,
+    });
+    const failure = applyExtensionSettingsSaveResult(extensionSettingsBootstrap.values, draft, {
+      status: "failed",
+      message: "Could not save",
+      target,
+      values: extensionSettingsBootstrap.values,
+      runtime_status: runtimeStatus,
+    });
+
+    expect(saveRequest).toEqual({
+      target: {
+        extension_id: "ahk_agent",
+        source_id: "bundled",
+      },
+      values: draft,
+    });
+    expect(success).toEqual({
+      saved: draft,
+      draft,
+      message: "Saved settings for AHK",
+      failed: false,
+    });
+    expect(failure).toEqual({
+      saved: extensionSettingsBootstrap.values,
+      draft,
+      message: "Could not save",
+      failed: true,
+    });
   });
 });
 
