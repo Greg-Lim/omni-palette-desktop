@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 
 import {
   ActivationShortcut,
+  CatalogEntry,
+  CatalogRefreshResult,
   CommandRow,
   CommandExecutionResult,
   ExtensionMutationResult,
@@ -17,6 +19,7 @@ import {
   REFRESH_EXTENSIONS_COMMAND_ID,
   activationShortcutFromKeyboardEvent,
   applyExtensionMutationResult,
+  applyCatalogRefreshResult,
   createPaletteApi,
   commandExecutionShouldHidePalette,
   formatHotkeyStatus,
@@ -26,6 +29,7 @@ import {
   formatWindowLifecycleStatus,
   guideShortcutParts,
   highlightedLabelSegments,
+  filterCatalogEntries,
   nextKeyboardSelectedCommandId,
   nextGuideStatus,
   nextWindowLifecycleStatus,
@@ -150,6 +154,27 @@ const extensionsBootstrap: ExtensionsBootstrap = {
   install_root_error: null,
   runtime_status: runtimeStatus,
 };
+
+const catalogEntries: CatalogEntry[] = [
+  {
+    id: "chrome",
+    name: "Chrome",
+    version: "0.1.0",
+    platform: "windows",
+    kind: "static",
+    description: "Chrome keyboard shortcut command pack.",
+    keywords: ["browser", "tabs"],
+  },
+  {
+    id: "file_explorer",
+    name: "File Explorer",
+    version: "0.1.0",
+    platform: "windows",
+    kind: "static",
+    description: "File Explorer keyboard shortcut command pack.",
+    keywords: ["files"],
+  },
+];
 
 describe("palette api", () => {
   it("calls the backend bootstrap command and preserves runtime status", async () => {
@@ -446,6 +471,50 @@ describe("palette api", () => {
       { command: "get_extensions_bootstrap", args: undefined },
       { command: "set_extension_enabled", args: { request: enableRequest } },
       { command: "uninstall_extension", args: { request: uninstallRequest } },
+    ]);
+  });
+
+  it("calls the backend marketplace commands and preserves payloads", async () => {
+    const refreshResult: CatalogRefreshResult = {
+      status: "succeeded",
+      message: "Catalog refreshed: 2 extensions available",
+      entries: catalogEntries,
+      runtime_status: runtimeStatus,
+    };
+    const installResult: ExtensionMutationResult = {
+      status: "succeeded",
+      message: "Installed Chrome v0.1.0",
+      extensions: {
+        ...extensionsBootstrap,
+        downloaded_extensions: [
+          {
+            id: "chrome",
+            source_id: "github",
+            name: "chrome",
+            version: "0.1.0",
+            kind: "static",
+            enabled: true,
+            can_uninstall: true,
+            has_settings: false,
+          },
+        ],
+      },
+      runtime_status: runtimeStatus,
+    };
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const api = createPaletteApi(async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return (command === "refresh_extension_catalog" ? refreshResult : installResult) as T;
+    });
+
+    expect(await api.refreshExtensionCatalog(runtimeSettings.github)).toEqual(refreshResult);
+    expect(await api.installCatalogExtension("chrome")).toEqual(installResult);
+    expect(calls).toEqual([
+      {
+        command: "refresh_extension_catalog",
+        args: { source: runtimeSettings.github },
+      },
+      { command: "install_catalog_extension", args: { extensionId: "chrome" } },
     ]);
   });
 });
@@ -1012,6 +1081,47 @@ describe("extension management helpers", () => {
     expect(applyExtensionMutationResult(extensionsBootstrap, failure)).toEqual({
       extensions: extensionsBootstrap,
       message: "Bundled extensions can be disabled, but not uninstalled.",
+      failed: true,
+    });
+  });
+});
+
+describe("marketplace helpers", () => {
+  it("filters catalog entries by name, id, description, and keywords", () => {
+    expect(filterCatalogEntries(catalogEntries, "")).toEqual(catalogEntries);
+    expect(filterCatalogEntries(catalogEntries, "chrome")).toEqual([catalogEntries[0]]);
+    expect(filterCatalogEntries(catalogEntries, "file_explorer")).toEqual([
+      catalogEntries[1],
+    ]);
+    expect(filterCatalogEntries(catalogEntries, "keyboard shortcut")).toEqual(
+      catalogEntries,
+    );
+    expect(filterCatalogEntries(catalogEntries, "tabs")).toEqual([catalogEntries[0]]);
+    expect(filterCatalogEntries(catalogEntries, "missing")).toEqual([]);
+  });
+
+  it("applies catalog refresh success and preserves entries after failures", () => {
+    const success: CatalogRefreshResult = {
+      status: "succeeded",
+      message: "Catalog refreshed: 2 extensions available",
+      entries: catalogEntries,
+      runtime_status: runtimeStatus,
+    };
+    const failure: CatalogRefreshResult = {
+      status: "failed",
+      message: "network down",
+      entries: [],
+      runtime_status: runtimeStatus,
+    };
+
+    expect(applyCatalogRefreshResult([], success)).toEqual({
+      entries: catalogEntries,
+      message: "Catalog refreshed: 2 extensions available",
+      failed: false,
+    });
+    expect(applyCatalogRefreshResult(catalogEntries, failure)).toEqual({
+      entries: catalogEntries,
+      message: "network down",
       failed: true,
     });
   });

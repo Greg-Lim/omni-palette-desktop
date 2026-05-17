@@ -3,7 +3,11 @@ mod hotkey_bridge;
 mod settings_window;
 mod window_lifecycle;
 
-use std::{path::PathBuf, sync::Arc, thread};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    thread,
+};
 
 use omni_palette::{
     backend_contract::{
@@ -13,7 +17,12 @@ use omni_palette::{
     config::runtime::{CommandBehavior, GitHubExtensionSource, RuntimeConfig, ThemeMode},
     core::{
         extensions::settings::extension_settings_key,
-        extensions::{catalog::ExtensionKind, install::BUNDLED_SOURCE_ID},
+        extensions::{
+            catalog::{CatalogEntry, ExtensionCatalog, ExtensionKind},
+            install::{
+                ExtensionInstallService, InstalledExtension, BUNDLED_SOURCE_ID, GITHUB_SOURCE_ID,
+            },
+        },
     },
     domain::{
         action::Os,
@@ -40,6 +49,7 @@ struct AppState {
     window_lifecycle: Arc<WindowLifecycle>,
     settings_window: Arc<SettingsWindow>,
     guide_lifecycle: Arc<GuideLifecycle>,
+    marketplace: Arc<MarketplaceState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -53,7 +63,7 @@ pub struct HealthCheckPayload {
 fn health_check() -> HealthCheckPayload {
     HealthCheckPayload {
         app_name: "Omni Palette",
-        phase: "Phase 6C.1 - Settings Sidebar And Installed Extensions Foundation",
+        phase: "Phase 6C.2 - Marketplace Catalog Refresh And Install",
         status: "ok",
     }
 }
@@ -176,6 +186,25 @@ pub struct RuntimeReloadResultDto {
     pub runtime_status: RuntimeStatusDto,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogEntryDto {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub platform: Os,
+    pub kind: ExtensionKindDto,
+    pub description: Option<String>,
+    pub keywords: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogRefreshResultDto {
+    pub status: RuntimeSettingsResultStatusDto,
+    pub message: String,
+    pub entries: Vec<CatalogEntryDto>,
+    pub runtime_status: RuntimeStatusDto,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionKindDto {
@@ -232,6 +261,80 @@ pub struct ExtensionMutationResultDto {
     pub message: String,
     pub extensions: ExtensionsBootstrapDto,
     pub runtime_status: RuntimeStatusDto,
+}
+
+trait MarketplaceService: Send + Sync {
+    fn fetch_catalog(
+        &self,
+        install_root: &Path,
+        source: &GitHubExtensionSource,
+    ) -> Result<ExtensionCatalog, String>;
+
+    fn install_entry(
+        &self,
+        install_root: &Path,
+        source: &GitHubExtensionSource,
+        entry: &CatalogEntry,
+        current_os: Os,
+    ) -> Result<InstalledExtension, String>;
+}
+
+struct ExtensionInstallMarketplaceService;
+
+impl MarketplaceService for ExtensionInstallMarketplaceService {
+    fn fetch_catalog(
+        &self,
+        install_root: &Path,
+        source: &GitHubExtensionSource,
+    ) -> Result<ExtensionCatalog, String> {
+        ExtensionInstallService::new(install_root)
+            .fetch_catalog(source)
+            .map_err(|err| err.to_string())
+    }
+
+    fn install_entry(
+        &self,
+        install_root: &Path,
+        source: &GitHubExtensionSource,
+        entry: &CatalogEntry,
+        current_os: Os,
+    ) -> Result<InstalledExtension, String> {
+        ExtensionInstallService::new(install_root)
+            .install_entry(source, entry, current_os)
+            .map_err(|err| err.to_string())
+    }
+}
+
+#[derive(Clone)]
+struct CachedCatalog {
+    catalog: ExtensionCatalog,
+    source: GitHubExtensionSource,
+}
+
+struct MarketplaceState {
+    service: Arc<dyn MarketplaceService>,
+    cache: Mutex<Option<CachedCatalog>>,
+}
+
+impl MarketplaceState {
+    fn new(service: Arc<dyn MarketplaceService>) -> Self {
+        Self {
+            service,
+            cache: Mutex::new(None),
+        }
+    }
+
+    fn cached_catalog(&self) -> Option<CachedCatalog> {
+        self.cache
+            .lock()
+            .expect("catalog cache should lock")
+            .clone()
+    }
+
+    fn set_cached_catalog(&self, catalog: ExtensionCatalog, source: GitHubExtensionSource) {
+        *self.cache.lock().expect("catalog cache should lock") =
+            Some(CachedCatalog { catalog, source });
+    }
 }
 
 pub trait ActivationShortcutUpdater: Send + Sync {
@@ -346,6 +449,87 @@ fn reload_runtime_state_for_runtime(runtime: &OmniRuntimeState) -> RuntimeReload
     }
 }
 
+fn catalog_entry_to_dto(entry: &CatalogEntry) -> CatalogEntryDto {
+    CatalogEntryDto {
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        version: entry.version.clone(),
+        platform: entry.platform,
+        kind: ExtensionKindDto::from(entry.kind),
+        description: entry.description.clone(),
+        keywords: entry.keywords.clone(),
+    }
+}
+
+fn catalog_entries_for_os(catalog: &ExtensionCatalog, current_os: Os) -> Vec<CatalogEntryDto> {
+    let mut entries = catalog
+        .entries
+        .iter()
+        .filter(|entry| entry.platform == current_os)
+        .map(catalog_entry_to_dto)
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    entries
+}
+
+fn cached_catalog_entries(marketplace: &MarketplaceState, current_os: Os) -> Vec<CatalogEntryDto> {
+    marketplace
+        .cached_catalog()
+        .map(|cached| catalog_entries_for_os(&cached.catalog, current_os))
+        .unwrap_or_default()
+}
+
+fn refresh_extension_catalog_for_runtime(
+    runtime: &OmniRuntimeState,
+    marketplace: &MarketplaceState,
+    source: GitHubExtensionSourceDto,
+) -> CatalogRefreshResultDto {
+    let source: GitHubExtensionSource = source.into();
+    let install_root = match runtime.user_extensions_root() {
+        Some(root) => root,
+        None => {
+            return CatalogRefreshResultDto {
+                status: RuntimeSettingsResultStatusDto::Failed,
+                message: "APPDATA is not set, so Omni Palette cannot refresh extension catalogs."
+                    .to_string(),
+                entries: cached_catalog_entries(marketplace, runtime.current_os()),
+                runtime_status: runtime.status(),
+            };
+        }
+    };
+
+    match marketplace.service.fetch_catalog(&install_root, &source) {
+        Ok(catalog) => {
+            let entries = catalog_entries_for_os(&catalog, runtime.current_os());
+            marketplace.set_cached_catalog(catalog, source);
+            CatalogRefreshResultDto {
+                status: RuntimeSettingsResultStatusDto::Succeeded,
+                message: format!(
+                    "Catalog refreshed: {} {} available",
+                    entries.len(),
+                    if entries.len() == 1 {
+                        "extension"
+                    } else {
+                        "extensions"
+                    }
+                ),
+                entries,
+                runtime_status: runtime.status(),
+            }
+        }
+        Err(message) => CatalogRefreshResultDto {
+            status: RuntimeSettingsResultStatusDto::Failed,
+            message,
+            entries: cached_catalog_entries(marketplace, runtime.current_os()),
+            runtime_status: runtime.status(),
+        },
+    }
+}
+
 fn extensions_bootstrap_from_runtime(runtime: &OmniRuntimeState) -> ExtensionsBootstrapDto {
     extensions_bootstrap_from_snapshot(runtime, extension_management_snapshot(runtime))
 }
@@ -428,6 +612,18 @@ fn set_extension_enabled_for_runtime(
     }
 }
 
+fn extension_mutation_failure(
+    runtime: &OmniRuntimeState,
+    message: String,
+) -> ExtensionMutationResultDto {
+    ExtensionMutationResultDto {
+        status: RuntimeSettingsResultStatusDto::Failed,
+        message,
+        extensions: extensions_bootstrap_from_runtime(runtime),
+        runtime_status: runtime.status(),
+    }
+}
+
 fn uninstall_extension_for_runtime(
     runtime: &OmniRuntimeState,
     request: ExtensionTargetRequestDto,
@@ -448,6 +644,96 @@ fn uninstall_extension_for_runtime(
             extensions: extensions_bootstrap_from_runtime(runtime),
             runtime_status: runtime.status(),
         },
+    }
+}
+
+fn install_catalog_extension_for_runtime(
+    runtime: &OmniRuntimeState,
+    marketplace: &MarketplaceState,
+    extension_id: &str,
+) -> ExtensionMutationResultDto {
+    let Some(cached) = marketplace.cached_catalog() else {
+        return extension_mutation_failure(
+            runtime,
+            "Refresh the extension catalog before installing extensions.".to_string(),
+        );
+    };
+
+    let Some(entry) = cached
+        .catalog
+        .entries
+        .iter()
+        .find(|entry| entry.id == extension_id && entry.platform == runtime.current_os())
+        .cloned()
+    else {
+        return extension_mutation_failure(
+            runtime,
+            format!("Catalog extension not found: {extension_id}"),
+        );
+    };
+
+    if entry.kind != ExtensionKind::Static {
+        return extension_mutation_failure(
+            runtime,
+            "Only static catalog extensions can be installed in Phase 6C.2.".to_string(),
+        );
+    }
+
+    let install_root = match runtime.user_extensions_root() {
+        Some(root) => root,
+        None => {
+            return extension_mutation_failure(
+                runtime,
+                "APPDATA is not set, so Omni Palette cannot install user extensions.".to_string(),
+            );
+        }
+    };
+    let previous_version = extension_management_snapshot(runtime)
+        .installed_state
+        .extensions
+        .iter()
+        .find(|extension| extension.id == entry.id && extension.source_id == GITHUB_SOURCE_ID)
+        .map(|extension| extension.version.clone());
+
+    match marketplace.service.install_entry(
+        &install_root,
+        &cached.source,
+        &entry,
+        runtime.current_os(),
+    ) {
+        Ok(installed) => match runtime.reload_extensions() {
+            Ok(_) => {
+                let extensions = extensions_bootstrap_from_runtime(runtime);
+                ExtensionMutationResultDto {
+                    status: RuntimeSettingsResultStatusDto::Succeeded,
+                    message: extension_install_message(
+                        &entry.name,
+                        previous_version.as_deref(),
+                        &installed.version,
+                    ),
+                    runtime_status: runtime.status(),
+                    extensions,
+                }
+            }
+            Err(message) => extension_mutation_failure(runtime, message),
+        },
+        Err(message) => extension_mutation_failure(runtime, message),
+    }
+}
+
+fn extension_install_message(
+    display_name: &str,
+    previous_version: Option<&str>,
+    installed_version: &str,
+) -> String {
+    match previous_version {
+        Some(previous_version) if previous_version == installed_version => {
+            format!("Reinstalled {display_name} v{installed_version}")
+        }
+        Some(previous_version) => {
+            format!("Updated {display_name} from v{previous_version} to v{installed_version}")
+        }
+        None => format!("Installed {display_name} v{installed_version}"),
     }
 }
 
@@ -567,6 +853,22 @@ fn uninstall_extension(
     uninstall_extension_for_runtime(&state.runtime_state, request)
 }
 
+#[tauri::command]
+fn refresh_extension_catalog(
+    source: GitHubExtensionSourceDto,
+    state: State<'_, AppState>,
+) -> CatalogRefreshResultDto {
+    refresh_extension_catalog_for_runtime(&state.runtime_state, &state.marketplace, source)
+}
+
+#[tauri::command]
+fn install_catalog_extension(
+    extension_id: String,
+    state: State<'_, AppState>,
+) -> ExtensionMutationResultDto {
+    install_catalog_extension_for_runtime(&state.runtime_state, &state.marketplace, &extension_id)
+}
+
 struct ActivationRouter {
     window_lifecycle: Arc<WindowLifecycle>,
     guide_lifecycle: Arc<GuideLifecycle>,
@@ -615,6 +917,9 @@ pub fn run() {
                 app.handle().clone(),
             ));
             let settings_window = Arc::new(SettingsWindow::for_tauri(app.handle().clone()));
+            let marketplace = Arc::new(MarketplaceState::new(Arc::new(
+                ExtensionInstallMarketplaceService,
+            )));
             let guide_lifecycle = Arc::new(GuideLifecycle::for_tauri(
                 runtime_state.config().activation.to_string(),
                 Arc::clone(&window_lifecycle),
@@ -637,6 +942,7 @@ pub fn run() {
                 window_lifecycle,
                 settings_window,
                 guide_lifecycle,
+                marketplace,
             });
             Ok(())
         })
@@ -657,7 +963,9 @@ pub fn run() {
             show_settings_window,
             get_extensions_bootstrap,
             set_extension_enabled,
-            uninstall_extension
+            uninstall_extension,
+            refresh_extension_catalog,
+            install_catalog_extension
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
@@ -687,13 +995,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_check_reports_phase_six_installed_extensions_foundation() {
+    fn health_check_reports_phase_six_marketplace_catalog_refresh_and_install() {
         let payload = health_check();
 
         assert_eq!(payload.app_name, "Omni Palette");
         assert_eq!(
             payload.phase,
-            "Phase 6C.1 - Settings Sidebar And Installed Extensions Foundation"
+            "Phase 6C.2 - Marketplace Catalog Refresh And Install"
         );
         assert_eq!(payload.status, "ok");
     }
@@ -1020,6 +1328,165 @@ mod tests {
     }
 
     #[test]
+    fn catalog_refresh_returns_current_platform_entries_and_stores_cache() {
+        let runtime = runtime_state_for_extensions("catalog-refresh", false);
+        let service = Arc::new(RecordingMarketplaceService::with_fetch_results(vec![Ok(
+            catalog_with_entries(vec![
+                catalog_entry("chrome", "Chrome", Os::Windows, ExtensionKind::Static),
+                catalog_entry("linux", "Linux Tools", Os::Linux, ExtensionKind::Static),
+            ]),
+        )]));
+        let marketplace = MarketplaceState::new(service.clone());
+
+        let result =
+            refresh_extension_catalog_for_runtime(&runtime, &marketplace, github_source_dto());
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].id, "chrome");
+        assert_eq!(result.entries[0].platform, Os::Windows);
+        assert_eq!(
+            service.fetch_sources(),
+            vec!["Greg-Lim/omni-palette-desktop"]
+        );
+        assert_eq!(
+            marketplace
+                .cached_catalog()
+                .expect("catalog should be cached")
+                .source
+                .repo,
+            "omni-palette-desktop"
+        );
+    }
+
+    #[test]
+    fn catalog_refresh_failure_preserves_previous_cached_entries() {
+        let runtime = runtime_state_for_extensions("catalog-refresh-failure", false);
+        let service = Arc::new(RecordingMarketplaceService::with_fetch_results(vec![
+            Ok(catalog_with_entries(vec![catalog_entry(
+                "chrome",
+                "Chrome",
+                Os::Windows,
+                ExtensionKind::Static,
+            )])),
+            Err("network down".to_string()),
+        ]));
+        let marketplace = MarketplaceState::new(service);
+
+        let success =
+            refresh_extension_catalog_for_runtime(&runtime, &marketplace, github_source_dto());
+        let failure =
+            refresh_extension_catalog_for_runtime(&runtime, &marketplace, github_source_dto());
+
+        assert_eq!(success.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert_eq!(failure.status, RuntimeSettingsResultStatusDto::Failed);
+        assert_eq!(failure.message, "network down");
+        assert_eq!(failure.entries.len(), 1);
+        assert_eq!(failure.entries[0].id, "chrome");
+    }
+
+    #[test]
+    fn install_without_cached_catalog_returns_controlled_failure() {
+        let runtime = runtime_state_for_extensions("install-without-catalog", false);
+        let service = Arc::new(RecordingMarketplaceService::default());
+        let marketplace = MarketplaceState::new(service);
+
+        let result = install_catalog_extension_for_runtime(&runtime, &marketplace, "chrome");
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Failed);
+        assert_eq!(
+            result.message,
+            "Refresh the extension catalog before installing extensions."
+        );
+        assert!(result.extensions.downloaded_extensions.is_empty());
+    }
+
+    #[test]
+    fn install_cached_static_entry_writes_state_reloads_runtime_and_returns_rows() {
+        let runtime = runtime_state_for_extensions("install-cached-static", false);
+        let service = Arc::new(RecordingMarketplaceService::with_fetch_results(vec![Ok(
+            catalog_with_entries(vec![catalog_entry(
+                "chrome",
+                "Chrome",
+                Os::Windows,
+                ExtensionKind::Static,
+            )]),
+        )]));
+        let marketplace = MarketplaceState::new(service.clone());
+        let refresh =
+            refresh_extension_catalog_for_runtime(&runtime, &marketplace, github_source_dto());
+        assert_eq!(refresh.status, RuntimeSettingsResultStatusDto::Succeeded);
+
+        let result = install_catalog_extension_for_runtime(&runtime, &marketplace, "chrome");
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Succeeded);
+        assert_eq!(result.message, "Installed Chrome v0.1.0");
+        assert_eq!(
+            service.install_sources(),
+            vec!["Greg-Lim/omni-palette-desktop"]
+        );
+        assert!(result
+            .extensions
+            .downloaded_extensions
+            .iter()
+            .any(|extension| {
+                extension.id == "chrome"
+                    && extension.source_id == "github"
+                    && extension.version == "0.1.0"
+                    && extension.enabled
+            }));
+        assert_eq!(result.runtime_status.application_count, 2);
+    }
+
+    #[test]
+    fn missing_catalog_entry_returns_controlled_failure() {
+        let runtime = runtime_state_for_extensions("install-missing-catalog-entry", false);
+        let service = Arc::new(RecordingMarketplaceService::with_fetch_results(vec![Ok(
+            catalog_with_entries(vec![catalog_entry(
+                "chrome",
+                "Chrome",
+                Os::Windows,
+                ExtensionKind::Static,
+            )]),
+        )]));
+        let marketplace = MarketplaceState::new(service);
+        let refresh =
+            refresh_extension_catalog_for_runtime(&runtime, &marketplace, github_source_dto());
+        assert_eq!(refresh.status, RuntimeSettingsResultStatusDto::Succeeded);
+
+        let result = install_catalog_extension_for_runtime(&runtime, &marketplace, "missing");
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Failed);
+        assert_eq!(result.message, "Catalog extension not found: missing");
+    }
+
+    #[test]
+    fn unsupported_wasm_catalog_entry_returns_controlled_failure() {
+        let runtime = runtime_state_for_extensions("install-unsupported-wasm", false);
+        let service = Arc::new(RecordingMarketplaceService::with_fetch_results(vec![Ok(
+            catalog_with_entries(vec![catalog_entry(
+                "plugin",
+                "Plugin",
+                Os::Windows,
+                ExtensionKind::WasmPlugin,
+            )]),
+        )]));
+        let marketplace = MarketplaceState::new(service.clone());
+        let refresh =
+            refresh_extension_catalog_for_runtime(&runtime, &marketplace, github_source_dto());
+        assert_eq!(refresh.status, RuntimeSettingsResultStatusDto::Succeeded);
+
+        let result = install_catalog_extension_for_runtime(&runtime, &marketplace, "plugin");
+
+        assert_eq!(result.status, RuntimeSettingsResultStatusDto::Failed);
+        assert_eq!(
+            result.message,
+            "Only static catalog extensions can be installed in Phase 6C.2."
+        );
+        assert_eq!(service.install_sources(), Vec::<String>::new());
+    }
+
+    #[test]
     fn bundled_extensions_root_points_to_repo_extensions() {
         let root = bundled_extensions_root();
 
@@ -1270,6 +1737,131 @@ permissions = []
                 ..Default::default()
             },
             key: Key::Space,
+        }
+    }
+
+    fn github_source_dto() -> GitHubExtensionSourceDto {
+        GitHubExtensionSourceDto {
+            owner: "Greg-Lim".to_string(),
+            repo: "omni-palette-desktop".to_string(),
+            branch: "master".to_string(),
+            catalog_path: "extensions/registry/catalog.v1.json".to_string(),
+            enabled: true,
+        }
+    }
+
+    fn catalog_with_entries(entries: Vec<CatalogEntry>) -> ExtensionCatalog {
+        ExtensionCatalog {
+            schema_version: 1,
+            generated_at: None,
+            expires_at_unix: None,
+            entries,
+        }
+    }
+
+    fn catalog_entry(id: &str, name: &str, platform: Os, kind: ExtensionKind) -> CatalogEntry {
+        CatalogEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            version: "0.1.0".to_string(),
+            platform,
+            kind,
+            package_url: format!(
+                "https://github.com/Greg-Lim/omni-palette-desktop/releases/download/{id}-0.1.0/{id}.gpext"
+            ),
+            package_sha256: "0".repeat(64),
+            size_bytes: Some(128),
+            publisher: Some("Omni Palette".to_string()),
+            description: Some(format!("{name} command pack")),
+            license: None,
+            homepage: None,
+            repository: None,
+            keywords: vec![id.to_string(), "commands".to_string()],
+            min_app_version: None,
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingMarketplaceService {
+        fetch_results: Mutex<Vec<Result<ExtensionCatalog, String>>>,
+        fetch_sources: Mutex<Vec<String>>,
+        install_sources: Mutex<Vec<String>>,
+    }
+
+    impl RecordingMarketplaceService {
+        fn with_fetch_results(results: Vec<Result<ExtensionCatalog, String>>) -> Self {
+            Self {
+                fetch_results: Mutex::new(results.into_iter().rev().collect()),
+                fetch_sources: Mutex::new(Vec::new()),
+                install_sources: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn fetch_sources(&self) -> Vec<String> {
+            self.fetch_sources
+                .lock()
+                .expect("fetch sources should lock")
+                .clone()
+        }
+
+        fn install_sources(&self) -> Vec<String> {
+            self.install_sources
+                .lock()
+                .expect("install sources should lock")
+                .clone()
+        }
+    }
+
+    impl MarketplaceService for RecordingMarketplaceService {
+        fn fetch_catalog(
+            &self,
+            _install_root: &std::path::Path,
+            source: &GitHubExtensionSource,
+        ) -> Result<ExtensionCatalog, String> {
+            self.fetch_sources
+                .lock()
+                .expect("fetch sources should lock")
+                .push(format!("{}/{}", source.owner, source.repo));
+            self.fetch_results
+                .lock()
+                .expect("fetch results should lock")
+                .pop()
+                .unwrap_or_else(|| Err("no fetch result queued".to_string()))
+        }
+
+        fn install_entry(
+            &self,
+            install_root: &std::path::Path,
+            source: &GitHubExtensionSource,
+            entry: &CatalogEntry,
+            _current_os: Os,
+        ) -> Result<omni_palette::core::extensions::install::InstalledExtension, String> {
+            self.install_sources
+                .lock()
+                .expect("install sources should lock")
+                .push(format!("{}/{}", source.owner, source.repo));
+            let static_dir = install_root.join("static");
+            std::fs::create_dir_all(&static_dir).map_err(|err| err.to_string())?;
+            let installed_path = static_dir.join(format!("{}.toml", entry.id));
+            write_static_extension(&installed_path, &entry.id, &entry.name);
+
+            let installed = omni_palette::core::extensions::install::InstalledExtension {
+                id: entry.id.clone(),
+                version: entry.version.clone(),
+                platform: entry.platform,
+                kind: entry.kind,
+                source_id: "github".to_string(),
+                package_sha256: entry.package_sha256.clone(),
+                enabled: true,
+                installed_path: PathBuf::from("static").join(format!("{}.toml", entry.id)),
+            };
+            let mut state =
+                omni_palette::core::extensions::install::load_installed_state(install_root)
+                    .map_err(|err| err.to_string())?;
+            state.upsert(installed.clone());
+            omni_palette::core::extensions::install::save_installed_state(install_root, &state)
+                .map_err(|err| err.to_string())?;
+            Ok(installed)
         }
     }
 }

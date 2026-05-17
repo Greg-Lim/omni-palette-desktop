@@ -66,7 +66,11 @@ describe("Svelte frontend entrypoint", () => {
     expect(settingsSource).toContain("Downloaded Extensions");
     expect(settingsSource).toContain("No downloaded extensions installed yet.");
     expect(settingsSource).toContain("Catalog source");
-    expect(settingsSource).toContain("Catalog refresh and install arrive in Phase 6C.2");
+    expect(settingsSource).toContain("Save Source");
+    expect(settingsSource).toContain("Refresh Catalog");
+    expect(settingsSource).toContain("Available Extensions");
+    expect(settingsSource).toContain("Search catalog");
+    expect(settingsSource).toContain("Install");
     expect(settingsSource).toContain("Save settings");
   });
 

@@ -9,14 +9,14 @@
 
 ## Migration Status
 
-- Current migration position: Phase 6C.1 - Settings Sidebar And Installed
-  Extensions Foundation is
+- Current migration position: Phase 6C.2 - Marketplace Catalog Refresh And
+  Install is
   complete.
-- Next phase: Phase 6C.2 - Marketplace Catalog Refresh And Install.
+- Next phase: Phase 6C.3 - Extension-Specific Settings Panels.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
   Phase 4D, Phase 5A, Phase 5B, Phase 6A, Phase 6A.1, Phase 6A.2, and
-  Phase 6B, and Phase 6C.1.
-- Last updated: 2026-05-16.
+  Phase 6B, Phase 6C.1, and Phase 6C.2.
+- Last updated: 2026-05-17.
 - Update this section whenever the migration moves to a new phase.
 
 ## Goal
@@ -49,6 +49,8 @@ egui app stays runnable until the Tauri version reaches functional parity.
   - `get_extensions_bootstrap`
   - `set_extension_enabled`
   - `uninstall_extension`
+  - `refresh_extension_catalog`
+  - `install_catalog_extension`
 - The temporary Phase 6A tabbed shell has been split: the Tauri `main` window is
   palette-only, and Settings renders in a distinct hidden-by-default `settings`
   window.
@@ -59,8 +61,10 @@ egui app stays runnable until the Tauri version reaches functional parity.
 - Manage Extensions lists bundled and downloaded extensions, supports
   enable/disable mutations, supports downloaded uninstall, and reloads runtime
   state after successful mutations.
-- Marketplace contains the Phase 6A catalog source controls, while catalog
-  refresh, search, and install remain deferred to Phase 6C.2.
+- Marketplace contains catalog source controls, catalog refresh, reload,
+  catalog search, static extension install/update/reinstall actions, and
+  controlled failure states that preserve the last visible catalog or extension
+  rows.
 - The existing egui app remains the production UI until final Tauri cutover.
 
 ## Direction
@@ -398,34 +402,27 @@ Completed:
   debug overlay UI, tray work, styling polish, packaging cutover, and egui
   removal out of scope.
 
-## Remaining Phases
-
 ### Phase 6C.2: Marketplace Catalog Refresh And Install
 
-Purpose:
+Status: complete.
 
-- Restore the egui Marketplace workflow on top of the Phase 6C.1 Settings
-  sidebar and extension-management foundation.
+Completed:
 
-Scope:
+- Reused the existing extension install service for catalog refresh and static
+  package install in the Tauri backend.
+- Added a test-injectable Marketplace service and cached the last successful
+  catalog/source pair in Tauri state.
+- Added `refresh_extension_catalog` and `install_catalog_extension` invokes.
+- Added catalog entry DTOs and frontend API wrappers.
+- Added Marketplace `Save Source`, `Refresh Catalog`, `Reload Extensions`,
+  catalog search, available extension rows, and static install/update/reinstall
+  actions.
+- Preserved previous catalog rows on refresh failure and previous extension rows
+  on install failure.
+- Kept extension-specific settings panels, debug overlay UI, tray work, styling
+  polish, packaging cutover, and egui removal out of scope.
 
-- Marketplace catalog source save remains available.
-- Refresh Catalog fetches the configured GitHub catalog.
-- Reload Extensions keeps using the runtime reload path.
-- Available Extensions supports catalog search.
-- Catalog rows show name, version, description, and Install.
-- Installing catalog extensions updates install state, reloads runtime state,
-  and updates the Manage Extensions downloaded list.
-- Do not add extension-specific settings panels in this phase.
-
-Acceptance criteria:
-
-- Marketplace controls match the embedded egui Marketplace reference at the
-  feature level.
-- Catalog refresh failures are controlled and keep the previous catalog results.
-- Extension install state saves to the existing AppData location.
-- Successful installs reload runtime state and appear under Downloaded
-  Extensions.
+## Remaining Phases
 
 ### Phase 6C.3: Extension-Specific Settings Panels
 

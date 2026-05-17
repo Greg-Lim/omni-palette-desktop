@@ -3,15 +3,18 @@
 
   import type {
     ActivationShortcut,
+    CatalogEntry,
     ExtensionRow,
     ExtensionsBootstrap,
     RuntimeSettings,
   } from "./commands";
   import {
     activationShortcutFromKeyboardEvent,
+    applyCatalogRefreshResult,
     applyExtensionMutationResult,
     applyRuntimeSettingsSaveResult,
     discardRuntimeSettingsDraft,
+    filterCatalogEntries,
     formatActivationShortcut,
     paletteApi,
     runtimeSettingsAreDirty,
@@ -31,12 +34,17 @@
   let extensionsLoading = true;
   let settingsSaving = false;
   let settingsReloading = false;
+  let catalogRefreshing = false;
+  let catalogInstallingId: string | null = null;
+  let catalogEntries: CatalogEntry[] = [];
+  let catalogQuery = "";
   let recordingActivationShortcut = false;
   let extensionMutationKey: string | null = null;
   let settingsMessage: string | null = null;
   let settingsFailed = false;
 
   $: settingsDirty = runtimeSettingsAreDirty(settingsSaved, settingsDraft);
+  $: visibleCatalogEntries = filterCatalogEntries(catalogEntries, catalogQuery);
 
   onMount(() => {
     loadSettingsBootstrap();
@@ -248,6 +256,58 @@
       });
   }
 
+  function refreshExtensionCatalog() {
+    if (!settingsDraft || catalogRefreshing) {
+      return;
+    }
+
+    catalogRefreshing = true;
+    paletteApi
+      .refreshExtensionCatalog(settingsDraft.github)
+      .then((result) => {
+        const applied = applyCatalogRefreshResult(catalogEntries, result);
+        catalogEntries = applied.entries;
+        settingsMessage = applied.message;
+        settingsFailed = applied.failed;
+      })
+      .catch((error: unknown) => {
+        settingsMessage = errorMessage(error);
+        settingsFailed = true;
+      })
+      .finally(() => {
+        catalogRefreshing = false;
+      });
+  }
+
+  function installCatalogExtension(entry: CatalogEntry) {
+    if (catalogInstallingId) {
+      return;
+    }
+
+    catalogInstallingId = entry.id;
+    paletteApi
+      .installCatalogExtension(entry.id)
+      .then((result) => {
+        if (!extensionsBootstrap) {
+          settingsMessage = result.message;
+          settingsFailed = result.status === "failed";
+          return;
+        }
+
+        const applied = applyExtensionMutationResult(extensionsBootstrap, result);
+        extensionsBootstrap = applied.extensions;
+        settingsMessage = applied.message;
+        settingsFailed = applied.failed;
+      })
+      .catch((error: unknown) => {
+        settingsMessage = errorMessage(error);
+        settingsFailed = true;
+      })
+      .finally(() => {
+        catalogInstallingId = null;
+      });
+  }
+
   function setExtensionEnabled(extension: ExtensionRow, enabled: boolean) {
     if (!extensionsBootstrap || extensionMutationKey) {
       return;
@@ -317,6 +377,32 @@
 
   function extensionKindLabel(extension: ExtensionRow): string {
     return extension.kind === "wasm_plugin" ? "Plugin" : "Static";
+  }
+
+  function installedVersionForCatalogEntry(entry: CatalogEntry): string | null {
+    return (
+      extensionsBootstrap?.downloaded_extensions.find(
+        (extension) => extension.id === entry.id && extension.source_id === "github",
+      )?.version ?? null
+    );
+  }
+
+  function catalogActionLabel(entry: CatalogEntry): string {
+    const installedVersion = installedVersionForCatalogEntry(entry);
+    if (!installedVersion) {
+      return "Install";
+    }
+
+    return installedVersion === entry.version ? "Reinstall" : "Update";
+  }
+
+  function catalogStatusLabel(entry: CatalogEntry): string | null {
+    const installedVersion = installedVersionForCatalogEntry(entry);
+    if (!installedVersion) {
+      return null;
+    }
+
+    return installedVersion === entry.version ? "Installed" : "Update available";
   }
 
   function inputValue(event: Event): string {
@@ -664,9 +750,6 @@
           <div class="space-y-6">
             <fieldset class="rounded border border-zinc-800 bg-zinc-900 p-4">
               <legend class="px-1 text-sm font-medium text-zinc-200">Catalog source</legend>
-              <p class="mb-4 text-sm text-zinc-400">
-                Catalog refresh and install arrive in Phase 6C.2.
-              </p>
               <label class="flex items-center gap-3 text-sm text-zinc-300">
                 <input
                   checked={settingsDraft.github.enabled}
@@ -710,7 +793,95 @@
                   />
                 </label>
               </div>
+              <div class="mt-4 flex flex-wrap gap-2">
+                <button
+                  class="rounded bg-amber-600 px-3 py-2 text-sm font-medium text-white disabled:bg-zinc-700 disabled:text-zinc-400"
+                  disabled={!settingsDirty || settingsSaving}
+                  onclick={saveRuntimeSettings}
+                  type="button"
+                >
+                  {settingsSaving ? "Saving..." : "Save Source"}
+                </button>
+                <button
+                  class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+                  disabled={!settingsDraft.github.enabled || catalogRefreshing}
+                  onclick={refreshExtensionCatalog}
+                  type="button"
+                >
+                  {catalogRefreshing ? "Refreshing..." : "Refresh Catalog"}
+                </button>
+                <button
+                  class="rounded border border-zinc-700 px-3 py-2 text-sm text-zinc-100 disabled:text-zinc-600"
+                  disabled={settingsReloading}
+                  onclick={reloadRuntimeState}
+                  type="button"
+                >
+                  {settingsReloading ? "Reloading..." : "Reload Extensions"}
+                </button>
+              </div>
             </fieldset>
+
+            <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
+              <h3 class="text-lg font-medium">Available Extensions</h3>
+              <p class="text-sm text-zinc-400">
+                Search the refreshed catalog for extensions that support this Windows build.
+              </p>
+              <input
+                class="mt-4 w-full max-w-lg rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-amber-500"
+                placeholder="Search catalog"
+                value={catalogQuery}
+                oninput={(event) => (catalogQuery = inputValue(event))}
+              />
+
+              {#if catalogEntries.length === 0}
+                <p class="mt-4 rounded border border-zinc-800 bg-zinc-950 px-3 py-4 text-sm text-zinc-400">
+                  Refresh the catalog to browse available extensions.
+                </p>
+              {:else if visibleCatalogEntries.length === 0}
+                <p class="mt-4 rounded border border-zinc-800 bg-zinc-950 px-3 py-4 text-sm text-zinc-400">
+                  No catalog extensions match your search.
+                </p>
+              {:else}
+                <div class="mt-4 grid gap-3">
+                  {#each visibleCatalogEntries as entry}
+                    <article class="rounded border border-zinc-800 bg-zinc-950 p-4">
+                      <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h4 class="font-medium">
+                            {entry.name}
+                            <span class="text-xs text-zinc-500">{entry.version}</span>
+                          </h4>
+                          {#if entry.description}
+                            <p class="mt-1 text-sm text-zinc-400">{entry.description}</p>
+                          {/if}
+                          {#if catalogStatusLabel(entry)}
+                            <p class="mt-1 text-xs text-amber-300">
+                              {catalogStatusLabel(entry)}
+                            </p>
+                          {/if}
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                          {#if entry.kind === "static"}
+                            <button
+                              class="rounded bg-amber-600 px-3 py-2 text-sm font-medium text-white disabled:bg-zinc-700 disabled:text-zinc-400"
+                              disabled={catalogInstallingId === entry.id}
+                              onclick={() => installCatalogExtension(entry)}
+                              type="button"
+                            >
+                              {catalogInstallingId === entry.id
+                                ? "Installing..."
+                                : catalogActionLabel(entry)}
+                            </button>
+                          {:else}
+                            <span class="text-sm text-zinc-500">Unavailable</span>
+                          {/if}
+                        </div>
+                      </div>
+                    </article>
+                  {/each}
+                </div>
+              {/if}
+            </section>
           </div>
         {/if}
 

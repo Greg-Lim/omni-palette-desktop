@@ -110,7 +110,31 @@ export type RuntimeReloadResult = {
   runtime_status: RuntimeStatus;
 };
 
+export type PlatformOs = "windows" | "macos" | "linux";
 export type ExtensionKind = "static" | "wasm_plugin";
+
+export type CatalogEntry = {
+  id: string;
+  name: string;
+  version: string;
+  platform: PlatformOs;
+  kind: ExtensionKind;
+  description: string | null;
+  keywords: string[];
+};
+
+export type CatalogRefreshResult = {
+  status: RuntimeSettingsResultStatus;
+  message: string;
+  entries: CatalogEntry[];
+  runtime_status: RuntimeStatus;
+};
+
+export type CatalogRefreshApplyResult = {
+  entries: CatalogEntry[];
+  message: string;
+  failed: boolean;
+};
 
 export type ExtensionRow = {
   id: string;
@@ -295,6 +319,10 @@ export function createPaletteApi(invokeCommand: PaletteInvoke = invoke) {
       invokeCommand<ExtensionMutationResult>("set_extension_enabled", { request }),
     uninstallExtension: (request: ExtensionTargetRequest) =>
       invokeCommand<ExtensionMutationResult>("uninstall_extension", { request }),
+    refreshExtensionCatalog: (source: GitHubCatalogSource) =>
+      invokeCommand<CatalogRefreshResult>("refresh_extension_catalog", { source }),
+    installCatalogExtension: (extensionId: string) =>
+      invokeCommand<ExtensionMutationResult>("install_catalog_extension", { extensionId }),
     showSettingsWindow: () => invokeCommand<SettingsWindowStatus>("show_settings_window"),
   };
 }
@@ -496,6 +524,49 @@ export function applyExtensionMutationResult(
     message: result.message,
     failed: true,
   };
+}
+
+export function applyCatalogRefreshResult(
+  currentEntries: CatalogEntry[],
+  result: CatalogRefreshResult,
+): CatalogRefreshApplyResult {
+  if (result.status === "succeeded") {
+    return {
+      entries: result.entries,
+      message: result.message,
+      failed: false,
+    };
+  }
+
+  return {
+    entries: currentEntries,
+    message: result.message,
+    failed: true,
+  };
+}
+
+export function filterCatalogEntries(
+  entries: CatalogEntry[],
+  query: string,
+): CatalogEntry[] {
+  const terms = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (terms.length === 0) {
+    return entries;
+  }
+
+  return entries.filter((entry) => {
+    const fields = [
+      entry.id,
+      entry.name,
+      entry.description ?? "",
+      ...entry.keywords,
+    ].map((field) => field.toLowerCase());
+    return terms.every((term) => fields.some((field) => field.includes(term)));
+  });
 }
 
 type KeyboardEventLike = Pick<
