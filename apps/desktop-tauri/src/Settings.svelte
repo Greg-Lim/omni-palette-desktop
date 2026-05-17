@@ -598,6 +598,34 @@
     return extension.kind === "wasm_plugin" ? "Plugin" : "Static";
   }
 
+  function extensionStatusLabel(extension: ExtensionRow): string {
+    return extension.enabled ? "Enabled" : "Disabled";
+  }
+
+  function extensionStatusPillClass(extension: ExtensionRow): string {
+    return [
+      "extension-status-pill rounded border px-3 py-1 text-xs font-medium",
+      extension.enabled
+        ? "border-emerald-800 bg-emerald-950 text-emerald-200"
+        : "border-zinc-700 bg-zinc-900 text-zinc-300",
+    ].join(" ");
+  }
+
+  function extensionToggleTrackClass(extension: ExtensionRow, disabled: boolean): string {
+    return [
+      "extension-toggle-switch relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition",
+      extension.enabled ? "border-amber-400 bg-amber-400" : "border-zinc-700 bg-zinc-950",
+      disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+    ].join(" ");
+  }
+
+  function extensionToggleThumbClass(extension: ExtensionRow): string {
+    return [
+      "inline-block h-4 w-4 rounded-full bg-white shadow transition",
+      extension.enabled ? "translate-x-4" : "translate-x-0.5",
+    ].join(" ");
+  }
+
   function installedVersionForCatalogEntry(entry: CatalogEntry): string | null {
     return (
       extensionsBootstrap?.downloaded_extensions.find(
@@ -886,19 +914,31 @@
                           <div class="mt-1 flex flex-wrap gap-2 text-xs text-zinc-400">
                             <span>Bundled</span>
                             <span>{extensionKindLabel(extension)}</span>
-                            <span>{extension.enabled ? "Enabled" : "Disabled"}</span>
                           </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-2">
-                          <label class="flex items-center gap-2 text-sm text-zinc-300">
+                          <span class={extensionStatusPillClass(extension)}>
+                            {extensionStatusLabel(extension)}
+                          </span>
+                          <label class="inline-flex items-center">
                             <input
+                              aria-label={`Toggle ${extension.name}`}
                               checked={extension.enabled}
+                              class="sr-only"
                               disabled={extensionMutationKey === extensionKey(extension)}
                               onchange={(event) =>
                                 setExtensionEnabled(extension, checkedValue(event))}
                               type="checkbox"
                             />
-                            {extension.enabled ? "Enabled" : "Disabled"}
+                            <span
+                              aria-hidden="true"
+                              class={extensionToggleTrackClass(
+                                extension,
+                                extensionMutationKey === extensionKey(extension),
+                              )}
+                            >
+                              <span class={extensionToggleThumbClass(extension)}></span>
+                            </span>
                           </label>
                           {#if extension.has_settings}
                             <button
@@ -939,19 +979,31 @@
                             <div class="mt-1 flex flex-wrap gap-2 text-xs text-zinc-400">
                               <span>Downloaded</span>
                               <span>{extensionKindLabel(extension)}</span>
-                              <span>{extension.enabled ? "Enabled" : "Disabled"}</span>
                             </div>
                           </div>
                           <div class="flex flex-wrap items-center gap-2">
-                            <label class="flex items-center gap-2 text-sm text-zinc-300">
+                            <span class={extensionStatusPillClass(extension)}>
+                              {extensionStatusLabel(extension)}
+                            </span>
+                            <label class="inline-flex items-center">
                               <input
+                                aria-label={`Toggle ${extension.name}`}
                                 checked={extension.enabled}
+                                class="sr-only"
                                 disabled={extensionMutationKey === extensionKey(extension)}
                                 onchange={(event) =>
                                   setExtensionEnabled(extension, checkedValue(event))}
                                 type="checkbox"
                               />
-                              {extension.enabled ? "Enabled" : "Disabled"}
+                              <span
+                                aria-hidden="true"
+                                class={extensionToggleTrackClass(
+                                  extension,
+                                  extensionMutationKey === extensionKey(extension),
+                                )}
+                              >
+                                <span class={extensionToggleThumbClass(extension)}></span>
+                              </span>
                             </label>
                             {#if extension.has_settings}
                               <button

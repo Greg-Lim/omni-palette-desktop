@@ -13,8 +13,8 @@ use std::{
 
 use omni_palette::{
     backend_contract::{
-        CommandExecutionResultDto, CommandId, PaletteBackend, PaletteBootstrapDto,
-        PaletteSnapshotDto,
+        CommandExecutionResultDto, CommandExecutionStatus, CommandId, PaletteBackend,
+        PaletteBootstrapDto, PaletteSnapshotDto,
     },
     config::runtime::{CommandBehavior, GitHubExtensionSource, RuntimeConfig, ThemeMode},
     core::{
@@ -1261,7 +1261,35 @@ fn search_commands(query: String, state: State<'_, AppState>) -> PaletteSnapshot
 
 #[tauri::command]
 fn execute_command(command_id: String, state: State<'_, AppState>) -> CommandExecutionResultDto {
-    state.backend.execute_command(&CommandId::new(command_id))
+    execute_command_for_state(
+        &state.backend,
+        &state.window_lifecycle,
+        CommandId::new(command_id),
+    )
+}
+
+fn execute_command_for_state(
+    backend: &PaletteBackend,
+    window_lifecycle: &WindowLifecycle,
+    command_id: CommandId,
+) -> CommandExecutionResultDto {
+    let hid_palette = if backend.contains_command(&command_id) {
+        window_lifecycle.hide_palette_for_command_execution()
+    } else {
+        false
+    };
+
+    let result = backend.execute_command(&command_id);
+    match result.status {
+        CommandExecutionStatus::Succeeded => {
+            window_lifecycle.close_palette_session();
+        }
+        CommandExecutionStatus::Failed if hid_palette => {
+            window_lifecycle.restore_palette_after_command_failure();
+        }
+        CommandExecutionStatus::Failed | CommandExecutionStatus::Deferred => {}
+    }
+    result
 }
 
 #[tauri::command]

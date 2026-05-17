@@ -575,6 +575,10 @@ impl CommandSession {
         }
     }
 
+    pub fn contains_command(&self, command_id: &CommandId) -> bool {
+        self.command_index.contains_key(command_id.value())
+    }
+
     pub fn guide_command(&self, command_id: &CommandId) -> Result<GuideCommand, String> {
         let Some(command) = self
             .command_index
@@ -730,6 +734,16 @@ impl PaletteBackend {
             Ok(session) => session.session.execute(command_id),
             Err(err) => {
                 CommandExecutionResultDto::failed(format!("Command session lock poisoned: {err}"))
+            }
+        }
+    }
+
+    pub fn contains_command(&self, command_id: &CommandId) -> bool {
+        match self.session.read() {
+            Ok(session) => session.session.contains_command(command_id),
+            Err(err) => {
+                log::error!("Command session lock poisoned while checking command: {err}");
+                false
             }
         }
     }

@@ -47,6 +47,28 @@ describe("Svelte frontend entrypoint", () => {
     expect(appSource).not.toContain("Save settings");
   });
 
+  it("keeps the palette to one hidden results scroller with fixed header and edge fades", () => {
+    const appSource = readFileSync(join(srcDir, "App.svelte"), "utf8");
+
+    expect(appSource).toContain("h-screen overflow-hidden");
+    expect(appSource).toContain("palette-results-scroll");
+    expect(appSource).toContain("bind:this={resultsScroller}");
+    expect(appSource).toContain("handleResultsScroll");
+    expect(appSource).toContain("resetResultsScrollToTop");
+    expect(appSource).toContain("scrollTo({ top: nextScrollTop, behavior: \"smooth\" })");
+    expect(appSource).toContain("scrollbar-width: none");
+    expect(appSource).toContain(".palette-results-scroll::-webkit-scrollbar");
+    expect(appSource).toContain("showTopFade");
+    expect(appSource).toContain("showBottomFade");
+    expect(appSource).toContain("bg-gradient-to-b");
+    expect(appSource).toContain("pb-14");
+    expect(appSource).toContain("bg-gradient-to-t");
+    expect(appSource).not.toContain("Run selected");
+    expect(appSource).not.toContain("Math.max(rows.length - 1, 0)} commands");
+    expect(appSource).not.toContain("sticky top-0");
+    expect(appSource).not.toContain("max-h-[420px] overflow-y-auto");
+  });
+
   it("renders Phase 6C settings navigation and surfaces in the settings window", () => {
     const settingsPath = join(srcDir, "Settings.svelte");
 
@@ -69,6 +91,10 @@ describe("Svelte frontend entrypoint", () => {
     expect(settingsSource).toContain("Bundled Defaults");
     expect(settingsSource).toContain("Downloaded Extensions");
     expect(settingsSource).toContain("No downloaded extensions installed yet.");
+    expect(settingsSource).toContain("extensionStatusLabel");
+    expect(settingsSource).toContain("extension-status-pill");
+    expect(settingsSource).toContain("extension-toggle-switch");
+    expect(settingsSource).toContain("aria-label={`Toggle ${extension.name}`}");
     expect(settingsSource).toContain("Catalog source");
     expect(settingsSource).toContain("Save Source");
     expect(settingsSource).toContain("Refresh Catalog");

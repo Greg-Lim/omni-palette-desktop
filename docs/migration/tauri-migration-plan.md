@@ -9,9 +9,12 @@
 
 ## Migration Status
 
-- Current migration position: Phase 7 - Debug Overlay And Diagnostics
-  is complete.
-- Next phase: Phase 8 - Cutover And egui Removal.
+- Current migration position: Manual Parity Verification Gate after
+  Phase 7 - Debug Overlay And Diagnostics.
+- Next implementation phase after manual verification: Phase 8 - Cutover And
+  egui Removal.
+- Phase 8 starts only after `docs/migration/tauri-parity-checklist.md` is
+  complete or every remaining gap has a named follow-up migration phase.
 - Completed: React-to-Svelte Phases 0-3, Phase 4A, Phase 4B, Phase 4C,
   Phase 4D, Phase 5A, Phase 5B, Phase 6A, Phase 6A.1, Phase 6A.2, and
   Phase 6B, Phase 6C.1, Phase 6C.2, Phase 6C.3, and Phase 7.
@@ -524,29 +527,15 @@ Acceptance criteria:
 - Do not remove egui until the Tauri app is functionally ready.
 - Do not redesign visual styling deeply before behavior parity is secure.
 
-## Verification Checklist
+## Manual Parity Verification Gate
 
-Use this checklist throughout the migration:
+Track egui-to-Tauri parity progress in
+`docs/migration/tauri-parity-checklist.md`.
 
-- This file is the single canonical migration plan.
-- No active migration doc points to React as the Tauri frontend.
-- Existing egui app remains runnable until final cutover.
-- Tauri app launches on Windows.
-- Global hotkey opens and hides the palette-only surface.
-- Settings opens as a distinct surface, not inside the hotkey palette.
-- Palette exposes both fixed footer actions: `Refresh extensions` and
-  `Open settings for Omni Palette`.
-- Ignored app passthrough still works.
-- Palette search result ordering is unchanged.
-- Shortcut commands focus the correct target and send keys.
-- Plugin commands still execute through the WASM host.
-- Settings General page covers Appearance, Activation, Command Behavior, Debug,
-  Storage, save, discard, and status controls.
-- Settings Manage Extensions page covers bundled and downloaded extension
-  enablement, status, settings, and empty states.
-- Settings Marketplace page covers catalog source, refresh, reload, search, and
-  install controls.
-- Runtime settings save to existing AppData paths, including activation
-  shortcut, command behavior, theme, and catalog source.
-- Extension reload does not replace the last good registry on failure.
-- Long-running idle behavior stays quiet in CPU, memory, and thread count.
+Use that checklist as the manual gate before Phase 8. Phase 8 starts only after
+every required checklist item is marked `Pass` or every remaining gap is
+assigned to a named follow-up migration phase.
+
+Keep this file as the canonical migration plan; keep
+`docs/migration/tauri-parity-checklist.md` as the live progress tracker for
+manual verification notes, failures, blockers, and verification dates.

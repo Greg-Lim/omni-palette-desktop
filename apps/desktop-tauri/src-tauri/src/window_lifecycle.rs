@@ -13,9 +13,7 @@ use crate::hotkey_bridge::PaletteActivationHandler;
 pub const WINDOW_LIFECYCLE_EVENT_NAME: &str = "omni://palette-window-lifecycle";
 const MAIN_WINDOW_LABEL: &str = "main";
 const PALETTE_WINDOW_WIDTH: u32 = 780;
-const PALETTE_WINDOW_BASE_HEIGHT: u32 = 176;
-const PALETTE_COMMAND_ROW_HEIGHT: u32 = 54;
-const PALETTE_MAX_VISIBLE_ROWS: usize = 8;
+const PALETTE_WINDOW_HEIGHT: u32 = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowLifecycleStatusDto {
@@ -321,12 +319,8 @@ fn active_work_area(context: &ContextRoot) -> Option<(i32, i32, i32, i32)> {
         .and_then(monitor_work_area_from_window)
 }
 
-pub fn palette_window_size(visible_command_count: usize) -> PhysicalSize<u32> {
-    let visible_rows = visible_command_count.min(PALETTE_MAX_VISIBLE_ROWS).max(1) as u32;
-    PhysicalSize::new(
-        PALETTE_WINDOW_WIDTH,
-        PALETTE_WINDOW_BASE_HEIGHT + (visible_rows * PALETTE_COMMAND_ROW_HEIGHT),
-    )
+pub fn palette_window_size(_visible_command_count: usize) -> PhysicalSize<u32> {
+    PhysicalSize::new(PALETTE_WINDOW_WIDTH, PALETTE_WINDOW_HEIGHT)
 }
 
 pub struct WindowLifecycle {
@@ -400,6 +394,67 @@ impl WindowLifecycle {
         self.status()
     }
 
+    pub fn hide_palette_for_command_execution(&self) -> bool {
+        match self.controller.is_visible() {
+            Ok(true) => self.hide_palette_without_closing_session(),
+            Ok(false) => false,
+            Err(err) => {
+                self.emit(
+                    self.status
+                        .record_error(format!("Failed to read palette window visibility: {err}")),
+                );
+                false
+            }
+        }
+    }
+
+    pub fn restore_palette_after_command_failure(&self) -> WindowLifecycleStatusDto {
+        match self.controller.is_visible() {
+            Ok(true) => return self.status(),
+            Ok(false) => {}
+            Err(err) => {
+                self.emit(
+                    self.status
+                        .record_error(format!("Failed to read palette window visibility: {err}")),
+                );
+                return self.status();
+            }
+        }
+
+        if let Err(err) = self.controller.show() {
+            self.emit(
+                self.status
+                    .record_error(format!("Failed to restore palette window: {err}")),
+            );
+            return self.status();
+        }
+        self.status.record_show_succeeded();
+
+        if let Err(err) = self.controller.unminimize_if_needed() {
+            self.emit(
+                self.status
+                    .record_error(format!("Failed to unminimize palette window: {err}")),
+            );
+            return self.status();
+        }
+
+        if let Err(err) = self.controller.focus() {
+            self.emit(
+                self.status
+                    .record_error(format!("Failed to focus palette window: {err}")),
+            );
+            return self.status();
+        }
+        self.status.record_focused();
+
+        self.emit(self.status.record_shown());
+        self.status()
+    }
+
+    pub fn close_palette_session(&self) {
+        self.session_manager.close_palette_session();
+    }
+
     fn show_palette(&self, context: ContextRoot) {
         let snapshot = match self.session_manager.open_palette_session(context.clone()) {
             Ok(snapshot) => snapshot,
@@ -463,6 +518,19 @@ impl WindowLifecycle {
 
         self.session_manager.close_palette_session();
         self.emit(self.status.record_hidden());
+    }
+
+    fn hide_palette_without_closing_session(&self) -> bool {
+        if let Err(err) = self.controller.hide() {
+            self.emit(
+                self.status
+                    .record_error(format!("Failed to hide palette window: {err}")),
+            );
+            return false;
+        }
+
+        self.emit(self.status.record_hidden());
+        true
     }
 
     fn emit(&self, payload: WindowLifecycleEventPayloadDto) {
@@ -544,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_activation_sizes_palette_from_visible_command_count() {
+    fn hidden_activation_positions_palette_with_session_command_count() {
         let lifecycle = test_lifecycle_with_visible_command_count(false, 2);
 
         lifecycle.handle_activation(empty_context());
@@ -553,6 +621,15 @@ mod tests {
             lifecycle.log(),
             vec!["prepare_session:2", "position:2", "show", "focus"]
         );
+    }
+
+    #[test]
+    fn palette_window_size_stays_fixed_for_any_command_count() {
+        let fixed_size = PhysicalSize::new(PALETTE_WINDOW_WIDTH, PALETTE_WINDOW_HEIGHT);
+
+        assert_eq!(palette_window_size(0), fixed_size);
+        assert_eq!(palette_window_size(1), fixed_size);
+        assert_eq!(palette_window_size(20), fixed_size);
     }
 
     #[test]
@@ -680,6 +757,49 @@ mod tests {
         assert_eq!(lifecycle.events(), Vec::new());
     }
 
+    #[test]
+    fn command_execution_hide_hides_visible_window_without_closing_session() {
+        let lifecycle = test_lifecycle(true, None, Ok(()));
+
+        let hid_window = lifecycle.hide_palette_for_command_execution();
+
+        assert!(hid_window);
+        assert_eq!(lifecycle.log(), vec!["hide"]);
+        assert_eq!(
+            lifecycle.status(),
+            WindowLifecycleStatusDto {
+                visible: false,
+                show_count: 0,
+                hide_count: 1,
+                focus_count: 0,
+                position_count: 0,
+                last_action: Some(WindowLifecycleActionDto::Hidden),
+                last_error: None,
+            }
+        );
+    }
+
+    #[test]
+    fn command_execution_failure_can_restore_hidden_palette_without_rebuilding_session() {
+        let lifecycle = test_lifecycle(false, None, Ok(()));
+
+        let status = lifecycle.restore_palette_after_command_failure();
+
+        assert_eq!(lifecycle.log(), vec!["show", "focus"]);
+        assert_eq!(
+            status,
+            WindowLifecycleStatusDto {
+                visible: true,
+                show_count: 1,
+                hide_count: 0,
+                focus_count: 1,
+                position_count: 0,
+                last_action: Some(WindowLifecycleActionDto::Shown),
+                last_error: None,
+            }
+        );
+    }
+
     struct TestLifecycle {
         lifecycle: WindowLifecycle,
         log: Arc<Mutex<Vec<String>>>,
@@ -693,6 +813,14 @@ mod tests {
 
         fn hide_palette_window(&self) -> WindowLifecycleStatusDto {
             self.lifecycle.hide_palette_window()
+        }
+
+        fn hide_palette_for_command_execution(&self) -> bool {
+            self.lifecycle.hide_palette_for_command_execution()
+        }
+
+        fn restore_palette_after_command_failure(&self) -> WindowLifecycleStatusDto {
+            self.lifecycle.restore_palette_after_command_failure()
         }
 
         fn status(&self) -> WindowLifecycleStatusDto {

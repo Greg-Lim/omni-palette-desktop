@@ -535,11 +535,7 @@ export async function openSettingsFromPalette(
   };
 }
 
-export function nextSelectedCommandId(currentId: string, commands: CommandRow[]): string {
-  if (commands.some((command) => command.id === currentId)) {
-    return currentId;
-  }
-
+export function nextSelectedCommandId(_currentId: string, commands: CommandRow[]): string {
   return commands[0]?.id ?? "";
 }
 
@@ -559,6 +555,28 @@ export function nextKeyboardSelectedCommandId(
 
   const nextIndex = (currentIndex + delta + commands.length) % commands.length;
   return commands[nextIndex].id;
+}
+
+export function selectedRowScrollTop({
+  currentScrollTop,
+  containerHeight,
+  scrollHeight,
+  rowTop,
+  rowHeight,
+}: {
+  currentScrollTop: number;
+  containerHeight: number;
+  scrollHeight: number;
+  rowTop: number;
+  rowHeight: number;
+}): number {
+  const maxScrollTop = Math.max(0, scrollHeight - containerHeight);
+  if (maxScrollTop === 0) {
+    return currentScrollTop;
+  }
+
+  const desiredTop = rowTop - containerHeight / 3 + rowHeight / 2;
+  return Math.min(maxScrollTop, Math.max(0, Math.round(desiredTop)));
 }
 
 export function commandExecutionShouldHidePalette(result: CommandExecutionResult): boolean {

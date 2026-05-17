@@ -42,6 +42,7 @@ import {
   highlightedLabelSegments,
   filterCatalogEntries,
   nextKeyboardSelectedCommandId,
+  selectedRowScrollTop,
   nextGuideStatus,
   nextWindowLifecycleStatus,
   paletteKeyAction,
@@ -1030,8 +1031,8 @@ describe("guide status", () => {
 });
 
 describe("nextSelectedCommandId", () => {
-  it("keeps the current selection when it remains visible", () => {
-    expect(nextSelectedCommandId("chrome-new-tab", rows)).toBe("chrome-new-tab");
+  it("selects the first row after search results refresh", () => {
+    expect(nextSelectedCommandId("chrome-new-tab", rows)).toBe("reload-extensions");
   });
 
   it("selects the first row when the current selection disappears", () => {
@@ -1058,6 +1059,53 @@ describe("nextKeyboardSelectedCommandId", () => {
 
   it("clears selection when there are no rows", () => {
     expect(nextKeyboardSelectedCommandId("chrome-new-tab", [], 1)).toBe("");
+  });
+});
+
+describe("selectedRowScrollTop", () => {
+  it("places the selected row about one third from the top", () => {
+    expect(
+      selectedRowScrollTop({
+        currentScrollTop: 0,
+        containerHeight: 300,
+        scrollHeight: 1000,
+        rowTop: 360,
+        rowHeight: 48,
+      }),
+    ).toBe(284);
+  });
+
+  it("clamps the scroll target at the top and bottom", () => {
+    expect(
+      selectedRowScrollTop({
+        currentScrollTop: 120,
+        containerHeight: 300,
+        scrollHeight: 1000,
+        rowTop: 20,
+        rowHeight: 48,
+      }),
+    ).toBe(0);
+    expect(
+      selectedRowScrollTop({
+        currentScrollTop: 120,
+        containerHeight: 300,
+        scrollHeight: 1000,
+        rowTop: 960,
+        rowHeight: 48,
+      }),
+    ).toBe(700);
+  });
+
+  it("preserves scroll when there is no scrollable overflow", () => {
+    expect(
+      selectedRowScrollTop({
+        currentScrollTop: 24,
+        containerHeight: 300,
+        scrollHeight: 260,
+        rowTop: 120,
+        rowHeight: 48,
+      }),
+    ).toBe(24);
   });
 });
 
