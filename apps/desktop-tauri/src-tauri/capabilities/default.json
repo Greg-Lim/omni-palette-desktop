@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default permissions for the Phase 2 wireframe window.",
-  "windows": ["main"],
+  "windows": ["main", "settings", "guide", "debug"],
   "permissions": ["core:default"]
 }

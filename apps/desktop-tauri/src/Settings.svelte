@@ -801,10 +801,8 @@
               </div>
             </fieldset>
 
-            <fieldset class="rounded border border-zinc-800 bg-zinc-900 p-4">
-              <legend class="px-1 text-sm font-medium text-zinc-200">
-                Activation shortcut
-              </legend>
+            <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
+              <h3 class="text-sm font-medium text-zinc-200">Activation shortcut</h3>
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <span
                   class="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300"
@@ -828,10 +826,10 @@
                   Reset
                 </button>
               </div>
-            </fieldset>
+            </section>
 
-            <fieldset class="rounded border border-zinc-800 bg-zinc-900 p-4">
-              <legend class="px-1 text-sm font-medium text-zinc-200">Command behavior</legend>
+            <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
+              <h3 class="text-sm font-medium text-zinc-200">Command behavior</h3>
               <div class="mt-3 flex flex-wrap gap-2">
                 <label
                   class={[
@@ -868,7 +866,7 @@
                   Guide
                 </label>
               </div>
-            </fieldset>
+            </section>
 
             <section class="rounded border border-zinc-800 bg-zinc-900 p-4">
               <h3 class="text-sm font-medium text-zinc-200">Debug</h3>

@@ -88,6 +88,14 @@ describe("Svelte frontend entrypoint", () => {
     expect(settingsSource).toContain("Command behavior");
     expect(settingsSource).toContain("Pop up debugger");
     expect(settingsSource).toContain("showDebugOverlay");
+    expect(settingsSource).toContain(
+      '<h3 class="text-sm font-medium text-zinc-200">Activation shortcut</h3>',
+    );
+    expect(settingsSource).toContain(
+      '<h3 class="text-sm font-medium text-zinc-200">Command behavior</h3>',
+    );
+    expect(settingsSource).not.toContain("Activation shortcut\n              </legend>");
+    expect(settingsSource).not.toContain("Command behavior</legend>");
     expect(settingsSource).toContain("Bundled Defaults");
     expect(settingsSource).toContain("Downloaded Extensions");
     expect(settingsSource).toContain("No downloaded extensions installed yet.");
@@ -129,6 +137,23 @@ describe("Svelte frontend entrypoint", () => {
     expect(debugSource).toContain("Background Windows");
   });
 
+  it("renders guide mode without an outer shadow and with larger keycaps", () => {
+    const guidePath = join(srcDir, "Guide.svelte");
+
+    expect(existsSync(guidePath)).toBe(true);
+
+    if (!existsSync(guidePath)) {
+      return;
+    }
+
+    const guideSource = readFileSync(guidePath, "utf8");
+    expect(guideSource).toContain("bg-zinc-950/[0.92]");
+    expect(guideSource).not.toContain("shadow-2xl");
+    expect(guideSource).toContain("min-h-12 min-w-16");
+    expect(guideSource).toContain("px-4 py-3");
+    expect(guideSource).toContain("text-base");
+  });
+
   it("declares separate palette, settings, and guide Tauri windows", () => {
     const config = JSON.parse(
       readFileSync(join(appRoot, "src-tauri", "tauri.conf.json"), "utf8"),
@@ -163,5 +188,20 @@ describe("Svelte frontend entrypoint", () => {
       resizable: true,
       visible: false,
     });
+  });
+
+  it("grants default Tauri permissions to every local app window", () => {
+    const config = JSON.parse(
+      readFileSync(join(appRoot, "src-tauri", "tauri.conf.json"), "utf8"),
+    );
+    const capability = JSON.parse(
+      readFileSync(join(appRoot, "src-tauri", "capabilities", "default.json"), "utf8"),
+    );
+    const windowLabels = (config.app.windows as Array<Record<string, unknown>>).map(
+      (window) => window.label,
+    );
+
+    expect(capability.permissions).toContain("core:default");
+    expect(capability.windows).toEqual(windowLabels);
   });
 });

@@ -1477,6 +1477,22 @@ fn save_extension_settings(
     save_extension_settings_for_runtime(&state.runtime_state, request)
 }
 
+fn should_hide_on_native_close(label: &str) -> bool {
+    matches!(label, "settings" | "debug")
+}
+
+fn handle_persistent_window_close_request<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    event: &tauri::WindowEvent,
+) {
+    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        if should_hide_on_native_close(window.label()) {
+            api.prevent_close();
+            let _ = window.hide();
+        }
+    }
+}
+
 struct ActivationRouter {
     window_lifecycle: Arc<WindowLifecycle>,
     guide_lifecycle: Arc<GuideLifecycle>,
@@ -1519,6 +1535,7 @@ pub fn run() {
     let backend = Arc::new(PaletteBackend::from_runtime_state(runtime_state.clone()));
 
     tauri::Builder::default()
+        .on_window_event(handle_persistent_window_close_request)
         .setup(move |app| {
             let window_lifecycle = Arc::new(WindowLifecycle::for_tauri(
                 Arc::clone(&backend),
@@ -1634,6 +1651,40 @@ mod tests {
         assert_eq!(payload.app_name, "Omni Palette");
         assert_eq!(payload.phase, "Phase 7 - Debug Overlay And Diagnostics");
         assert_eq!(payload.status, "ok");
+    }
+
+    #[test]
+    fn extension_commands_use_app_state_managed_by_setup() {
+        let source = include_str!("lib.rs");
+        let production_source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("source should include production code before tests");
+
+        assert!(
+            production_source.contains("fn get_extensions_bootstrap(state: State<'_, AppState>)"),
+            "extension bootstrap should share the AppState command path used by the rest of the settings window"
+        );
+        assert!(
+            !production_source.contains(
+                "fn get_extensions_bootstrap(runtime_state: State<'_, OmniRuntimeState>)"
+            ),
+            "using a direct runtimeState command field caused settings-page startup errors"
+        );
+    }
+
+    #[test]
+    fn persistent_tool_windows_are_hidden_on_native_close() {
+        assert!(should_hide_on_native_close("settings"));
+        assert!(should_hide_on_native_close("debug"));
+        assert!(!should_hide_on_native_close("main"));
+        assert!(!should_hide_on_native_close("guide"));
+
+        let source = include_str!("lib.rs");
+        assert!(
+            source.contains(".on_window_event(handle_persistent_window_close_request)"),
+            "settings/debug close requests should be intercepted so the windows can be reopened"
+        );
     }
 
     #[test]
